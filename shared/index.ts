@@ -6,8 +6,8 @@ export * from "./settings.js";
 /** The name shown to players. */
 export const GAME_NAME = "Armada's 1805";
 
-/** The current build label, used by the placeholder page and the server. */
-export const BUILD_TAG = "0B";
+/** The current build label, used by the client and the server. */
+export const BUILD_TAG = "1A";
 
 /** What this build is for, shown under the game name. */
-export const BUILD_NOTE = "deployment test";
+export const BUILD_NOTE = "paper style and sailing";

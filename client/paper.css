@@ -1,0 +1,279 @@
+/* The one shared style sheet for every Armada's 1805 screen.
+   Old stained paper and dark ink. See docs/STYLE.md before changing anything.
+
+   There is only one palette and no dark theme: menus look the same day and
+   night. No pure black (#000) or pure white (#fff) is used anywhere. */
+
+:root {
+  /* Colours from the design. */
+  --paper: #e8dbbd;       /* cream-tan page and panels */
+  --paper-edge: #b79b6b;  /* darker browned edge around the board */
+  --ink: #2a1c10;         /* dark brown ink for body text */
+  --ink-faded: #5b4631;   /* faded ink for secondary text */
+  --wax: #8c1d1d;         /* wax seal red */
+  --urgent: #a3191b;      /* urgent red ink */
+  --rule: rgba(42, 28, 16, 0.55);
+
+  /* Three UI sizes, set on <html data-ui-size="...">. */
+  --ui-scale: 1;
+  --tap: 44px;
+
+  /* One small seamless tile: paper grain plus a few short fibres.
+     Percent-encoded SVG, so there is no image file to download. */
+  --paper-texture: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='g'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='3' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3C/filter%3E%3Crect width='160' height='160' filter='url(%23g)' opacity='0.18'/%3E%3Cg fill='none' stroke='%235b4631' stroke-width='0.5' opacity='0.35'%3E%3Cpath d='M14 28q22-4 41 1'/%3E%3Cpath d='M96 12q17 3 33-2'/%3E%3Cpath d='M20 122q26 4 47-1'/%3E%3Cpath d='M104 96q20-3 38 2'/%3E%3Cpath d='M58 60q14 2 27-1'/%3E%3Cpath d='M8 82q9 2 19 0'/%3E%3C/g%3E%3C/svg%3E");
+}
+
+html[data-ui-size="small"] {
+  --ui-scale: 0.88;
+}
+
+html[data-ui-size="large"] {
+  --ui-scale: 1.18;
+}
+
+/* Self-hosted OFL fonts. The files and licences live in client/fonts/. */
+@font-face {
+  font-family: "IM Fell English";
+  src: url("./fonts/im-fell-english-latin-400-normal.woff2") format("woff2");
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "Source Sans 3";
+  src: url("./fonts/source-sans-3-latin-400-normal.woff2") format("woff2");
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "Source Sans 3";
+  src: url("./fonts/source-sans-3-latin-600-normal.woff2") format("woff2");
+  font-weight: 600;
+  font-style: normal;
+  font-display: swap;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html {
+  /* Keep native controls light, even on devices set to dark mode. */
+  color-scheme: light;
+  background: var(--paper-edge);
+}
+
+body {
+  min-height: 100%;
+  margin: 0;
+  padding: clamp(0.75rem, 3vw, 2rem);
+  background-color: var(--paper-edge);
+  background-image: var(--paper-texture);
+  background-blend-mode: multiply;
+  color: var(--ink);
+  font-family: "Source Sans 3", "Segoe UI", system-ui, sans-serif;
+  font-size: calc(1rem * var(--ui-scale));
+  line-height: 1.5;
+  overflow-wrap: break-word;
+}
+
+h1,
+h2,
+.display {
+  margin: 0;
+  font-family: "IM Fell English", "Iowan Old Style", Georgia, serif;
+  font-weight: 400;
+  line-height: 1.15;
+}
+
+h1 {
+  font-size: calc(2.5rem * var(--ui-scale));
+  letter-spacing: 0.01em;
+}
+
+h2 {
+  font-size: calc(1.5rem * var(--ui-scale));
+}
+
+/* The page column. Everything narrows to the screen, so phones never scroll
+   sideways. */
+.wrap {
+  display: grid;
+  gap: calc(1.25rem * var(--ui-scale));
+  width: min(44rem, 100%);
+  margin-inline: auto;
+}
+
+/* A plain paper panel: thin ink rules, a faint double edge, no sketches.
+   Stains and fold lines sit only near the corners and edges, behind the text. */
+.paper {
+  position: relative;
+  isolation: isolate;
+  padding: calc(1.25rem * var(--ui-scale));
+  border: 1px solid var(--ink);
+  outline: 1px solid rgba(42, 28, 16, 0.35);
+  outline-offset: 3px;
+  border-radius: 2px;
+  background-color: var(--paper);
+  background-image: var(--paper-texture);
+  background-blend-mode: multiply;
+  box-shadow: 0 1px 0 rgba(42, 28, 16, 0.25), 0 10px 24px rgba(42, 28, 16, 0.18);
+}
+
+.paper::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  background:
+    radial-gradient(ellipse 90px 60px at 0% 0%, rgba(91, 70, 49, 0.2), transparent 70%),
+    radial-gradient(ellipse 110px 55px at 100% 0%, rgba(91, 70, 49, 0.14), transparent 72%),
+    radial-gradient(ellipse 120px 70px at 100% 100%, rgba(91, 70, 49, 0.18), transparent 70%),
+    radial-gradient(ellipse 85px 55px at 0% 100%, rgba(91, 70, 49, 0.16), transparent 70%),
+    /* A fold line kept near the left edge. */
+    linear-gradient(90deg, transparent 13px, rgba(42, 28, 16, 0.1) 14px, transparent 15px),
+    /* A fold line kept near the bottom edge. */
+    linear-gradient(0deg, transparent 9px, rgba(42, 28, 16, 0.09) 10px, transparent 11px);
+}
+
+.paper > * {
+  position: relative;
+  z-index: 1;
+}
+
+.kicker {
+  margin: 0 0 0.35rem;
+  color: var(--ink-faded);
+  font-size: calc(0.8rem * var(--ui-scale));
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.build {
+  margin: 0.5rem 0 0;
+  color: var(--ink-faded);
+  font-size: calc(0.95rem * var(--ui-scale));
+}
+
+.rule {
+  margin: calc(1rem * var(--ui-scale)) 0;
+  border: 0;
+  border-top: 1px solid var(--rule);
+}
+
+/* Inked-box button: thin ink rules on paper, no fill. */
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  min-width: var(--tap);
+  min-height: var(--tap);
+  padding: 0.5rem 1rem;
+  border: 1.5px solid var(--ink);
+  border-radius: 2px;
+  background: transparent;
+  box-shadow: inset 0 0 0 2px var(--paper), 0 0 0 1px var(--ink);
+  color: var(--ink);
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+  text-align: center;
+}
+
+.btn:hover {
+  background: rgba(42, 28, 16, 0.08);
+}
+
+.btn:active {
+  transform: translateY(1px);
+}
+
+/* Red wax-seal button, for important confirmations only. */
+.btn-seal {
+  padding: 0.6rem 1.5rem;
+  border: 1px solid #5e1010;
+  border-radius: 46% 54% 48% 52% / 52% 46% 54% 48%;
+  background: var(--wax);
+  box-shadow: inset 0 0 0 2px rgba(243, 231, 203, 0.35);
+  color: #f3e7cb;
+  text-shadow: 0 1px 0 rgba(42, 28, 16, 0.6);
+}
+
+.btn-seal:hover {
+  background: #7a1717;
+}
+
+/* Urgent alerts: red ink and a red rule, still at WCAG AA contrast. */
+.alert-urgent {
+  margin: 0;
+  padding-left: 0.65rem;
+  border-left: 3px solid var(--urgent);
+  color: var(--urgent);
+  font-weight: 600;
+}
+
+/* Menus use the same paper and ink at any time of day. */
+.menu {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  align-items: center;
+}
+
+.stack {
+  display: grid;
+  gap: 0.9rem;
+}
+
+.size-picker {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  align-items: center;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.size-picker legend {
+  width: 100%;
+  padding: 0;
+  color: var(--ink-faded);
+  font-size: calc(0.9rem * var(--ui-scale));
+  font-weight: 600;
+}
+
+.size-option {
+  min-width: calc(4.5rem * var(--ui-scale));
+}
+
+.size-option[aria-pressed="true"] {
+  background: var(--ink);
+  color: var(--paper);
+}
+
+:focus-visible {
+  outline: 2px solid var(--wax);
+  outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * {
+    transition: none !important;
+  }
+}

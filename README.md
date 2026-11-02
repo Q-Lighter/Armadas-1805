@@ -19,8 +19,9 @@ npm run build
 ```
 
 The build type checks everything, bundles the browser page and writes it to
-`dist/`. Open `dist/index.html` in a browser to see the placeholder page, which
-shows **Armada's 1805** with the line **Build 0B: deployment test** underneath.
+`dist/`. Open `dist/index.html` in a browser to see the paper-and-ink style
+test page: **Armada's 1805** on a paper panel, sample buttons and an urgent
+alert, with the line **Build 1A: paper style and sailing** underneath.
 
 ## Deploy
 

@@ -94,3 +94,48 @@ works on a phone; checks, a build-log entry and a commit.
 - Nothing has actually been deployed. Deploying needs a Cloudflare account and
   a one-time `npx wrangler login`, which cannot be done from this workspace.
 - The page is still a placeholder: no game features, no server runtime.
+
+## Session 1A-a: paper style foundation
+
+**Date:** 2026-11-02
+**Branch:** main
+
+### What was asked
+
+One shared paper-and-ink style for every screen, with a documented palette, a
+seamless code-generated paper texture, self-hosted open-licence fonts, four
+components (paper panel, inked button, wax-seal button, urgent alert), WCAG AA
+body text, three remembered UI sizes and 44 px touch targets. Show it on the
+page with "Armada's 1805" on a paper panel and one example of each component.
+
+### What was built
+
+- `client/paper.css`: the single style sheet. Palette tokens, paper grain as a
+  percent-encoded SVG data URI (noise plus fibres, no image files), edge-only
+  stains and fold lines on `.paper::before`, and every component.
+- `client/fonts/`: IM Fell English and Source Sans 3 (400/600) as WOFF2, with
+  both OFL licence files. The build copies them to `dist/fonts/`.
+- `client/index.html` and `client/main.ts`: a style test page with the title on
+  a paper panel, sample buttons and alert, and a small/medium/large size picker
+  saved in `localStorage` under `armadas.uiSize`.
+- `docs/STYLE.md` and a style rule in `RULES.md`.
+- `npm run build` now copies `paper.css` and the fonts and no longer copies the
+  old `client/styles.css`.
+
+### Checks
+
+- `npm run build` passed; `dist/` has `index.html`, `paper.css`, `main.js` and
+  `fonts/` with all three WOFF2 files and both licences.
+- Contrast on paper: ink 12.03:1, faded ink 6.47:1, urgent red 5.64:1; cream on
+  wax red 7.41:1. All pass WCAG AA for normal text.
+- The style sheet contains no `#000` or `#fff`.
+
+### Broken or unfinished
+
+- No browser is available in this workspace, so the page was checked by build
+  inspection, not visually. Phone and desktop layout have not been seen on a
+  real screen yet.
+- Menus look the same day and night because there is deliberately no dark theme;
+  the only menu styling so far is the `.menu` list used by later screens.
+- UI size choice is stored in `localStorage`; with storage blocked the page
+  falls back to medium.

@@ -46,10 +46,12 @@ async function build() {
     logLevel: "info",
   });
 
-  // Copy the page files into the top-level dist folder.
+  // Copy the page, the one shared style sheet and the self-hosted fonts into
+  // the top-level dist folder.
   await mkdir(dist, { recursive: true });
   await cp(path.join(root, "client/index.html"), path.join(dist, "index.html"));
-  await cp(path.join(root, "client/styles.css"), path.join(dist, "styles.css"));
+  await cp(path.join(root, "client/paper.css"), path.join(dist, "paper.css"));
+  await cp(path.join(root, "client/fonts"), path.join(dist, "fonts"), { recursive: true });
   await cp(path.join(root, "client/dist/main.js"), path.join(dist, "main.js"));
 
   console.log("\nBuild OK -> dist/index.html");

@@ -1,15 +1,52 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" data-ui-size="medium">
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Armada's 1805</title>
-    <link rel="stylesheet" href="./styles.css" />
+    <link rel="stylesheet" href="./paper.css" />
   </head>
   <body>
-    <main class="frame">
-      <h1 id="game-name">Armada's 1805</h1>
-      <p class="build" id="build-label">Build 0B: deployment test</p>
+    <main class="wrap">
+      <header class="paper">
+        <p class="kicker">Style test page</p>
+        <h1 id="game-name">Armada's 1805</h1>
+        <p class="build" id="build-label">Build 1A: paper style and sailing</p>
+      </header>
+
+      <section class="paper stack" aria-labelledby="components-heading">
+        <h2 id="components-heading">Components</h2>
+        <p>
+          Paper, ink and a little wax. Body text stays readable on a phone, a
+          Chromebook and a PC.
+        </p>
+
+        <div class="row">
+          <button class="btn" type="button" id="example-inked">Set sail</button>
+          <button class="btn btn-seal" type="button" id="example-seal">
+            Confirm order
+          </button>
+        </div>
+
+        <p class="alert-urgent" role="note">
+          Urgent: enemy sail sighted to windward.
+        </p>
+
+        <hr class="rule" />
+
+        <fieldset class="size-picker">
+          <legend>UI size</legend>
+          <button class="btn size-option" type="button" data-size="small" aria-pressed="false">
+            Small
+          </button>
+          <button class="btn size-option" type="button" data-size="medium" aria-pressed="true">
+            Medium
+          </button>
+          <button class="btn size-option" type="button" data-size="large" aria-pressed="false">
+            Large
+          </button>
+        </fieldset>
+      </section>
     </main>
     <script src="./main.js" defer></script>
   </body>

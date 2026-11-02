@@ -10,6 +10,10 @@ Read this file at the start of every prompt, then follow it for the whole sessio
 
 - The server runs the real game world. The client only displays it and sends orders. The client must never be trusted with hidden information.
 
+## Style
+
+- Every screen uses the single shared style sheet `client/paper.css`, described in `docs/STYLE.md`. Never add a second theme.
+
 ## Numbers
 
 - Every tuning number goes in `shared/settings.ts`. Never hard-code a number that a designer might want to change.

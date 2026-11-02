@@ -27,7 +27,9 @@ type Point = { x: number; y: number };
 
 function pointAt(bearingDeg: number, distanceKm: number): Point {
   const rad = bearingDeg * RAD;
-  return { x: Math.sin(rad) * distanceKm, y: Math.cos(rad) * distanceKm };
+  // The world's y grows south, so a compass bearing points along
+  // (sin bearing, -cos bearing).
+  return { x: Math.sin(rad) * distanceKm, y: -Math.cos(rad) * distanceKm };
 }
 
 /** Sail until the order is finished, and report how many steps it took. */

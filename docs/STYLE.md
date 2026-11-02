@@ -75,3 +75,10 @@ and UI sizes, and `.hud-ship` for speed, heading, wind arrow and compass rose.
 control reminder on larger screens. On phones the top bar wraps and the ship
 panel spans the bottom; the hint is hidden. The sea itself is a flat, muted
 blue-green that sits comfortably beside the paper cream.
+
+The chart is drawn on the canvas rather than styled with CSS, but it uses the
+same palette: a `#efe3c8` land wash, a dark `#2a1c10` ink coast, a wider lighter
+`#b79b6b` water line outside it, and the muted `#7c948a` sea. `.charting` is a
+small ink-on-paper scrap shown while tiles load. `.chart-notice` is the paper
+notice for server messages such as a coast or chart-edge stop; it fades after
+a few seconds and never covers the ship panel on a phone.

@@ -108,6 +108,40 @@ in the channel beside it.)
 
 The British start at 13 N, 79.5 W is sea in the lookup, as it should be.
 
+## Drawing on screen
+
+The client fetches `client/public/tiles/index.json` once, then chooses a tile
+level whose tiles are no larger than twice the view. Over the 5–300 km zoom
+range that is normally level 2, 3 or 4, so a screen never loads the coarse
+whole-map levels. Only tiles that exist (those with land) and overlap the view
+are fetched, and their JSON is cached. A small `Charting…` paper scrap shows
+while visible tiles are on the way.
+
+Tiles are drawn with the map's muted sea behind them: a `#efe3c8` land wash,
+a 1.5 px `#2a1c10` coast line, and a 7 px lighter `#b79b6b` water line that
+peeks out on the sea side. Coast lines are drawn as gentle quadratic curves
+through the tile points so close zoom looks hand-inked rather than blocky.
+Panning shifts the already-built layer; a zoom rebuilds it at most about every
+120 ms, which keeps pinch gestures responsive. The whole frame has a hard cap
+of 30,000 chart points; if a view would exceed it, the client drops the
+furthest tiles rather than drawing an unbounded frame.
+
+The build copies all tiles into `dist/tiles/`, so Wrangler and Cloudflare serve
+`/tiles/...` beside the page.
+
+### Measured worst view
+
+`npm run measure-map` checks 1,176 camera positions at 21 zoom levels on both a
+360 × 800 phone screen and a 1280 × 800 Chromebook screen, using the same level
+choice and point cap as the client. The worst view found was 180 km across,
+centred near 72.2 W, 46.6 S over the Chilean coast: 6 tiles, 171,423 tile
+bytes, 21,634 points charged against the cap, and **16,292 points actually
+drawn**. That is comfortably below 30,000.
+
+This is a geometry and download measurement, not a frame rate. No browser is
+available in this workspace, so real GPU frame times on a Samsung A16 or a
+Chromebook have not been measured.
+
 ## Known limits
 
 - Grounding in shallow water is not modelled. A ship stops at the coast line;
@@ -122,3 +156,6 @@ The British start at 13 N, 79.5 W is sea in the lookup, as it should be.
 - Antarctica is present only north of latitude -78, because that is where the
   chart frame ends.
 - There is no fog of war and no whole-map overview yet.
+- Real-device frame rate, touch pinch and WebGL rendering were not seen in a
+  browser in this workspace; only the point budget and the served assets were
+  checked.

@@ -154,11 +154,19 @@ export const settings = {
     maxRoomCodeLength: 24,
   },
 
-  /** Camera limits for the client, in km across the screen. */
+  /** Camera limits and chart drawing for the client. */
   view: {
     minKmAcross: 5,
     maxKmAcross: 300,
     startKmAcross: 60,
+    /** Pick a tile level whose tiles are no larger than this share of the
+     *  view. Two means a view spans at least two tiles. */
+    tileLevelPickFactor: 2,
+    /** Hard ceiling on chart points drawn in one frame. */
+    maxDrawnPoints: 30_000,
+    /** Ink coast line and the lighter water line outside it, in screen px. */
+    coastLinePx: 1.5,
+    waterLinePx: 7,
   },
 } as const;
 

@@ -148,15 +148,17 @@ function upwindHeadingRad(ship: Ship, spec: ShipSpec, order: SailToOrder): numbe
   const windFromRad = settings.weather.windFromDeg * DEG;
 
   // Unit vector across the wind line, used to measure the ship's offset.
+  // The world's y grows south, so a compass heading h points along
+  // (sin h, -cos h).
   const acrossX = Math.cos(windFromRad);
-  const acrossY = -Math.sin(windFromRad);
+  const acrossY = Math.sin(windFromRad);
   const offsetKm = (ship.x - order.x) * acrossX + (ship.y - order.y) * acrossY;
 
   let side = ship.tackSide;
   const tackHeading = windFromRad + side * spec.closestAngleDeg * DEG;
 
   // How fast this tack pushes the ship further across the wind line.
-  const acrossRate = Math.sin(tackHeading) * acrossX + Math.cos(tackHeading) * acrossY;
+  const acrossRate = Math.sin(tackHeading) * acrossX - Math.cos(tackHeading) * acrossY;
   const tackSpeedKmh = speedForHeading(spec, tackHeading) * KM_PER_HOUR_PER_KNOT;
   const turnSeconds =
     Math.abs(shortestTurnDegrees(ship.headingRad, tackHeading)) /
@@ -210,8 +212,9 @@ export function stepShip(
     return;
   }
 
-  // Bearing to the target, 0 = north, clockwise.
-  const bearingRad = Math.atan2(dx, dy);
+  // Bearing to the target, 0 = north, clockwise. The world's y grows
+  // south, so north is negative y.
+  const bearingRad = Math.atan2(dx, -dy);
   const sailable = angleOffWindDeg(bearingRad, windFromDeg) >= spec.closestAngleDeg - 1e-9;
   const wantedRad = sailable ? bearingRad : upwindHeadingRad(ship, spec, order);
 
@@ -227,5 +230,5 @@ export function stepShip(
   ship.speedKnots = speedForHeading(spec, ship.headingRad, windFromDeg);
   const travelKm = ship.speedKnots * KM_PER_HOUR_PER_KNOT * (dtGameSeconds / 3600);
   ship.x += Math.sin(ship.headingRad) * travelKm;
-  ship.y += Math.cos(ship.headingRad) * travelKm;
+  ship.y -= Math.cos(ship.headingRad) * travelKm;
 }

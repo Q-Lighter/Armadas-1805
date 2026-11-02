@@ -163,7 +163,7 @@ try {
 
   // Orders are relative to each ship's real starting berth near Jamaica.
   alpha.socket.send(JSON.stringify({ t: "o", x: alphaX + 20, y: alphaShip[3] }));
-  beta.socket.send(JSON.stringify({ t: "o", x: betaShip[2], y: betaY - 20 }));
+  beta.socket.send(JSON.stringify({ t: "o", x: betaShip[2], y: betaY + 20 }));
 
   // Junk orders must be ignored without dropping the connection.
   alpha.socket.send(JSON.stringify({ t: "o", x: "east", y: 4 }));
@@ -183,7 +183,7 @@ try {
 
   if (!(alphaEnd.message.tick > startTick)) throw new Error("world tick did not advance");
   if (!(alphaEndX > alphaX + 0.05)) throw new Error("alpha did not sail east");
-  if (!(betaEndY < betaY - 0.05)) throw new Error("beta did not sail south");
+  if (!(betaEndY > betaY + 0.05)) throw new Error("beta did not sail south");
   if (alpha.socket.readyState !== WebSocket.OPEN) throw new Error("junk orders dropped the socket");
   if (Math.abs(alphaEnd.message.tick - betaEnd.message.tick) > 1) {
     throw new Error("the two players are out of sync");
@@ -194,7 +194,7 @@ try {
     rooms: { simtest: 2, otherroom: 1 },
     ticksAdvanced: alphaEnd.message.tick - startTick,
     alphaMovedKm: Number((alphaEndX - alphaX).toFixed(2)),
-    betaMovedKm: Number((betaY - betaEndY).toFixed(2)),
+    betaMovedKm: Number((betaEndY - betaY).toFixed(2)),
     updatesReceived: updateSizes.length,
     typicalUpdateBytes: median(updateSizes),
     smallestUpdateBytes: Math.min(...updateSizes),

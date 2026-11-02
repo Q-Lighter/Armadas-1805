@@ -344,6 +344,61 @@ h2 {
   font-weight: 600;
 }
 
+/* "Charting..." while a tile is on its way. Ink on a small paper scrap. */
+.charting {
+  position: fixed;
+  z-index: 3;
+  top: max(5.2rem, calc(env(safe-area-inset-top) + 4.6rem));
+  left: max(0.5rem, env(safe-area-inset-left));
+  margin: 0;
+  padding: 0.25rem 0.6rem;
+  border: 1px solid var(--rule);
+  background: rgba(232, 219, 189, 0.94);
+  color: var(--ink-faded);
+  font-size: calc(0.8rem * var(--ui-scale));
+  font-style: italic;
+  pointer-events: none;
+}
+
+.charting[hidden] {
+  display: none;
+}
+
+/* A short server message, on paper, fading after a few seconds. */
+.chart-notice {
+  position: fixed;
+  z-index: 3;
+  left: 50%;
+  bottom: max(0.9rem, env(safe-area-inset-bottom));
+  transform: translateX(-50%);
+  max-width: calc(100% - 2rem);
+  margin: 0;
+  padding: 0.5rem 0.9rem;
+  border: 1px solid var(--ink);
+  outline: 1px solid rgba(42, 28, 16, 0.35);
+  outline-offset: 3px;
+  border-radius: 2px;
+  background-color: var(--paper);
+  background-image: var(--paper-texture);
+  background-blend-mode: multiply;
+  box-shadow: 0 8px 20px rgba(42, 28, 16, 0.25);
+  color: var(--ink);
+  font-size: calc(0.95rem * var(--ui-scale));
+  font-weight: 600;
+  text-align: center;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.3s ease;
+}
+
+.chart-notice.is-visible {
+  opacity: 1;
+}
+
+.chart-notice[hidden] {
+  display: none;
+}
+
 .hud-ship {
   left: max(0.5rem, env(safe-area-inset-left));
   bottom: max(0.5rem, env(safe-area-inset-bottom));
@@ -440,5 +495,14 @@ h2 {
 
   .hint {
     display: none;
+  }
+
+  .charting {
+    top: max(4.8rem, calc(env(safe-area-inset-top) + 4.2rem));
+    font-size: calc(0.75rem * var(--ui-scale));
+  }
+
+  .chart-notice {
+    bottom: calc(env(safe-area-inset-bottom) + 11rem);
   }
 }

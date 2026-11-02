@@ -368,3 +368,75 @@ upwind order along a coast.
   ship's single current order.
 - The coast stop uses the 1 km lookup, so it can be up to about a kilometre
   from the drawn coast. Shallow-water grounding still needs depth data.
+
+## Session 1B-c: real map on screen
+
+**Date:** 2026-11-02
+**Branch:** main
+
+### What was asked
+
+Draw the real chart from the tiles: load only tiles near the view at the right
+detail, show a charting indicator, keep drawing cheap on a phone and a
+Chromebook with a point cap, use a light land wash with a dark ink coast and a
+lighter water line outside it, smooth the coast, show the coast/edge messages
+as fading paper notices, and keep pan, tap-to-sail and the 5-300 km zoom.
+
+### What was built
+
+- `client/main.ts`: loads `tiles/index.json`, chooses a level whose tiles are
+  no larger than twice the view, fetches only visible land tiles, and caches
+  their JSON. Tiles are built in screen coordinates so panning shifts one
+  layer and zooming rebuilds it at most every 120 ms.
+- Chart drawing: `#efe3c8` land wash, a 1.5 px `#2a1c10` coast line, a 7 px
+  lighter `#b79b6b` line outside it, and quadratic smoothing through the coast
+  points. The sea stays `#7c948a`.
+- A 30,000-point per-frame cap. The client also lowers the level if a view
+  would exceed it, and drops the furthest tiles as a last resort.
+- `client/index.html` and `client/paper.css`: the `Charting…` scrap and the
+  fading `.chart-notice` paper message, with a phone placement above the ship
+  panel.
+- `client/main.ts` handles the server's `{ "t": "n", "text": ... }` notices.
+- `scripts/build.mjs`: copies `client/public/` (the tiles and index) into
+  `dist/`.
+- `scripts/measure-map.mjs` and `npm run measure-map`: the worst-view geometry
+  measurement, using the same level choice and cap as the client.
+- `tests/tiles.test.ts`: manifest/file integrity, per-tile size, total file and
+  byte limits, and a sample tile shape.
+- Corrected the world to the chart's y-south convention. Sailing movement,
+  target bearings, tacking, start placement, the client camera and the
+  simulation now all use y growing south; before this the map and ships would
+  have been mirrored against each other.
+- `README.md`, `docs/MAP.md` and `docs/STYLE.md` updated.
+
+### Checks
+
+- `npm test`: 25 tests, all passing.
+- `npm run build`: passing.
+- `npx wrangler deploy --dry-run`: passing. 1,634 asset files; Worker upload
+  93.00 KiB, 53.10 KiB gzipped.
+- `npm run test:server`: passing. Alpha moved 2.72 km, beta moved 4.86 km, the
+  rooms stayed separate, and a normal update was 137 bytes.
+- Static check through a local workerd server: `/`, `/main.js`, `/paper.css`,
+  `/tiles/index.json`, `/tiles/4/8_2.json` and a font all returned 200 with the
+  right content types.
+- `npm run measure-map`: the worst view found was 180 km across over southern
+  Chile on a 360 x 800 phone screen. It loaded 6 tiles (171,423 bytes) and drew
+  16,292 chart points (21,634 charged against the cap), below 30,000.
+
+### Broken or unfinished
+
+- No browser is available in this workspace. The chart, ink coast, charting
+  scrap, notice fading, touch pan/pinch and WebGL rendering were not seen on a
+  screen. Real frame rates on a Samsung A16 and a Chromebook are unmeasured;
+  the 16,292 points and 171 KB are geometry and download measurements.
+- No deployment was made. The dry run validates the Worker and asset bundle
+  only; Cloudflare builds from `main`.
+- The map layer is screen-space and rebuilds on zoom. A slow pinch may briefly
+  show the previous zoom's chart until the next rebuild.
+- Coast stops use the 1 km lookup, so a ship can stop up to about a kilometre
+  from the drawn coast. Shallow-water grounding still needs depth data.
+- There is still no fog of war or whole-map overview, and there is no order
+  queue.
+- The largest tile is 56,578 bytes, close to the 60 KB per-tile target. New
+  coast detail should raise the budget or split that tile.

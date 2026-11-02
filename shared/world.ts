@@ -86,14 +86,16 @@ function startSpot(playerId: string): { x: number; y: number; headingRad: number
   const share = 0.55 + (((hash >>> 8) % 1000) / 1000) * 0.45;
   const distanceKm = area.radiusKm * share;
 
+  // The chart's y grows south, so a compass bearing points along
+  // (sin bearing, -cos bearing).
   const x = centre.x + Math.sin(bearingRad) * distanceKm;
-  const y = centre.y + Math.cos(bearingRad) * distanceKm;
+  const y = centre.y - Math.cos(bearingRad) * distanceKm;
 
   return {
     x,
     y,
     // Face the middle of the start area.
-    headingRad: Math.atan2(centre.x - x, centre.y - y),
+    headingRad: Math.atan2(centre.x - x, y - centre.y),
   };
 }
 
@@ -119,7 +121,7 @@ function newPlayerSpot(world: World, playerId: string): { x: number; y: number; 
   for (let attempt = 0; attempt < 12; attempt += 1) {
     const candidate = {
       x: centre.x + Math.sin(bearing) * radius,
-      y: centre.y + Math.cos(bearing) * radius,
+      y: centre.y - Math.cos(bearing) * radius,
     };
 
     const clear = [...world.players.values()].every(
@@ -128,7 +130,7 @@ function newPlayerSpot(world: World, playerId: string): { x: number; y: number; 
     if (clear) {
       spot = {
         ...candidate,
-        headingRad: Math.atan2(centre.x - candidate.x, centre.y - candidate.y),
+        headingRad: Math.atan2(centre.x - candidate.x, candidate.y - centre.y),
       };
       break;
     }

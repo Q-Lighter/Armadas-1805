@@ -6,48 +6,80 @@
     <title>Armada's 1805</title>
     <link rel="stylesheet" href="./paper.css" />
   </head>
-  <body>
-    <main class="wrap">
-      <header class="paper">
-        <p class="kicker">Style test page</p>
-        <h1 id="game-name">Armada's 1805</h1>
-        <p class="build" id="build-label">Build 1A: paper style and sailing</p>
-      </header>
+  <body class="game">
+    <div id="game-root"></div>
 
-      <section class="paper stack" aria-labelledby="components-heading">
-        <h2 id="components-heading">Components</h2>
-        <p>
-          Paper, ink and a little wax. Body text stays readable on a phone, a
-          Chromebook and a PC.
-        </p>
+    <header class="hud hud-top paper">
+      <div class="room-label">
+        <p class="kicker">Armada's 1805</p>
+        <p class="room">Room <strong id="room-code">test</strong></p>
+      </div>
 
-        <div class="row">
-          <button class="btn" type="button" id="example-inked">Set sail</button>
-          <button class="btn btn-seal" type="button" id="example-seal">
-            Confirm order
-          </button>
-        </div>
+      <button class="btn" id="follow-btn" type="button" aria-pressed="true">
+        Follow my ship
+      </button>
 
-        <p class="alert-urgent" role="note">
-          Urgent: enemy sail sighted to windward.
-        </p>
+      <div class="size-picker" role="group" aria-label="UI size">
+        <button class="btn size-option" type="button" data-size="small" aria-pressed="false">
+          S
+        </button>
+        <button class="btn size-option" type="button" data-size="medium" aria-pressed="true">
+          M
+        </button>
+        <button class="btn size-option" type="button" data-size="large" aria-pressed="false">
+          L
+        </button>
+      </div>
 
-        <hr class="rule" />
+      <p class="status" id="status" data-state="loading">Connecting…</p>
+    </header>
 
-        <fieldset class="size-picker">
-          <legend>UI size</legend>
-          <button class="btn size-option" type="button" data-size="small" aria-pressed="false">
-            Small
-          </button>
-          <button class="btn size-option" type="button" data-size="medium" aria-pressed="true">
-            Medium
-          </button>
-          <button class="btn size-option" type="button" data-size="large" aria-pressed="false">
-            Large
-          </button>
-        </fieldset>
-      </section>
-    </main>
+    <section class="hud hud-ship paper" aria-label="Your ship">
+      <h2>Your ship</h2>
+      <dl class="readout">
+        <dt>Speed</dt>
+        <dd id="speed">–</dd>
+        <dt>Heading</dt>
+        <dd id="heading">–</dd>
+      </dl>
+
+      <div class="wind-row">
+        <svg class="wind-arrow" viewBox="0 0 24 24" aria-hidden="true">
+          <g id="wind-arrow">
+            <path d="M12 3 L18 15 L12 12 L6 15 Z" fill="currentColor" />
+          </g>
+        </svg>
+        <span id="wind-label">Wind –</span>
+
+        <svg
+          class="compass"
+          viewBox="0 0 72 72"
+          role="img"
+          aria-label="Compass rose showing your heading"
+        >
+          <circle cx="36" cy="36" r="32" fill="none" stroke="currentColor" stroke-width="1" />
+          <circle
+            cx="36"
+            cy="36"
+            r="25"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="0.6"
+            stroke-dasharray="2 4"
+          />
+          <g id="compass-needle">
+            <path d="M36 10 L41 37 L36 33 L31 37 Z" fill="#8c1d1d" />
+          </g>
+          <text x="36" y="8" text-anchor="middle">N</text>
+          <text x="65" y="39" text-anchor="middle">E</text>
+          <text x="36" y="70" text-anchor="middle">S</text>
+          <text x="7" y="39" text-anchor="middle">W</text>
+        </svg>
+      </div>
+    </section>
+
+    <p class="hud hint">Tap the sea to sail there. Drag to pan. Pinch or scroll to zoom.</p>
+
     <script src="./main.js" defer></script>
   </body>
 </html>

@@ -4,6 +4,9 @@ node_modules/
 # Build output
 dist/
 
+# Local Wrangler state
+.wrangler/
+
 # TypeScript incremental build files
 *.tsbuildinfo
 

@@ -65,3 +65,13 @@ from any path.
 - The page column is `min(44rem, 100%)` with no fixed widths, so it never
   scrolls sideways on a phone.
 - Keyboard focus is always visible as a wax-red outline.
+
+## Game screen
+
+The game reuses the same sheet and components. The canvas fills the screen, and
+the HUD floats above it in paper panels: `.hud-top` for the room, follow button
+and UI sizes, and `.hud-ship` for speed, heading, wind arrow and compass rose.
+`.status` turns urgent red when the connection fails, and `.hint` carries the
+control reminder on larger screens. On phones the top bar wraps and the ship
+panel spans the bottom; the hint is hidden. The sea itself is a flat, muted
+blue-green that sits comfortably beside the paper cream.

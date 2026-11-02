@@ -1,9 +1,22 @@
 {
-  // Cloudflare settings for the static site.
-  // `npm run build` writes the page into dist/, and Cloudflare serves that folder.
+  // Cloudflare settings for Armada's 1805.
+  // The Worker runs the game rooms and serves the built page in dist/.
   "name": "armadas-1805",
+  "main": "server/dist/worker.js",
   "compatibility_date": "2026-11-02",
+
+  // Static page from `npm run build`. The Worker serves it for every path
+  // except /ws.
   "assets": {
-    "directory": "./dist"
-  }
+    "directory": "./dist",
+    "binding": "ASSETS"
+  },
+
+  // One Durable Object per room code, holding that room's world.
+  "durable_objects": {
+    "bindings": [{ "name": "GAME_ROOM", "class_name": "GameRoom" }]
+  },
+
+  // Free plans require SQLite-backed Durable Object classes.
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["GameRoom"] }]
 }

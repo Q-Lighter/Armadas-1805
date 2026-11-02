@@ -185,3 +185,76 @@ server tick), determinism over 5,000 steps, and refused orders.
 - The 4 km arrival radius is deliberately larger than the 5 km-wide zigzag. It
   may want tuning once ships are visible on screen.
 - No client or server uses these rules yet; that is Part C.
+
+## Session 1A-c: server, two devices, sailing
+
+**Date:** 2026-11-02
+**Branch:** main
+
+### What was asked
+
+A Cloudflare Worker plus a `GameRoom` Durable Object that runs the real 10 Hz
+world and sends 5 updates a second; room codes from `?room=`; a remembered
+player id; server-checked sail-to orders; all outgoing world data through
+`visibleStateFor`; a compact message format; a PixiJS client with smoothed
+ships, tap orders, a target marker, pan, 5-300 km zoom, follow, and a paper
+HUD with speed, heading, wind arrow and compass rose; and simulated-client
+testing.
+
+### What was built
+
+- `shared/world.ts`: the world, player ships placed in the start area,
+  `applyOrder`, `stepWorld`, and `visibleStateFor` as the only function that
+  turns world state into client data. It currently returns every ship.
+- `server/src/gameRoom.ts`: one Durable Object per room. It accepts the
+  WebSocket, starts a 10 Hz `setInterval` world loop, broadcasts every second
+tick, and applies only orders that pass the shared checks. Bad JSON and bad
+  coordinates are ignored.
+- `server/src/worker.ts`: sends `/ws` to the room's Durable Object (after
+  checking the room code) and serves `dist/` through the `ASSETS` binding.
+- `wrangler.jsonc`: Worker entry `server/dist/worker.js`, `GAME_ROOM` binding,
+  a `v1` SQLite-backed migration and the `dist/` assets binding.
+- `client/main.ts`: PixiJS draw loop, plain blue-green sea, navy hulls with a
+  wax-red ring on your own ship, interpolation between 5 Hz updates, tap to
+  order, marker, drag pan, pinch/wheel zoom, follow toggle and reconnect.
+- `client/index.html` and `client/paper.css`: the game screen and its HUD,
+  using the one shared paper style and the three remembered UI sizes.
+- `scripts/simulate-clients.mjs` and `npm run test:server`.
+- `tests/world.test.ts`: start placement, returning ids, compact state,
+  order checking, world stepping and mutual visibility.
+- Removed the old `server/index.ts` placeholder.
+
+### Checks
+
+- `npm test`: 13 tests, all passing.
+- `npm run build`: passing. The client bundle is about 1.65 MB unminified.
+- `npx wrangler deploy --dry-run`: passing, with the Worker, `GameRoom`
+  binding and asset binding recognised.
+- `npm run test:server` (local workerd): passed. Two clients in `simtest` saw
+  both ships and moved 3.2 km and 2.64 km; a third client in `otherroom` saw only
+its own ship. 118 ticks in about 12 seconds; 63 updates to one client; normal
+update 128 bytes, smallest 88, largest 130. Junk and out-of-range orders did
+not drop the socket, and the two clients stayed within one tick.
+- Local asset serving checked with curl: `/`, `/main.js`, `/paper.css` and a
+  font all returned 200 with the right content types; `/main.js` is served in
+  full.
+- `grep` confirms the only `socket.send` call serialises
+  `visibleStateFor(...)`; no other code sends world data.
+
+### Broken or unfinished
+
+- Nothing was deployed. The Cloudflare account builds from `main`; this
+  workspace has no account login. The dry run is not a deployment.
+- There is no browser in this workspace, so the PixiJS view, pinch/drag input
+  and the phone/Chromebook layouts were not seen on screen. They are checked
+  only by type checking, bundling and HTTP serving.
+- Room state is in memory. A Durable Object eviction or restart resets the
+  world; neither storage nor hibernation is used yet. The 10 Hz loop uses
+  `setInterval`, not alarms.
+- The server steps a fixed 14.4 game seconds per tick and ignores real timing
+  drift.
+- Hidden information does not exist yet, so `visibleStateFor` returns every
+  ship. That is the one place to change when it does.
+- `topKnots` is still unused, and the wind is still the constant placeholder.
+- The client says so on screen if WebGL cannot start; this was not tested on a
+  device without WebGL.

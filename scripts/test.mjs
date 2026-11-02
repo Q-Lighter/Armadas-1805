@@ -23,4 +23,4 @@ function run(command, args) {
 
 run(tsc, ["-p", "shared/tsconfig.json"]);
 run(tsc, ["-p", "tests/tsconfig.json"]);
-run(process.execPath, ["--test", "tests/dist/sailing.test.js"]);
+run(process.execPath, ["--test", "tests/dist"]);

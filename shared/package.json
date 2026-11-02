@@ -17,6 +17,10 @@
     "./sailing": {
       "types": "./dist/sailing.d.ts",
       "default": "./dist/sailing.js"
+    },
+    "./world": {
+      "types": "./dist/world.d.ts",
+      "default": "./dist/world.js"
     }
   },
   "files": [

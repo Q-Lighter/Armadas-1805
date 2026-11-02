@@ -12,15 +12,19 @@
   "scripts": {
     "build": "node scripts/build.mjs",
     "test": "node scripts/test.mjs",
+    "test:server": "npm run build && node scripts/simulate-clients.mjs",
     "deploy": "wrangler deploy"
   },
   "engines": {
     "node": ">=20"
   },
   "devDependencies": {
+    "@cloudflare/workers-types": "^5.20261102.1",
     "@types/node": "^22.0.0",
+    "@types/ws": "^8.18.2",
     "esbuild": "^0.25.0",
     "typescript": "^5.9.0",
-    "wrangler": "^4.156.1"
+    "wrangler": "^4.156.1",
+    "ws": "^8.22.1"
   }
 }

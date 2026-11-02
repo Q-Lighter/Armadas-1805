@@ -4,12 +4,13 @@
 // ship movement between updates, and sends sail-to orders. It never predicts
 // or changes the world on its own.
 
-import { Application, Container, Graphics } from "pixi.js";
+import { Application, Container, Graphics, Text } from "pixi.js";
 import { settings } from "@naval/shared/settings";
 import {
   MAP_HEIGHT_KM,
   MAP_WIDTH_KM,
   lonLatToMap,
+  mapToLonLat,
 } from "@naval/shared/map";
 import type { StateMessage } from "@naval/shared/world";
 
@@ -21,6 +22,17 @@ const SEA_COLOR = 0x7c948a;
 const LAND_COLOR = 0xefe3c8;
 const INK_COLOR = 0x2a1c10;
 const WATERLINE_COLOR = 0xb79b6b;
+
+// TEMP-DEBUG: the whole-map view only exists when the address says debug=1.
+// Remove this block, and every other TEMP-DEBUG block, with the debug view.
+const DEBUG_VIEW = new URLSearchParams(location.search).get("debug") === "1";
+
+// TEMP-DEBUG: format the pointer readout in the debug panel.
+function formatLatLon(latitude: number, longitude: number): string {
+  const latHemisphere = latitude < 0 ? "S" : "N";
+  const lonHemisphere = longitude < 0 ? "W" : "E";
+  return `${Math.abs(latitude).toFixed(1)}° ${latHemisphere}, ${Math.abs(longitude).toFixed(1)}° ${lonHemisphere}`;
+}
 
 // ---------------------------------------------------------------------------
 // UI size (small / medium / large), remembered between visits.
@@ -162,6 +174,13 @@ async function start(): Promise<void> {
   const charting = element<HTMLParagraphElement>("charting");
   const notice = element<HTMLParagraphElement>("notice");
 
+  // TEMP-DEBUG: the panel is hidden in the HTML unless the debug view is on.
+  const debugPanel = element<HTMLElement>("debug-panel");
+  const debugPosition = element<HTMLParagraphElement>("debug-position");
+  const debugWholeButton = element<HTMLButtonElement>("debug-whole-map");
+  const debugShipButton = element<HTMLButtonElement>("debug-my-ship");
+  debugPanel.hidden = !DEBUG_VIEW;
+
   const room = new URLSearchParams(location.search).get("room") ?? "test";
   const roomPattern = new RegExp(`^[A-Za-z0-9_-]{1,${settings.server.maxRoomCodeLength}}$`);
   if (!roomPattern.test(room)) {
@@ -186,7 +205,16 @@ async function start(): Promise<void> {
   const waterLayer = new Container();
   const fillLayer = new Container();
   const coastLayer = new Container();
-  mapLayer.addChild(waterLayer, fillLayer, coastLayer);
+
+  // TEMP-DEBUG: border, grid and labels sit above the chart but below the HUD.
+  const debugLayer = new Container();
+  const debugGrid = new Graphics();
+  const debugBorder = new Graphics();
+  const debugLabels = new Container();
+  debugLayer.addChild(debugGrid, debugBorder, debugLabels);
+  debugLayer.visible = DEBUG_VIEW;
+
+  mapLayer.addChild(waterLayer, fillLayer, coastLayer, debugLayer);
   mapLayer.eventMode = "none";
 
   const layer = new Container();
@@ -232,6 +260,20 @@ async function start(): Promise<void> {
   let currentLevelZ = -1;
 
   const scale = (): number => app.screen.width / view.kmAcross;
+
+  // TEMP-DEBUG: how far out the camera must go for the whole chart to fit.
+  function wholeMapKmAcross(): number {
+    const fit = Math.max(
+      MAP_WIDTH_KM,
+      MAP_HEIGHT_KM * (app.screen.width / app.screen.height),
+    );
+    return fit * 1.02;
+  }
+
+  // TEMP-DEBUG: normal play keeps the exact 300 km limit; only debug widens it.
+  function maxViewKmAcross(): number {
+    return DEBUG_VIEW ? wholeMapKmAcross() : settings.view.maxKmAcross;
+  }
 
   function toScreen(x: number, y: number): { x: number; y: number } {
     const s = scale();
@@ -349,6 +391,11 @@ async function start(): Promise<void> {
 
   function pickLevel(): LevelInfo | null {
     if (levels.length === 0) return null;
+
+    // TEMP-DEBUG: far-out debug views always use the coarsest level.
+    if (DEBUG_VIEW && view.kmAcross > settings.view.maxKmAcross) {
+      return levels[0] ?? null;
+    }
 
     const desired =
       levels.find((level) => level.km <= view.kmAcross * settings.view.tileLevelPickFactor) ??
@@ -485,6 +532,53 @@ async function start(): Promise<void> {
     );
   }
 
+  // TEMP-DEBUG: draw the chart frame, the 10-degree graticule and its labels.
+  function drawDebugOverlay(): void {
+    debugGrid.clear();
+    debugBorder.clear();
+    for (const child of debugLabels.removeChildren()) child.destroy();
+
+    if (!DEBUG_VIEW || builtScale <= 0) return;
+
+    const [left, top] = screenPoint(0, 0);
+    const [right, bottom] = screenPoint(MAP_WIDTH_KM, MAP_HEIGHT_KM);
+    debugBorder
+      .rect(left, top, right - left, bottom - top)
+      .stroke({ width: 1, color: INK_COLOR, alpha: 0.55 });
+
+    for (let lon = -90; lon <= -30; lon += 10) {
+      const x = lonLatToMap(lon, 0).x;
+      const [screenX, screenTop] = screenPoint(x, 0);
+      const [, screenBottom] = screenPoint(x, MAP_HEIGHT_KM);
+      debugGrid.moveTo(screenX, screenTop).lineTo(screenX, screenBottom);
+
+      const label = new Text({
+        text: `${Math.abs(lon)}°${lon < 0 ? "W" : "E"}`,
+        style: { fontFamily: "Source Sans 3", fontSize: 10, fill: INK_COLOR },
+      });
+      label.alpha = 0.65;
+      label.position.set(screenX + 3, screenTop + 3);
+      debugLabels.addChild(label);
+    }
+
+    for (let lat = -70; lat <= 20; lat += 10) {
+      const y = lonLatToMap(0, lat).y;
+      const [screenLeft, screenY] = screenPoint(0, y);
+      const [screenRight] = screenPoint(MAP_WIDTH_KM, y);
+      debugGrid.moveTo(screenLeft, screenY).lineTo(screenRight, screenY);
+
+      const label = new Text({
+        text: `${Math.abs(lat)}°${lat < 0 ? "S" : "N"}`,
+        style: { fontFamily: "Source Sans 3", fontSize: 10, fill: INK_COLOR },
+      });
+      label.alpha = 0.65;
+      label.position.set(screenLeft + 3, screenY - 12);
+      debugLabels.addChild(label);
+    }
+
+    debugGrid.stroke({ width: 1, color: INK_COLOR, alpha: 0.16 });
+  }
+
   function refreshChart(now: number, force = false): void {
     if (levels.length === 0 || app.screen.width <= 0) return;
 
@@ -505,6 +599,7 @@ async function start(): Promise<void> {
       builtView = { x: view.x, y: view.y };
       builtScale = currentScale;
       lastMapBuild = now;
+      drawDebugOverlay(); // TEMP-DEBUG
     }
 
     if (Math.abs(currentScale - builtScale) > 1e-9) {
@@ -721,7 +816,8 @@ async function start(): Promise<void> {
   }
 
   function zoomTo(kmAcross: number): void {
-    view.kmAcross = clamp(kmAcross, settings.view.minKmAcross, settings.view.maxKmAcross);
+    // TEMP-DEBUG: maxViewKmAcross is 300 unless debug=1 is present.
+    view.kmAcross = clamp(kmAcross, settings.view.minKmAcross, maxViewKmAcross());
   }
 
   app.canvas.addEventListener("pointerdown", (event) => {
@@ -794,6 +890,47 @@ async function start(): Promise<void> {
   );
 
   followButton.addEventListener("click", () => setFollow(!view.follow));
+
+  // TEMP-DEBUG: panel actions and the live latitude/longitude readout.
+  if (DEBUG_VIEW) {
+    const jumpToWholeMap = (): void => {
+      setFollow(false);
+      view.kmAcross = wholeMapKmAcross();
+      view.x = MAP_WIDTH_KM / 2;
+      view.y = MAP_HEIGHT_KM / 2;
+      refreshChart(performance.now(), true);
+    };
+
+    const jumpToMyShip = (): void => {
+      const own = ships.get(ownId);
+      setFollow(true);
+      view.kmAcross = Math.min(settings.view.startKmAcross, maxViewKmAcross());
+      if (own) {
+        view.x = own.x;
+        view.y = own.y;
+      } else {
+        view.x = startPoint.x;
+        view.y = startPoint.y;
+      }
+      refreshChart(performance.now(), true);
+    };
+
+    debugWholeButton.addEventListener("click", jumpToWholeMap);
+    debugShipButton.addEventListener("click", jumpToMyShip);
+
+    const showPointerPosition = (event: PointerEvent): void => {
+      const rect = app.canvas.getBoundingClientRect();
+      const world = toWorld(event.clientX - rect.left, event.clientY - rect.top);
+      const lonLat = mapToLonLat(world.x, world.y);
+      debugPosition.textContent = formatLatLon(lonLat.latDeg, lonLat.lonDeg);
+    };
+
+    app.canvas.addEventListener("pointermove", showPointerPosition);
+    app.canvas.addEventListener("pointerdown", showPointerPosition);
+    app.canvas.addEventListener("pointerleave", () => {
+      debugPosition.textContent = "–";
+    });
+  }
 
   // ---- Frame loop ---------------------------------------------------------
 

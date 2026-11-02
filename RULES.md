@@ -30,3 +30,4 @@ Read this file at the start of every prompt, then follow it for the whole sessio
 
 - Each prompt is one job and must finish inside one session. At the end of every prompt: test what you built, commit, push to `main`, and report back.
 - Write short, clear code with comments in plain English.
+- The debug view (TEMP-DEBUG) is temporary and must be removed before the fog of war and before online play.

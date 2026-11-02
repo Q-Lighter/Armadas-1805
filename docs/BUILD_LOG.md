@@ -440,3 +440,57 @@ as fading paper notices, and keep pan, tap-to-sail and the 5-300 km zoom.
   queue.
 - The largest tile is 56,578 bytes, close to the 60 KB per-tile target. New
   coast detail should raise the budget or split that tile.
+
+## Session 1B-debug: temporary whole-map view
+
+**Date:** 2026-11-02
+**Branch:** main
+
+### What was asked
+
+A temporary client-only debug view enabled only by `debug=1` in the address:
+zoom out to the whole chart, return to the ship, show pointer latitude and
+longitude, draw the world border and a labelled 10-degree grid, keep normal
+zoom limits unchanged, mark everything TEMP-DEBUG, and add a removal rule and
+this build-log entry.
+
+### What was built
+
+- `client/main.ts`: `DEBUG_VIEW` is true only when the query string has
+  `debug=1`. In debug, the camera may zoom out to the whole map (the fit is
+  `max(3,811 km, 5,641 km × screen aspect)` plus a small margin). Normal play
+  still clamps at the existing 300 km, and the minimum stays 5 km.
+- Far-out debug views force the coarsest tile level (level 0).
+- A hidden `.debug-panel` paper panel appears only in debug. It has **Whole
+  map** and **My ship** buttons and a live latitude/longitude readout updated
+  from pointer movement.
+- A debug-only layer draws a thin ink border around the chart and a faint
+  10-degree longitude/latitude grid with Pixi text labels. It moves with the
+  map when panning and is rebuilt with the chart on zoom.
+- `client/index.html` and `client/paper.css`: the panel markup, paper styling
+  and phone spacing.
+- `RULES.md`: the TEMP-DEBUG removal rule.
+- Every debug block is marked with a `TEMP-DEBUG` comment. The server, network
+  messages and normal camera path are untouched.
+
+### Checks
+
+- `npm test`: 25 tests, all passing.
+- `npm run build`: passing. The client bundle is about 1.7 MB unminified.
+- Normal-path static check: the built page contains the debug panel with the
+  `hidden` attribute, `DEBUG_VIEW` is false without `debug=1`, the debug layer
+  starts invisible and the normal camera maximum still returns
+  `settings.view.maxKmAcross` (300 km).
+- Whole-map fit check: 3,887 km across on a 360 × 800 phone and 9,205 km on a
+  1280 × 800 Chromebook. Both show the whole 3,811 × 5,641 km chart inside the
+  screen.
+- The debug URL was not opened in a browser; this workspace has no browser.
+
+### Broken or unfinished
+
+- The debug view, grid labels, pointer readout, buttons, pinch, scroll and drag
+  were not seen on a real screen. Normal-view behaviour was checked by code
+  inspection and the built page, not interactively.
+- The debug panel may overlap the chart on very short landscape phone screens;
+  this is unmeasured.
+- No server or deployment changes were made.

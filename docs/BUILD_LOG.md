@@ -588,6 +588,50 @@ chart geometry, test/debug room starts, and compact updates.
 - No browser or Cloudflare deployment was available. Message sizes were not
   measured over a live socket yet.
 
+## Session 1D-b: cache safety and idle sleep
+
+**Date:** 2026-11-02
+**Branch:** main
+
+### What was asked
+
+Finish 1C status reporting, then make updates safe against stale browser files
+and stop the room's world timer when nobody is connected.
+
+### What was built
+
+- `scripts/build.mjs` now writes `main.<content-hash>.js` and
+  `paper.<content-hash>.css` and rewrites the page to those names. It also
+  writes `version.json` with the build id and source commit, plus build metadata
+  in the page. The page and version file are served with no-cache headers; the
+  hashed files can be cached forever.
+- The page checks `version.json` about once a minute and on returning to the
+  tab. If the build changed, a paper notice says "A new version is available:
+  tap to reload". It never reloads automatically.
+- The TEMP-DEBUG line now includes the build commit.
+- `shared/roomLoop.ts` owns the single world timer. The first connection starts
+  it, the last disconnect stops it, and extra connections or messages cannot
+  start another. Game time is frozen while empty and resumes without catching
+  up.
+- `docs/STRESS.md` records the idle behaviour and free-plan arithmetic:
+  128 MB × 3,600 s ≈ 460.8 GB-s for one active room-hour.
+- Tests: 37 pass, including the room timer lifecycle and frozen-time resume.
+
+### Cache note
+
+Private chart blocks are not fetched from URLs: `visibleStateFor` sends them
+inline in WebSocket state, so a browser cannot cache a block separately from
+the code. Moving them to URLs later would need the map data version in the path.
+The entry page, version file and content-hashed bundle now make stale mixes
+impossible through normal browser caching.
+
+### Broken or unfinished
+
+- No browser is available, so the reload notice and the hashed page were not
+  seen or exercised interactively.
+- A real Durable Object sleep/eviction was not observed locally. The timer stop
+  is unit-tested; deliberate eviction is not.
+
 ## Session 1C-c: fog view on the live page
 
 **Date:** 2026-11-02

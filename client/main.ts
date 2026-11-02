@@ -150,7 +150,16 @@ async function start(): Promise<void> {
   const chartButton = element<HTMLButtonElement>("chart-btn");
   const roomOut = element<HTMLElement>("room-code");
   const notice = element<HTMLParagraphElement>("notice");
+  const versionNotice = element<HTMLButtonElement>("version-notice");
   const fogDebugOut = element<HTMLParagraphElement>("fog-debug");
+  const buildMeta = document.querySelector<HTMLMetaElement>(
+    'meta[name="armadas-build"]',
+  );
+  const commitMeta = document.querySelector<HTMLMetaElement>(
+    'meta[name="armadas-commit"]',
+  );
+  let pageBuildId = buildMeta?.content ?? "";
+  let buildCommit = commitMeta?.content ?? "unknown";
 
   const room = new URLSearchParams(location.search).get("room") ?? "test";
   const roomPattern = new RegExp(`^[A-Za-z0-9_-]{1,${settings.server.maxRoomCodeLength}}$`);
@@ -685,9 +694,37 @@ async function start(): Promise<void> {
   }
 
   function updateDebugLine(): void {
-    const line = fogDebugLine(roomKind, chartAll, discovered, blocks.size);
+    const line = fogDebugLine(
+      roomKind,
+      chartAll,
+      discovered,
+      blocks.size,
+      buildCommit,
+    );
     fogDebugOut.textContent = line ?? "";
     fogDebugOut.hidden = line === null;
+  }
+
+  /**
+   * Read the small version file, never from cache. The first read learns this
+   * page's build; later reads only show the reload notice when it changes.
+   */
+  async function checkForNewVersion(first: boolean): Promise<void> {
+    try {
+      const response = await fetch("./version.json", { cache: "no-store" });
+      if (!response.ok) return;
+      const data = (await response.json()) as { id?: unknown; commit?: unknown };
+      if (typeof data.id !== "string") return;
+
+      if (first || !pageBuildId) pageBuildId = data.id;
+      if (typeof data.commit === "string") {
+        buildCommit = data.commit;
+        updateDebugLine();
+      }
+      if (!first && data.id !== pageBuildId) versionNotice.hidden = false;
+    } catch {
+      // A version check failure is not a game failure. Try again next minute.
+    }
   }
 
   function addBlock(raw: unknown): boolean {
@@ -1046,6 +1083,8 @@ async function start(): Promise<void> {
     setMode(mode === "chart" ? "ship" : "chart");
   });
 
+  versionNotice.addEventListener("click", () => location.reload());
+
   // ---- Frame loop ---------------------------------------------------------
 
   app.ticker.add(() => {
@@ -1143,6 +1182,14 @@ async function start(): Promise<void> {
 
   drawGrain();
   connect();
+  void checkForNewVersion(true);
+  window.setInterval(
+    () => void checkForNewVersion(false),
+    settings.client.versionCheckMs,
+  );
+  document.addEventListener("visibilitychange", () => {
+    if (!document.hidden) void checkForNewVersion(false);
+  });
 }
 
 setUiSize(readSavedSize());

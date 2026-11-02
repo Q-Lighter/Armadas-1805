@@ -16,6 +16,12 @@ export const settings = {
     sailingTimeScale: 144,
   },
 
+  /** The browser build and its update check. */
+  client: {
+    /** How often an open page checks for a newer build. Draft: 60 seconds. */
+    versionCheckMs: 60_000,
+  },
+
   /** The chart: the flat map frame and how it is turned into tiles. */
   map: {
     /** The map frame, in degrees. x grows east and y grows south. */

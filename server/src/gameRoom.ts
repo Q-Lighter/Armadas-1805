@@ -15,6 +15,7 @@ import {
   type NoticeMessage,
   type World,
 } from "@naval/shared/world";
+import { RoomLoop } from "@naval/shared/room-loop";
 import { CHART_BLOCKS } from "./chartBlocks.js";
 
 const playerIdPattern = /^[A-Za-z0-9_-]{1,40}$/;
@@ -22,8 +23,15 @@ const playerIdPattern = /^[A-Za-z0-9_-]{1,40}$/;
 export class GameRoom {
   private world: World = createWorld();
   private readonly sockets = new Map<string, WebSocket>();
-  private timer: ReturnType<typeof setInterval> | null = null;
   private ticks = 0;
+  private readonly loop = new RoomLoop(
+    () => this.tick(),
+    1000 / settings.server.tickHz,
+    {
+      every: (callback, milliseconds) => setInterval(callback, milliseconds),
+      cancel: (handle) => clearInterval(handle as ReturnType<typeof setInterval>),
+    },
+  );
 
   async fetch(request: Request): Promise<Response> {
     if (request.headers.get("Upgrade")?.toLowerCase() !== "websocket") {
@@ -63,33 +71,34 @@ export class GameRoom {
     server.addEventListener("close", () => {
       if (this.sockets.get(playerId) === server) {
         this.sockets.delete(playerId);
+        this.stopWhenEmpty();
       }
     });
 
-    this.startTicking();
+    this.loop.start();
     this.sendState(playerId, server);
 
     return new Response(null, { status: 101, webSocket: client });
   }
 
-  /** Start the 10 Hz world loop once for the room. */
-  private startTicking(): void {
-    if (this.timer !== null) return;
-
-    const tickMs = 1000 / settings.server.tickHz;
+  /** One 10 Hz world update. The RoomLoop only calls this while occupied. */
+  private tick(): void {
     const gameSecondsPerTick = settings.time.sailingTimeScale / settings.server.tickHz;
     const broadcastEvery = Math.max(
       1,
       Math.round(settings.server.tickHz / settings.server.broadcastHz),
     );
 
-    this.timer = setInterval(() => {
-      stepWorld(this.world, gameSecondsPerTick);
-      this.ticks += 1;
-      if (this.ticks % broadcastEvery === 0) {
-        this.broadcast();
-      }
-    }, tickMs);
+    stepWorld(this.world, gameSecondsPerTick);
+    this.ticks += 1;
+    if (this.ticks % broadcastEvery === 0) {
+      this.broadcast();
+    }
+  }
+
+  /** Stop the world timer as soon as the room has no players. */
+  private stopWhenEmpty(): void {
+    if (this.sockets.size === 0) this.loop.stop();
   }
 
   /** Send the world to every connected player, through visibleStateFor only. */
@@ -110,8 +119,10 @@ export class GameRoom {
         socket.send(JSON.stringify(message));
       }
     } catch {
-      // A dead socket is dropped; the ship stays in the world.
+      // A dead socket is dropped; the ship stays in the world. The room pauses
+      // if that was the last player, so it can go to sleep.
       this.sockets.delete(playerId);
+      this.stopWhenEmpty();
     }
   }
 

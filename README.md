@@ -20,8 +20,9 @@ npm run build
 ```
 
 The build type checks everything, bundles the browser client and writes the
-site to `dist/`. Private chart blocks are bundled into the Worker, not the
-public page.
+site to `dist/`. JavaScript and CSS names include a content hash, and an open
+page checks `version.json` for a newer build. Private chart blocks are bundled
+into the Worker, not the public page.
 
 The chart tiles and server land lookup are committed, so a normal build needs
 no map tooling. To rebuild them from Natural Earth:

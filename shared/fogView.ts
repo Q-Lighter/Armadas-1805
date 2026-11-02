@@ -28,6 +28,7 @@ export function fogDebugLine(
   all: boolean,
   discovered: ReadonlySet<number>,
   blockCount: number,
+  buildCommit = "unknown",
 ): string | null {
   if (kind === "normal") return null;
 
@@ -37,6 +38,7 @@ export function fogDebugLine(
     `${discoveredCellCount(all, discovered)} discovered cells`,
     `${blockCount} map blocks received`,
     `sight ${settings.fog.sightRangeKm} km`,
+    `build ${buildCommit.slice(0, 12)}`,
   ].join(" · ");
 }
 

@@ -37,6 +37,10 @@
     "./fog-view": {
       "types": "./dist/fogView.d.ts",
       "default": "./dist/fogView.js"
+    },
+    "./room-loop": {
+      "types": "./dist/roomLoop.d.ts",
+      "default": "./dist/roomLoop.js"
     }
   },
   "files": [

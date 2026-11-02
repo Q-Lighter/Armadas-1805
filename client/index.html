@@ -3,6 +3,8 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="armadas-build" content="__BUILD_ID__" />
+    <meta name="armadas-commit" content="__BUILD_COMMIT__" />
     <title>Armada's 1805</title>
     <link rel="stylesheet" href="./paper.css" />
   </head>
@@ -83,6 +85,11 @@
     </section>
 
     <p class="chart-notice" id="notice" role="status" aria-live="polite" hidden></p>
+
+    <!-- Shown when a newer build is live. It never reloads by itself. -->
+    <button class="version-notice paper" id="version-notice" type="button" hidden>
+      A new version is available: tap to reload
+    </button>
 
     <!-- TEMP-DEBUG: test and dev rooms only. The client reveals nothing extra. -->
     <p class="hud fog-debug" id="fog-debug" hidden></p>

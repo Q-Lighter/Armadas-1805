@@ -19,6 +19,10 @@
         Follow my ship
       </button>
 
+      <button class="btn" id="chart-btn" type="button" aria-pressed="false">
+        Chart
+      </button>
+
       <div class="size-picker" role="group" aria-label="UI size">
         <button class="btn size-option" type="button" data-size="small" aria-pressed="false">
           S
@@ -78,20 +82,12 @@
       </div>
     </section>
 
-    <p class="charting" id="charting" hidden>Charting…</p>
     <p class="chart-notice" id="notice" role="status" aria-live="polite" hidden></p>
 
-    <!-- TEMP-DEBUG: whole-map debug panel. Hidden unless the address has debug=1. -->
-    <aside class="hud debug-panel paper" id="debug-panel" hidden aria-label="Map debug">
-      <h2>Map debug</h2>
-      <div class="debug-actions">
-        <button class="btn" id="debug-whole-map" type="button">Whole map</button>
-        <button class="btn" id="debug-my-ship" type="button">My ship</button>
-      </div>
-      <p class="debug-position" id="debug-position">–</p>
-    </aside>
+    <!-- TEMP-DEBUG: test and dev rooms only. The client reveals nothing extra. -->
+    <p class="hud fog-debug" id="fog-debug" hidden></p>
 
-    <p class="hud hint">Tap the sea to sail there. Drag to pan. Pinch or scroll to zoom.</p>
+    <p class="hud hint">Tap to sail. Drag to pan. Pinch or scroll to zoom.</p>
 
     <script src="./main.js" defer></script>
   </body>

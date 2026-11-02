@@ -1,18 +1,21 @@
 // Armada's 1805 browser client.
 //
-// The server owns the world. This file draws the real chart tiles, smooths
-// ship movement between updates, and sends sail-to orders. It never predicts
-// or changes the world on its own.
+// The server owns the world and the private chart. This client only draws what
+// visibleStateFor() sends: the ship view, the remembered chart, live sight
+// circles and short-lived last-seen markers. It never predicts the world.
 
 import { Application, Container, Graphics, Text } from "pixi.js";
 import { settings } from "@naval/shared/settings";
+import { MAP_HEIGHT_KM, MAP_WIDTH_KM, lonLatToMap } from "@naval/shared/map";
 import {
-  MAP_HEIGHT_KM,
-  MAP_WIDTH_KM,
-  lonLatToMap,
-  mapToLonLat,
-} from "@naval/shared/map";
-import type { StateMessage } from "@naval/shared/world";
+  chartCellKm,
+  chartColumns,
+  chartRows,
+  type ChartBlock,
+  type RoomKind,
+} from "@naval/shared/fog";
+import type { LastSeenSnapshot, StateMessage } from "@naval/shared/world";
+import { cellNeedsPaper, fogDebugLine } from "@naval/shared/fog-view";
 
 // ---------------------------------------------------------------------------
 // Chart look.
@@ -22,27 +25,21 @@ const SEA_COLOR = 0x7c948a;
 const LAND_COLOR = 0xefe3c8;
 const INK_COLOR = 0x2a1c10;
 const WATERLINE_COLOR = 0xb79b6b;
+const PAPER_COLOR = 0xe8dbbd;
+const PAPER_INK = 0x5b4631;
+const WIND_COLOR = 0xf3e7cb;
 
-// TEMP-DEBUG: the whole-map view only exists when the address says debug=1.
-// Remove this block, and every other TEMP-DEBUG block, with the debug view.
-const DEBUG_VIEW = new URLSearchParams(location.search).get("debug") === "1";
-
-// TEMP-DEBUG: format the pointer readout in the debug panel.
-function formatLatLon(latitude: number, longitude: number): string {
-  const latHemisphere = latitude < 0 ? "S" : "N";
-  const lonHemisphere = longitude < 0 ? "W" : "E";
-  return `${Math.abs(latitude).toFixed(1)}° ${latHemisphere}, ${Math.abs(longitude).toFixed(1)}° ${lonHemisphere}`;
-}
+const WHOLE_MAP_MARGIN = 1.03;
+const CHART_REBUILD_MS = 360;
 
 // ---------------------------------------------------------------------------
-// UI size (small / medium / large), remembered between visits.
+// UI size, remembered between visits.
 // ---------------------------------------------------------------------------
 
 type UiSize = "small" | "medium" | "large";
 
 const UI_SIZE_KEY = "armadas.uiSize";
 const PLAYER_KEY = "armadas.playerId";
-const SIZE_ORDER: UiSize[] = ["small", "medium", "large"];
 
 function readSavedSize(): UiSize {
   try {
@@ -113,38 +110,8 @@ function clamp(value: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, value));
 }
 
-// ---------------------------------------------------------------------------
-// Chart tile data.
-// ---------------------------------------------------------------------------
-
-interface TileData {
-  z: number;
-  x: number;
-  y: number;
-  km: number;
-  fill: number[][];
-  coast: number[][];
-}
-
-interface LevelInfo {
-  z: number;
-  km: number;
-  /** Tile existence and point count, keyed as "x_y". */
-  tiles: Map<string, [number, number, number]>;
-}
-
-interface TileView {
-  water: Graphics;
-  fill: Graphics;
-  coast: Graphics;
-}
-
-interface VisibleTile {
-  key: string;
-  x: number;
-  y: number;
-  points: number;
-  distance: number;
+function validRoomKind(value: unknown): value is RoomKind {
+  return value === "normal" || value === "test" || value === "dev";
 }
 
 // ---------------------------------------------------------------------------
@@ -153,6 +120,7 @@ interface VisibleTile {
 
 interface ShipView {
   hull: Graphics;
+  classId: string;
   x: number;
   y: number;
   heading: number;
@@ -160,6 +128,15 @@ interface ShipView {
   targetY: number;
   targetHeading: number;
 }
+
+interface Camera {
+  x: number;
+  y: number;
+  kmAcross: number;
+  follow: boolean;
+}
+
+type ViewMode = "ship" | "chart";
 
 async function start(): Promise<void> {
   const root = element<HTMLDivElement>("game-root");
@@ -170,16 +147,10 @@ async function start(): Promise<void> {
   const windArrow = element<SVGGElement>("wind-arrow");
   const compassNeedle = element<SVGGElement>("compass-needle");
   const followButton = element<HTMLButtonElement>("follow-btn");
+  const chartButton = element<HTMLButtonElement>("chart-btn");
   const roomOut = element<HTMLElement>("room-code");
-  const charting = element<HTMLParagraphElement>("charting");
   const notice = element<HTMLParagraphElement>("notice");
-
-  // TEMP-DEBUG: the panel is hidden in the HTML unless the debug view is on.
-  const debugPanel = element<HTMLElement>("debug-panel");
-  const debugPosition = element<HTMLParagraphElement>("debug-position");
-  const debugWholeButton = element<HTMLButtonElement>("debug-whole-map");
-  const debugShipButton = element<HTMLButtonElement>("debug-my-ship");
-  debugPanel.hidden = !DEBUG_VIEW;
+  const fogDebugOut = element<HTMLParagraphElement>("fog-debug");
 
   const room = new URLSearchParams(location.search).get("room") ?? "test";
   const roomPattern = new RegExp(`^[A-Za-z0-9_-]{1,${settings.server.maxRoomCodeLength}}$`);
@@ -193,7 +164,7 @@ async function start(): Promise<void> {
   const app = new Application();
   await app.init({
     resizeTo: window,
-    background: SEA_COLOR,
+    background: PAPER_COLOR,
     antialias: true,
     autoDensity: true,
     resolution: Math.min(window.devicePixelRatio || 1, 2),
@@ -201,23 +172,35 @@ async function start(): Promise<void> {
   });
   root.appendChild(app.canvas);
 
+  // The screen layers are in screen pixels. The three chart layers (known
+  // land, live land and the live mask) are built for one camera snapshot and
+  // then shifted while the player pans.
+  const grainLayer = new Container();
+  const grain = new Graphics();
+  grainLayer.addChild(grain);
+
+  const knownSea = new Graphics();
+  const unknownPaper = new Graphics();
+  const liveHalo = new Graphics();
+
   const mapLayer = new Container();
-  const waterLayer = new Container();
-  const fillLayer = new Container();
-  const coastLayer = new Container();
+  const mapFill = new Graphics();
+  const mapWater = new Graphics();
+  const mapCoast = new Graphics();
+  mapLayer.addChild(mapFill, mapWater, mapCoast);
 
-  // TEMP-DEBUG: border, grid and labels sit above the chart but below the HUD.
-  const debugLayer = new Container();
-  const debugGrid = new Graphics();
-  const debugBorder = new Graphics();
-  const debugLabels = new Container();
-  debugLayer.addChild(debugGrid, debugBorder, debugLabels);
-  debugLayer.visible = DEBUG_VIEW;
+  const liveMapLayer = new Container();
+  const liveSea = new Graphics();
+  const liveFill = new Graphics();
+  const liveWater = new Graphics();
+  const liveCoast = new Graphics();
+  const liveMaskLayer = new Container();
+  const liveMask = new Graphics();
+  liveMask.renderable = false;
+  liveMaskLayer.addChild(liveMask);
+  liveMapLayer.addChild(liveSea, liveFill, liveWater, liveCoast);
+  liveMapLayer.mask = liveMask;
 
-  mapLayer.addChild(waterLayer, fillLayer, coastLayer, debugLayer);
-  mapLayer.eventMode = "none";
-
-  const layer = new Container();
   const marker = new Graphics();
   marker.circle(0, 0, 9).stroke({ width: 2, color: INK_COLOR });
   marker.moveTo(-14, 0).lineTo(-7, 0).stroke({ width: 2, color: INK_COLOR });
@@ -225,55 +208,72 @@ async function start(): Promise<void> {
   marker.moveTo(0, -14).lineTo(0, -7).stroke({ width: 2, color: INK_COLOR });
   marker.moveTo(0, 7).lineTo(0, 14).stroke({ width: 2, color: INK_COLOR });
   marker.visible = false;
-  app.stage.addChild(mapLayer, layer, marker);
+
+  const fleetLayer = new Container();
+  const lastSeenLayer = new Container();
+  const windLayer = new Graphics();
+  const rulerLayer = new Container();
+  const rulerLine = new Graphics();
+  const rulerText = new Text({
+    text: "",
+    style: { fontFamily: "Source Sans 3", fontSize: 12, fill: INK_COLOR },
+  });
+  rulerLayer.addChild(rulerLine, rulerText);
+  rulerLayer.visible = false;
+
+  app.stage.addChild(
+    knownSea,
+    mapLayer,
+    unknownPaper,
+    liveHalo,
+    liveMapLayer,
+    liveMaskLayer,
+    lastSeenLayer,
+    fleetLayer,
+    windLayer,
+    grainLayer,
+    marker,
+    rulerLayer,
+  );
 
   const startPoint = lonLatToMap(
     settings.world.startArea.lonDeg,
     settings.world.startArea.latDeg,
   );
-  const view: { x: number; y: number; kmAcross: number; follow: boolean } = {
+  const view: Camera = {
     x: startPoint.x,
     y: startPoint.y,
     kmAcross: settings.view.startKmAcross,
     follow: true,
   };
 
+  let mode: ViewMode = "ship";
+  let savedShipView: Camera = { ...view };
+  let builtView = { x: view.x, y: view.y };
+  let builtScale = 0;
+  let builtRevision = -1;
+  let chartRevision = 0;
+  let lastMapBuild = 0;
+  let lastWidth = 0;
+  let lastHeight = 0;
+
+  const blocks = new Map<string, ChartBlock>();
+  const discovered = new Set<number>();
   const ships = new Map<string, ShipView>();
+  let lastSeen: LastSeenSnapshot[] = [];
+  let lastSeenViews: Container[] = [];
+
+  let roomKind: RoomKind = "normal";
+  let chartAll = false;
   let ownId = "";
   let socket: WebSocket | null = null;
   let target: { x: number; y: number } | null = null;
   let retry: number | null = null;
   let noticeTimer = 0;
   let noticeHideTimer = 0;
+  let windFrom: number = settings.weather.windFromDeg;
 
-  const levels: LevelInfo[] = [];
-  const tileData = new Map<string, TileData>();
-  const tileViews = new Map<string, TileView>();
-  const loadingTiles = new Set<string>();
-  const missingTiles = new Set<string>();
-
-  // The map graphics are drawn in screen coordinates for one snapshot of the
-  // camera. Panning only shifts the layer; a zoom rebuilds it.
-  let builtView = { x: view.x, y: view.y };
-  let builtScale = 0;
-  let lastMapBuild = 0;
-  let currentLevelZ = -1;
-
-  const scale = (): number => app.screen.width / view.kmAcross;
-
-  // TEMP-DEBUG: how far out the camera must go for the whole chart to fit.
-  function wholeMapKmAcross(): number {
-    const fit = Math.max(
-      MAP_WIDTH_KM,
-      MAP_HEIGHT_KM * (app.screen.width / app.screen.height),
-    );
-    return fit * 1.02;
-  }
-
-  // TEMP-DEBUG: normal play keeps the exact 300 km limit; only debug widens it.
-  function maxViewKmAcross(): number {
-    return DEBUG_VIEW ? wholeMapKmAcross() : settings.view.maxKmAcross;
-  }
+  const scale = (): number => Math.min(app.screen.width, app.screen.height) / view.kmAcross;
 
   function toScreen(x: number, y: number): { x: number; y: number } {
     const s = scale();
@@ -291,9 +291,40 @@ async function start(): Promise<void> {
     };
   }
 
+  function builtScreen(x: number, y: number): { x: number; y: number } {
+    return {
+      x: app.screen.width / 2 + (x - builtView.x) * builtScale,
+      y: app.screen.height / 2 + (y - builtView.y) * builtScale,
+    };
+  }
+
+  function wholeMapKmAcross(): number {
+    if (app.screen.width <= 0 || app.screen.height <= 0) return MAP_WIDTH_KM;
+    const kmPerPixel = Math.max(
+      MAP_WIDTH_KM / app.screen.width,
+      MAP_HEIGHT_KM / app.screen.height,
+    );
+    return kmPerPixel * Math.min(app.screen.width, app.screen.height) * WHOLE_MAP_MARGIN;
+  }
+
+  function maxViewKmAcross(): number {
+    return mode === "chart" ? wholeMapKmAcross() : settings.view.shipMaxKmAcross;
+  }
+
+  function minViewKmAcross(): number {
+    return mode === "chart"
+      ? settings.view.chartMinKmAcross
+      : settings.view.shipMinKmAcross;
+  }
+
   function setStatus(text: string, isError = false): void {
     status.textContent = text;
     status.dataset.state = isError ? "error" : "ok";
+  }
+
+  function setFollow(on: boolean): void {
+    view.follow = on;
+    followButton.setAttribute("aria-pressed", String(on));
   }
 
   function showNotice(text: string): void {
@@ -311,343 +342,203 @@ async function start(): Promise<void> {
     }, 3_500);
   }
 
-  // ---- Chart tiles ---------------------------------------------------------
+  // ---- Paper and fog ------------------------------------------------------
 
-  async function loadManifest(): Promise<void> {
-    charting.hidden = false;
-    try {
-      const response = await fetch("./tiles/index.json");
-      if (!response.ok) throw new Error(`tiles ${response.status}`);
-      const body = (await response.json()) as {
-        levels?: Array<{ z?: unknown; km?: unknown; tiles?: unknown }>;
-      };
-
-      if (!Array.isArray(body.levels)) throw new Error("tile index has no levels");
-
-      for (const rawLevel of body.levels) {
-        const z = Number(rawLevel.z);
-        const km = Number(rawLevel.km);
-        if (!Number.isInteger(z) || !(km > 0) || !Array.isArray(rawLevel.tiles)) continue;
-
-        const tiles = new Map<string, [number, number, number]>();
-        for (const rawTile of rawLevel.tiles) {
-          if (!Array.isArray(rawTile) || rawTile.length < 3) continue;
-          const x = Number(rawTile[0]);
-          const y = Number(rawTile[1]);
-          const points = Number(rawTile[2]);
-          if (Number.isInteger(x) && Number.isInteger(y) && Number.isFinite(points)) {
-            tiles.set(`${x}_${y}`, [x, y, points]);
-          }
-        }
-        levels.push({ z, km, tiles });
-      }
-
-      levels.sort((a, b) => a.z - b.z);
-    } catch (error) {
-      charting.hidden = true;
-      setStatus(
-        `The chart could not be loaded: ${error instanceof Error ? error.message : String(error)}`,
-        true,
-      );
+  /** A few fixed fibres and stains, so blank areas read as old paper. */
+  function drawGrain(): void {
+    grain.clear();
+    const width = app.screen.width;
+    const height = app.screen.height;
+    for (let index = 0; index < 90; index += 1) {
+      const x = ((index * 79) % Math.max(1, width)) + ((index * 13) % 17) - 8;
+      const y = ((index * 137) % Math.max(1, height)) + ((index * 7) % 11) - 5;
+      const length = 5 + ((index * 11) % 22);
+      const slant = ((index % 5) - 2) * 0.7;
+      grain
+        .moveTo(x, y)
+        .lineTo(x + length, y + slant)
+        .stroke({ width: 0.6, color: PAPER_INK, alpha: 0.1 });
+    }
+    for (let index = 0; index < 10; index += 1) {
+      const x = (index * 211 + 37) % Math.max(1, width);
+      const y = (index * 97 + 19) % Math.max(1, height);
+      grain
+        .ellipse(x, y, 16 + (index % 4) * 5, 9 + (index % 3) * 4)
+        .fill({ color: PAPER_INK, alpha: 0.035 });
     }
   }
 
-  function visibleTiles(level: LevelInfo): VisibleTile[] {
-    const halfWidth = view.kmAcross / 2;
-    const halfHeight = halfWidth * (app.screen.height / app.screen.width);
-    const left = view.x - halfWidth;
-    const right = view.x + halfWidth;
-    const top = view.y - halfHeight;
-    const bottom = view.y + halfHeight;
-
-    const columns = Math.ceil(MAP_WIDTH_KM / level.km);
-    const rows = Math.ceil(MAP_HEIGHT_KM / level.km);
-    const firstColumn = Math.max(0, Math.floor(left / level.km));
-    const lastColumn = Math.min(columns - 1, Math.floor(right / level.km));
-    const firstRow = Math.max(0, Math.floor(top / level.km));
-    const lastRow = Math.min(rows - 1, Math.floor(bottom / level.km));
-
-    const result: VisibleTile[] = [];
-    for (let row = firstRow; row <= lastRow; row += 1) {
-      for (let column = firstColumn; column <= lastColumn; column += 1) {
-        const entry = level.tiles.get(`${column}_${row}`);
-        if (!entry) continue;
-
-        const centreX = (column + 0.5) * level.km;
-        const centreY = (row + 0.5) * level.km;
-        result.push({
-          key: `${level.z}/${column}_${row}`,
-          x: column,
-          y: row,
-          points: entry[2],
-          distance: Math.hypot(centreX - view.x, centreY - view.y),
-        });
-      }
-    }
-
-    result.sort((a, b) => a.distance - b.distance);
-    return result;
+  function visibleCellRange(): {
+    firstColumn: number;
+    lastColumn: number;
+    firstRow: number;
+    lastRow: number;
+  } {
+    const s = scale();
+    const halfWidth = app.screen.width / (2 * s);
+    const halfHeight = app.screen.height / (2 * s);
+    return {
+      firstColumn: Math.max(0, Math.floor((view.x - halfWidth) / chartCellKm)),
+      lastColumn: Math.min(
+        chartColumns - 1,
+        Math.floor((view.x + halfWidth) / chartCellKm),
+      ),
+      firstRow: Math.max(0, Math.floor((view.y - halfHeight) / chartCellKm)),
+      lastRow: Math.min(chartRows - 1, Math.floor((view.y + halfHeight) / chartCellKm)),
+    };
   }
 
-  function pickLevel(): LevelInfo | null {
-    if (levels.length === 0) return null;
-
-    // TEMP-DEBUG: far-out debug views always use the coarsest level.
-    if (DEBUG_VIEW && view.kmAcross > settings.view.maxKmAcross) {
-      return levels[0] ?? null;
-    }
-
-    const desired =
-      levels.find((level) => level.km <= view.kmAcross * settings.view.tileLevelPickFactor) ??
-      levels[levels.length - 1]!;
-    const desiredIndex = levels.indexOf(desired);
-
-    // Start at the right detail level; step coarser only if this view would
-    // otherwise draw too many points.
-    for (let index = desiredIndex; index >= 0; index -= 1) {
-      const level = levels[index]!;
-      const points = visibleTiles(level).reduce((total, tile) => total + tile.points * 2, 0);
-      if (points <= settings.view.maxDrawnPoints) return level;
-    }
-
-    return desired;
-  }
-
-  function screenPoint(x: number, y: number): [number, number] {
-    return [
-      app.screen.width / 2 + (x - builtView.x) * builtScale,
-      app.screen.height / 2 + (y - builtView.y) * builtScale,
-    ];
-  }
-
-  function drawSmoothPath(graphics: Graphics, points: number[], move = true): void {
-    if (points.length < 4) return;
-
-    if (move) graphics.moveTo(points[0]!, points[1]!);
-    else graphics.lineTo(points[0]!, points[1]!);
-
-    if (points.length === 4) {
-      graphics.lineTo(points[2]!, points[3]!);
-      return;
-    }
-
-    for (let index = 2; index < points.length - 2; index += 2) {
-      const midX = (points[index]! + points[index + 2]!) / 2;
-      const midY = (points[index + 1]! + points[index + 3]!) / 2;
-      graphics.quadraticCurveTo(points[index]!, points[index + 1]!, midX, midY);
-    }
-
-    graphics.lineTo(points[points.length - 2]!, points[points.length - 1]!);
+  function screenCellRect(column: number, row: number): [number, number, number, number] {
+    const left = toScreen(column * chartCellKm, row * chartCellKm);
+    const right = toScreen((column + 1) * chartCellKm, (row + 1) * chartCellKm);
+    return [left.x, left.y, right.x - left.x, right.y - left.y];
   }
 
   /**
-   * The fill uses the same smoothed natural coastline as the ink and water
-   * lines. Segments along a tile's clipped edge stay straight so neighbouring
-   * tiles meet without a seam; only the real coast is curved.
+   * Paint remembered sea and cover everything still unknown in paper. The live
+   * circles are excluded from the paper cover; they are painted brightly above.
    */
-  function drawTileFill(graphics: Graphics, ring: number[], data: TileData): void {
-    if (ring.length < 6) return;
+  function refreshFogPaper(): void {
+    knownSea.clear();
+    unknownPaper.clear();
 
-    const count = ring.length / 2;
-    const overlap = settings.map.tileOverlapKm;
-    const minX = Math.max(0, data.x * data.km - overlap);
-    const maxX = Math.min(MAP_WIDTH_KM, (data.x + 1) * data.km + overlap);
-    const minY = Math.max(0, data.y * data.km - overlap);
-    const maxY = Math.min(MAP_HEIGHT_KM, (data.y + 1) * data.km + overlap);
-    const near = (value: number, edge: number): boolean => Math.abs(value - edge) < 0.02;
-    const pointX = (index: number): number => ring[(index % count) * 2]!;
-    const pointY = (index: number): number => ring[(index % count) * 2 + 1]!;
-    const isBoundaryEdge = (index: number): boolean => {
-      const x1 = pointX(index);
-      const y1 = pointY(index);
-      const x2 = pointX(index + 1);
-      const y2 = pointY(index + 1);
-      return (
-        (near(x1, minX) && near(x2, minX)) ||
-        (near(x1, maxX) && near(x2, maxX)) ||
-        (near(y1, minY) && near(y2, minY)) ||
-        (near(y1, maxY) && near(y2, maxY))
-      );
-    };
+    if (mode === "chart" || app.screen.width <= 0) return;
 
-    let start = 0;
-    for (let index = 0; index < count; index += 1) {
-      if (isBoundaryEdge((index - 1 + count) % count) && !isBoundaryEdge(index)) {
-        start = index;
-        break;
-      }
-    }
+    const range = visibleCellRange();
 
-    const [startX, startY] = screenPoint(pointX(start), pointY(start));
-    graphics.moveTo(startX, startY);
+    for (let row = range.firstRow; row <= range.lastRow; row += 1) {
+      for (let column = range.firstColumn; column <= range.lastColumn; column += 1) {
+        const index = row * chartColumns + column;
+        const [x, y, width, height] = screenCellRect(column, row);
 
-    let index = start;
-    let guard = 0;
-    while (guard <= count) {
-      guard += 1;
-      if (isBoundaryEdge(index)) {
-        const next = index + 1;
-        const [x, y] = screenPoint(pointX(next), pointY(next));
-        graphics.lineTo(x, y);
-        index = next;
-        continue;
-      }
-
-      const run: number[] = [];
-      let end = index;
-      while (!isBoundaryEdge(end) && run.length <= count) {
-        const [x, y] = screenPoint(pointX(end), pointY(end));
-        run.push(x, y);
-        end += 1;
-      }
-      const [endX, endY] = screenPoint(pointX(end), pointY(end));
-      run.push(endX, endY);
-      drawSmoothPath(graphics, run, false);
-      index = end;
-    }
-
-    graphics.lineTo(startX, startY);
-    graphics.fill(LAND_COLOR);
-  }
-
-  function addTileView(key: string, data: TileData): void {
-    const water = new Graphics();
-    const fill = new Graphics();
-    const coast = new Graphics();
-
-    for (const ring of data.fill) {
-      if (ring.length < 6) continue;
-      drawTileFill(fill, ring, data);
-    }
-
-    for (const line of data.coast) {
-      if (line.length < 4) continue;
-      const points: number[] = [];
-      for (let index = 0; index < line.length; index += 2) {
-        const [x, y] = screenPoint(line[index]!, line[index + 1]!);
-        points.push(x, y);
-      }
-
-      drawSmoothPath(water, points);
-      drawSmoothPath(coast, points);
-    }
-
-    if (data.coast.length > 0) {
-      water.stroke({
-        width: settings.view.waterLinePx,
-        color: WATERLINE_COLOR,
-        alpha: 0.55,
-        cap: "round",
-        join: "round",
-      });
-      coast.stroke({
-        width: settings.view.coastLinePx,
-        color: INK_COLOR,
-        cap: "round",
-        join: "round",
-      });
-    }
-
-    waterLayer.addChild(water);
-    fillLayer.addChild(fill);
-    coastLayer.addChild(coast);
-    tileViews.set(key, { water, fill, coast });
-  }
-
-  function destroyTileView(key: string): void {
-    const view = tileViews.get(key);
-    if (!view) return;
-
-    view.water.destroy();
-    view.fill.destroy();
-    view.coast.destroy();
-    tileViews.delete(key);
-  }
-
-  function clearTileViews(): void {
-    for (const key of [...tileViews.keys()]) destroyTileView(key);
-  }
-
-  function requestTile(level: LevelInfo, tile: VisibleTile): void {
-    if (tileData.has(tile.key) || loadingTiles.has(tile.key) || missingTiles.has(tile.key)) {
-      return;
-    }
-
-    loadingTiles.add(tile.key);
-    void fetch(`./tiles/${tile.key}.json`)
-      .then(async (response) => {
-        if (!response.ok) throw new Error(`tile ${response.status}`);
-        const data = (await response.json()) as TileData;
-        if (!data || !Array.isArray(data.fill) || !Array.isArray(data.coast)) {
-          throw new Error("tile has no geometry");
+        if (chartAll || discovered.has(index)) {
+          knownSea
+            .rect(x, y, width + 0.5, height + 0.5)
+            .fill({ color: SEA_COLOR, alpha: settings.view.fogDimAlpha + 0.22 });
+        } else if (cellNeedsPaper(index, chartAll, discovered)) {
+          // Paint every unknown cell. The bright live layer is drawn above
+          // this paper, so a circle never needs a cell-shaped hole.
+          unknownPaper
+            .rect(x, y, width + 0.5, height + 0.5)
+            .fill({ color: PAPER_COLOR, alpha: 1 });
         }
-        tileData.set(tile.key, data);
-      })
-      .catch(() => {
-        // A missing tile is simply open sea; the rest of the chart stays usable.
-        missingTiles.add(tile.key);
-      })
-      .finally(() => {
-        loadingTiles.delete(tile.key);
-      });
+      }
+    }
   }
 
-  function updateMapOffset(): void {
-    mapLayer.position.set(
-      (builtView.x - view.x) * builtScale,
-      (builtView.y - view.y) * builtScale,
+  // ---- Map geometry -------------------------------------------------------
+
+  function blockInView(block: ChartBlock, left: number, top: number, right: number, bottom: number): boolean {
+    return !(
+      block.x + block.km < left ||
+      block.x > right ||
+      block.y + block.km < top ||
+      block.y > bottom
     );
   }
 
-  // TEMP-DEBUG: draw the chart frame, the 10-degree graticule and its labels.
-  function drawDebugOverlay(): void {
-    debugGrid.clear();
-    debugBorder.clear();
-    for (const child of debugLabels.removeChildren()) child.destroy();
-
-    if (!DEBUG_VIEW || builtScale <= 0) return;
-
-    const [left, top] = screenPoint(0, 0);
-    const [right, bottom] = screenPoint(MAP_WIDTH_KM, MAP_HEIGHT_KM);
-    debugBorder
-      .rect(left, top, right - left, bottom - top)
-      .stroke({ width: 1, color: INK_COLOR, alpha: 0.55 });
-
-    for (let lon = -90; lon <= -30; lon += 10) {
-      const x = lonLatToMap(lon, 0).x;
-      const [screenX, screenTop] = screenPoint(x, 0);
-      const [, screenBottom] = screenPoint(x, MAP_HEIGHT_KM);
-      debugGrid.moveTo(screenX, screenTop).lineTo(screenX, screenBottom);
-
-      const label = new Text({
-        text: `${Math.abs(lon)}°${lon < 0 ? "W" : "E"}`,
-        style: { fontFamily: "Source Sans 3", fontSize: 10, fill: INK_COLOR },
-      });
-      label.alpha = 0.65;
-      label.position.set(screenX + 3, screenTop + 3);
-      debugLabels.addChild(label);
+  function drawFill(graphics: Graphics, block: ChartBlock): void {
+    for (const ring of block.fill) {
+      if (ring.length < 6) continue;
+      const points: number[] = [];
+      for (let index = 0; index < ring.length; index += 2) {
+        const point = builtScreen(ring[index]!, ring[index + 1]!);
+        points.push(point.x, point.y);
+      }
+      graphics.poly(points).fill(LAND_COLOR);
     }
-
-    for (let lat = -70; lat <= 20; lat += 10) {
-      const y = lonLatToMap(0, lat).y;
-      const [screenLeft, screenY] = screenPoint(0, y);
-      const [screenRight] = screenPoint(MAP_WIDTH_KM, y);
-      debugGrid.moveTo(screenLeft, screenY).lineTo(screenRight, screenY);
-
-      const label = new Text({
-        text: `${Math.abs(lat)}°${lat < 0 ? "S" : "N"}`,
-        style: { fontFamily: "Source Sans 3", fontSize: 10, fill: INK_COLOR },
-      });
-      label.alpha = 0.65;
-      label.position.set(screenLeft + 3, screenY - 12);
-      debugLabels.addChild(label);
-    }
-
-    debugGrid.stroke({ width: 1, color: INK_COLOR, alpha: 0.16 });
   }
 
-  function refreshChart(now: number, force = false): void {
-    if (levels.length === 0 || app.screen.width <= 0) return;
+  function drawLines(graphics: Graphics, block: ChartBlock, width: number, color: number, alpha: number): void {
+    for (const line of block.coast) {
+      if (line.length < 4) continue;
+      const first = builtScreen(line[0]!, line[1]!);
+      graphics.moveTo(first.x, first.y);
+      for (let index = 2; index < line.length; index += 2) {
+        const point = builtScreen(line[index]!, line[index + 1]!);
+        graphics.lineTo(point.x, point.y);
+      }
+      graphics.stroke({
+        width,
+        color,
+        alpha,
+        cap: "round",
+        join: "round",
+      });
+    }
+  }
+
+  function drawMap(now: number): void {
+    const s = scale();
+    builtView = { x: view.x, y: view.y };
+    builtScale = s;
+    builtRevision = chartRevision;
+
+    mapFill.clear();
+    mapWater.clear();
+    mapCoast.clear();
+    liveSea.clear();
+    liveFill.clear();
+    liveWater.clear();
+    liveCoast.clear();
+    liveMask.clear();
+
+    if (app.screen.width <= 0) return;
+
+    const left = view.x - app.screen.width / (2 * s);
+    const right = view.x + app.screen.width / (2 * s);
+    const top = view.y - app.screen.height / (2 * s);
+    const bottom = view.y + app.screen.height / (2 * s);
+
+    // A generous margin lets a pan move the built chart before it is rebuilt.
+    const marginX = (right - left) * 1.5;
+    const marginY = (bottom - top) * 1.5;
+    const withMargin = {
+      left: left - marginX,
+      right: right + marginX,
+      top: top - marginY,
+      bottom: bottom + marginY,
+    };
+
+    for (const block of blocks.values()) {
+      if (!blockInView(block, withMargin.left, withMargin.top, withMargin.right, withMargin.bottom)) {
+        continue;
+      }
+
+      drawFill(mapFill, block);
+      drawLines(mapWater, block, settings.view.waterLinePx, WATERLINE_COLOR, 0.55);
+      drawLines(mapCoast, block, settings.view.coastLinePx, INK_COLOR, 1);
+
+      if (mode === "ship") {
+        drawFill(liveFill, block);
+        drawLines(liveWater, block, settings.view.waterLinePx, WATERLINE_COLOR, 0.55);
+        drawLines(liveCoast, block, settings.view.coastLinePx, INK_COLOR, 1);
+      }
+    }
+
+    mapLayer.alpha = mode === "chart" ? 1 : settings.view.fogDimAlpha;
+    lastMapBuild = now;
+
+    // The chart is a static painted sheet. Cache it after each rebuild, and
+    // leave the live ship view uncached so sight circles can move every frame.
+    if (mode === "chart") {
+      if (mapLayer.isCachedAsTexture) mapLayer.updateCacheTexture();
+      else mapLayer.cacheAsTexture(true);
+    } else if (mapLayer.isCachedAsTexture) {
+      mapLayer.cacheAsTexture(false);
+    }
+  }
+
+  function updateLayerOffset(): void {
+    const x = (builtView.x - view.x) * builtScale;
+    const y = (builtView.y - view.y) * builtScale;
+    mapLayer.position.set(x, y);
+    liveMapLayer.position.set(x, y);
+    liveMaskLayer.position.set(x, y);
+  }
+
+  function refreshMap(now: number, force = false): void {
+    if (app.screen.width <= 0 || app.screen.height <= 0) return;
 
     const currentScale = scale();
     const zoomChanged = Math.abs(currentScale - builtScale) > 1e-9;
@@ -655,64 +546,111 @@ async function start(): Promise<void> {
       builtScale > 0 &&
       (Math.abs(view.x - builtView.x) * builtScale > app.screen.width * 1.5 ||
         Math.abs(view.y - builtView.y) * builtScale > app.screen.height * 1.5);
+    const dataChanged = builtRevision !== chartRevision;
 
-    if (force || zoomChanged || farPan) {
-      // Throttle pinch rebuilds so a phone is not re-tessellating every frame.
-      if (!force && !farPan && now - lastMapBuild < 120) {
-        updateMapOffset();
-        return;
-      }
-      clearTileViews();
-      builtView = { x: view.x, y: view.y };
-      builtScale = currentScale;
-      lastMapBuild = now;
-      drawDebugOverlay(); // TEMP-DEBUG
-    }
-
-    if (Math.abs(currentScale - builtScale) > 1e-9) {
-      updateMapOffset();
+    if (!force && !zoomChanged && !farPan && !dataChanged) {
+      updateLayerOffset();
       return;
     }
 
-    const level = pickLevel();
-    if (!level) return;
-
-    if (level.z !== currentLevelZ) {
-      clearTileViews();
-      currentLevelZ = level.z;
+    // A chart with every block arriving in batches should not repaint the
+    // whole sheet for each batch. This throttle is only for the chart view.
+    if (
+      !force &&
+      dataChanged &&
+      !zoomChanged &&
+      !farPan &&
+      mode === "chart" &&
+      now - lastMapBuild < CHART_REBUILD_MS
+    ) {
+      updateLayerOffset();
+      return;
     }
 
-    const visible = visibleTiles(level);
-    let points = 0;
-    const selected: VisibleTile[] = [];
-    for (const tile of visible) {
-      const cost = tile.points * 2;
-      if (points + cost > settings.view.maxDrawnPoints) continue;
-      points += cost;
-      selected.push(tile);
+    if (!force && zoomChanged && !farPan && now - lastMapBuild < 120) {
+      updateLayerOffset();
+      return;
     }
 
-    const wanted = new Set(selected.map((tile) => tile.key));
-    for (const key of [...tileViews.keys()]) {
-      if (!wanted.has(key)) destroyTileView(key);
-    }
+    drawMap(now);
+    updateLayerOffset();
 
-    let waiting = false;
-    for (const tile of selected) {
-      const data = tileData.get(tile.key);
-      if (data) {
-        if (!tileViews.has(tile.key)) addTileView(tile.key, data);
-      } else if (!missingTiles.has(tile.key)) {
-        waiting = true;
-        requestTile(level, tile);
-      }
-    }
-
-    charting.hidden = !waiting;
-    updateMapOffset();
   }
 
-  // ---- Ships and HUD -------------------------------------------------------
+  // ---- Live sight circles -------------------------------------------------
+
+  function updateLiveCircles(): void {
+    liveSea.clear();
+    liveMask.clear();
+
+    if (mode !== "ship" || builtScale <= 0) {
+      liveMapLayer.visible = false;
+      liveHalo.clear();
+      return;
+    }
+
+    const own = ships.get(ownId);
+    if (!own) {
+      liveMapLayer.visible = false;
+      liveHalo.clear();
+      return;
+    }
+
+    liveMapLayer.visible = true;
+    const radiusPx = settings.fog.sightRangeKm * builtScale;
+    const featherPx = settings.fog.sightFeatherKm * builtScale;
+    const centre = builtScreen(own.x, own.y);
+    const screenCentre = toScreen(own.x, own.y);
+
+    liveSea.circle(centre.x, centre.y, radiusPx).fill(SEA_COLOR);
+    liveMask.circle(centre.x, centre.y, radiusPx).fill(0xffffff);
+
+    // A faint sea-coloured rim softens the line between sight and paper.
+    liveHalo.clear();
+    if (featherPx > 1) {
+      liveHalo
+        .circle(screenCentre.x, screenCentre.y, radiusPx + featherPx * 0.35)
+        .stroke({ width: featherPx * 0.7, color: SEA_COLOR, alpha: 0.38 });
+      liveHalo
+        .circle(screenCentre.x, screenCentre.y, radiusPx + featherPx * 0.8)
+        .stroke({ width: featherPx * 0.55, color: SEA_COLOR, alpha: 0.18 });
+    }
+  }
+
+  // ---- Last seen and ships ------------------------------------------------
+
+  function clearLastSeen(): void {
+    for (const view of lastSeenViews) view.destroy({ children: true });
+    lastSeenViews = [];
+  }
+
+  function drawLastSeen(): void {
+    clearLastSeen();
+    for (const [classId, navy, x, y, age] of lastSeen) {
+      const container = new Container();
+      const mark = new Graphics();
+      mark
+        .circle(0, 0, 8)
+        .stroke({ width: 1, color: INK_COLOR, alpha: 0.55 })
+        .moveTo(-5, -5)
+        .lineTo(5, 5)
+        .moveTo(5, -5)
+        .lineTo(-5, 5)
+        .stroke({ width: 1, color: INK_COLOR, alpha: 0.55 });
+      const label = new Text({
+        text: `${navy} ${classId} · ${Math.round(age)}s`,
+        style: { fontFamily: "Source Sans 3", fontSize: 10, fill: INK_COLOR },
+      });
+      label.alpha = 0.65;
+      label.position.set(10, -6);
+      container.addChild(mark, label);
+      lastSeenLayer.addChild(container);
+      lastSeenViews.push(container);
+      container.position.set(0, 0);
+      container.alpha = 0.8;
+      container.visible = false;
+    }
+  }
 
   function makeHull(own: boolean): Graphics {
     const hull = new Graphics();
@@ -730,10 +668,7 @@ async function start(): Promise<void> {
       .fill(own ? 0x244a66 : 0x2c4655)
       .stroke({ width: 1.4, color: own ? 0xf3e7cb : 0x1b2f3d });
 
-    if (own) {
-      // A wax-red ring marks your own ship.
-      hull.circle(0, 0, 17).stroke({ width: 1.5, color: 0x8c1d1d });
-    }
+    if (own) hull.circle(0, 0, 17).stroke({ width: 1.5, color: 0x8c1d1d });
     return hull;
   }
 
@@ -747,6 +682,51 @@ async function start(): Promise<void> {
       speedOut.textContent = "–";
       headingOut.textContent = "–";
     }
+  }
+
+  function updateDebugLine(): void {
+    const line = fogDebugLine(roomKind, chartAll, discovered, blocks.size);
+    fogDebugOut.textContent = line ?? "";
+    fogDebugOut.hidden = line === null;
+  }
+
+  function addBlock(raw: unknown): boolean {
+    if (!raw || typeof raw !== "object") return false;
+    const block = raw as Partial<ChartBlock>;
+    if (
+      typeof block.id !== "string" ||
+      typeof block.x !== "number" ||
+      typeof block.y !== "number" ||
+      typeof block.km !== "number" ||
+      !Array.isArray(block.fill) ||
+      !Array.isArray(block.coast)
+    ) {
+      return false;
+    }
+
+    const fill = block.fill.filter(
+      (ring): ring is number[] =>
+        Array.isArray(ring) &&
+        ring.length >= 6 &&
+        ring.every((point) => typeof point === "number" && Number.isFinite(point)),
+    );
+    const coast = block.coast.filter(
+      (line): line is number[] =>
+        Array.isArray(line) &&
+        line.length >= 4 &&
+        line.every((point) => typeof point === "number" && Number.isFinite(point)),
+    );
+    if (fill.length === 0 && coast.length === 0) return false;
+
+    blocks.set(block.id, {
+      id: block.id,
+      x: block.x,
+      y: block.y,
+      km: block.km,
+      fill,
+      coast,
+    });
+    return true;
   }
 
   function onState(event: MessageEvent): void {
@@ -771,23 +751,54 @@ async function start(): Promise<void> {
     if (!Array.isArray(state.ships)) return;
 
     ownId = state.you;
-    const windFrom = state.w;
+    windFrom = Number.isFinite(state.w) ? state.w : settings.weather.windFromDeg;
+    roomKind = validRoomKind(state.k) ? state.k : "normal";
     windArrow.setAttribute("transform", `rotate(${(windFrom + 180) % 360} 12 12)`);
     windLabel.textContent = `Wind from ${compassPoint(windFrom)} (${Math.round(windFrom)}°)`;
+
+    const chart = state.chart;
+    let dataChanged = false;
+    if (chart && typeof chart === "object") {
+      chartAll = chart.all === true;
+      if (Array.isArray(chart.cells)) {
+        for (const index of chart.cells) {
+          if (Number.isInteger(index) && index >= 0 && index < chartColumns * chartRows) {
+            discovered.add(index);
+          }
+        }
+      }
+      if (Array.isArray(chart.blocks)) {
+        for (const block of chart.blocks) {
+          dataChanged = addBlock(block) || dataChanged;
+        }
+      }
+    }
+
+    if (dataChanged) chartRevision += 1;
 
     const seen = new Set<string>();
     let own: [string, string, number, number, number, number] | undefined;
 
     for (const snapshot of state.ships) {
-      const [id, , x, y, headingDeg, knots] = snapshot;
-      seen.add(id);
+      const [id, classId, x, y, headingDeg, knots] = snapshot;
+      if (
+        typeof id !== "string" ||
+        !Number.isFinite(x) ||
+        !Number.isFinite(y) ||
+        !Number.isFinite(headingDeg) ||
+        !Number.isFinite(knots)
+      ) {
+        continue;
+      }
 
+      seen.add(id);
       let ship = ships.get(id);
       if (!ship) {
         const hull = makeHull(id === state.you);
-        layer.addChild(hull);
+        fleetLayer.addChild(hull);
         ship = {
           hull,
+          classId: String(classId),
           x,
           y,
           heading: headingDeg * (Math.PI / 180),
@@ -798,13 +809,13 @@ async function start(): Promise<void> {
         ships.set(id, ship);
       }
 
+      ship.classId = String(classId);
       ship.targetX = x;
       ship.targetY = y;
       ship.targetHeading = headingDeg * (Math.PI / 180);
       if (id === state.you) own = snapshot;
     }
 
-    // Ships that left the room are removed from the view.
     for (const [id, ship] of ships) {
       if (!seen.has(id)) {
         ship.hull.destroy();
@@ -812,10 +823,14 @@ async function start(): Promise<void> {
       }
     }
 
+    const ownShip = ships.get(ownId);
+    if (ownShip && builtRevision < 0) {
+      view.x = ownShip.x;
+      view.y = ownShip.y;
+    }
+
     if (own) {
       updateHud(own);
-
-      // Hide the marker once we are close enough to count as arrived.
       if (target) {
         const distance = Math.hypot(own[2] - target.x, own[3] - target.y);
         if (distance <= settings.sailing.arrivalRadiusKm) {
@@ -825,6 +840,9 @@ async function start(): Promise<void> {
       }
     }
 
+    lastSeen = Array.isArray(state.l) ? state.l : [];
+    drawLastSeen();
+    updateDebugLine();
     setStatus("Connected");
   }
 
@@ -868,6 +886,71 @@ async function start(): Promise<void> {
     }
   }
 
+  // ---- Chart mode and scale ----------------------------------------------
+
+  function setMode(next: ViewMode): void {
+    if (next === mode) return;
+    const now = performance.now();
+
+    if (next === "chart") {
+      savedShipView = { ...view };
+      mode = "chart";
+      setFollow(false);
+      view.x = MAP_WIDTH_KM / 2;
+      view.y = MAP_HEIGHT_KM / 2;
+      view.kmAcross = wholeMapKmAcross();
+      chartButton.textContent = "Back to ship";
+      chartButton.setAttribute("aria-pressed", "true");
+      rulerLayer.visible = true;
+    } else {
+      mode = "ship";
+      view.x = savedShipView.x;
+      view.y = savedShipView.y;
+      view.kmAcross = clamp(
+        savedShipView.kmAcross,
+        settings.view.shipMinKmAcross,
+        settings.view.shipMaxKmAcross,
+      );
+      setFollow(savedShipView.follow);
+      chartButton.textContent = "Chart";
+      chartButton.setAttribute("aria-pressed", "false");
+      rulerLayer.visible = false;
+    }
+
+    refreshMap(now, true);
+    refreshFogPaper();
+  }
+
+  function updateRuler(): void {
+    if (mode !== "chart") return;
+
+    const s = scale();
+    const steps = settings.view.chartRulerStepsKm;
+    let step = steps[steps.length - 1] ?? 1_000;
+    for (const candidate of steps) {
+      const px = candidate * s;
+      if (px >= settings.view.chartRulerMinPx && px <= settings.view.chartRulerMaxPx) {
+        step = candidate;
+        break;
+      }
+    }
+
+    const px = step * s;
+    const right = app.screen.width - 22;
+    const bottom = app.screen.height - 22;
+    rulerLine.clear();
+    rulerLine
+      .moveTo(right - px, bottom)
+      .lineTo(right, bottom)
+      .moveTo(right - px, bottom - 5)
+      .lineTo(right - px, bottom + 5)
+      .moveTo(right, bottom - 5)
+      .lineTo(right, bottom + 5)
+      .stroke({ width: 1.5, color: INK_COLOR });
+    rulerText.text = `${step} km`;
+    rulerText.position.set(right - px, bottom - 20);
+  }
+
   // ---- Camera and input ---------------------------------------------------
 
   const pointers = new Map<number, { x: number; y: number }>();
@@ -877,14 +960,8 @@ async function start(): Promise<void> {
   let pinchStartDistance = 0;
   let pinchStartKm = view.kmAcross;
 
-  function setFollow(on: boolean): void {
-    view.follow = on;
-    followButton.setAttribute("aria-pressed", String(on));
-  }
-
   function zoomTo(kmAcross: number): void {
-    // TEMP-DEBUG: maxViewKmAcross is 300 unless debug=1 is present.
-    view.kmAcross = clamp(kmAcross, settings.view.minKmAcross, maxViewKmAcross());
+    view.kmAcross = clamp(kmAcross, minViewKmAcross(), maxViewKmAcross());
   }
 
   app.canvas.addEventListener("pointerdown", (event) => {
@@ -956,80 +1033,105 @@ async function start(): Promise<void> {
     { passive: false },
   );
 
-  followButton.addEventListener("click", () => setFollow(!view.follow));
-
-  // TEMP-DEBUG: panel actions and the live latitude/longitude readout.
-  if (DEBUG_VIEW) {
-    const jumpToWholeMap = (): void => {
-      setFollow(false);
-      view.kmAcross = wholeMapKmAcross();
-      view.x = MAP_WIDTH_KM / 2;
-      view.y = MAP_HEIGHT_KM / 2;
-      refreshChart(performance.now(), true);
-    };
-
-    const jumpToMyShip = (): void => {
-      const own = ships.get(ownId);
+  followButton.addEventListener("click", () => {
+    if (mode === "chart") {
+      setMode("ship");
       setFollow(true);
-      view.kmAcross = Math.min(settings.view.startKmAcross, maxViewKmAcross());
-      if (own) {
-        view.x = own.x;
-        view.y = own.y;
-      } else {
-        view.x = startPoint.x;
-        view.y = startPoint.y;
-      }
-      refreshChart(performance.now(), true);
-    };
+      return;
+    }
+    setFollow(!view.follow);
+  });
 
-    debugWholeButton.addEventListener("click", jumpToWholeMap);
-    debugShipButton.addEventListener("click", jumpToMyShip);
-
-    const showPointerPosition = (event: PointerEvent): void => {
-      const rect = app.canvas.getBoundingClientRect();
-      const world = toWorld(event.clientX - rect.left, event.clientY - rect.top);
-      const lonLat = mapToLonLat(world.x, world.y);
-      debugPosition.textContent = formatLatLon(lonLat.latDeg, lonLat.lonDeg);
-    };
-
-    app.canvas.addEventListener("pointermove", showPointerPosition);
-    app.canvas.addEventListener("pointerdown", showPointerPosition);
-    app.canvas.addEventListener("pointerleave", () => {
-      debugPosition.textContent = "–";
-    });
-  }
+  chartButton.addEventListener("click", () => {
+    setMode(mode === "chart" ? "ship" : "chart");
+  });
 
   // ---- Frame loop ---------------------------------------------------------
 
   app.ticker.add(() => {
-    refreshChart(performance.now());
+    const now = performance.now();
+    if (app.screen.width !== lastWidth || app.screen.height !== lastHeight) {
+      lastWidth = app.screen.width;
+      lastHeight = app.screen.height;
+      drawGrain();
+      refreshMap(now, true);
+    }
 
     const dt = Math.min(0.1, app.ticker.deltaMS / 1000);
     const own = ships.get(ownId);
 
-    if (view.follow && own) {
+    if (view.follow && own && mode === "ship") {
       view.x = own.x;
       view.y = own.y;
     }
 
-    const k = 1 - Math.exp(-7 * dt);
+    const ease = 1 - Math.exp(-7 * dt);
     for (const ship of ships.values()) {
-      ship.x += (ship.targetX - ship.x) * k;
-      ship.y += (ship.targetY - ship.y) * k;
-      ship.heading += shortestRadians(ship.targetHeading - ship.heading) * k;
+      ship.x += (ship.targetX - ship.x) * ease;
+      ship.y += (ship.targetY - ship.y) * ease;
+      ship.heading += shortestRadians(ship.targetHeading - ship.heading) * ease;
 
       const screen = toScreen(ship.x, ship.y);
       ship.hull.position.set(screen.x, screen.y);
       ship.hull.rotation = ship.heading;
       ship.hull.visible =
-        screen.x > -80 && screen.x < app.screen.width + 80 &&
-        screen.y > -80 && screen.y < app.screen.height + 80;
+        screen.x > -90 && screen.x < app.screen.width + 90 &&
+        screen.y > -90 && screen.y < app.screen.height + 90;
+    }
+
+    refreshMap(now);
+    refreshFogPaper();
+    updateLiveCircles();
+    updateLayerOffset();
+
+    for (let index = 0; index < lastSeenViews.length; index += 1) {
+      const markerView = lastSeenViews[index];
+      const seen = lastSeen[index];
+      if (!markerView || !seen) continue;
+      const screen = toScreen(seen[2], seen[3]);
+      markerView.position.set(screen.x, screen.y);
+      markerView.visible =
+        screen.x > -60 && screen.x < app.screen.width + 60 &&
+        screen.y > -60 && screen.y < app.screen.height + 60;
     }
 
     if (target && marker.visible) {
       const screen = toScreen(target.x, target.y);
       marker.position.set(screen.x, screen.y);
     }
+
+    // Wind streaks blow towards the direction the wind is going to.
+    windLayer.clear();
+    const angle = ((windFrom + 180) * Math.PI) / 180;
+    const dx = Math.sin(angle);
+    const dy = -Math.cos(angle);
+    const width = app.screen.width;
+    const height = app.screen.height;
+    const maxLength = settings.view.windStreakMaxPx;
+    const span = width + height + maxLength * 2;
+    for (let index = 0; index < settings.view.windStreakCount; index += 1) {
+      const length =
+        settings.view.windStreakMinPx +
+        ((index * 37) % Math.max(1, maxLength - settings.view.windStreakMinPx));
+      const travel =
+        (now / 1000) * settings.view.windStreakSpeedPxPerSec +
+        (index * span) / settings.view.windStreakCount;
+      const baseX = (index * 97 + 17) % Math.max(1, width);
+      const baseY = (index * 193 + 31) % Math.max(1, height);
+      const x = ((baseX + dx * travel) % (width + maxLength)) - maxLength / 2;
+      const y = ((baseY + dy * travel) % (height + maxLength)) - maxLength / 2;
+      windLayer
+        .moveTo(x, y)
+        .lineTo(x + dx * length, y + dy * length)
+        .stroke({
+          width: settings.view.windStreakWidthPx,
+          color: WIND_COLOR,
+          alpha: settings.view.windStreakAlpha,
+          cap: "round",
+        });
+    }
+
+    updateRuler();
   });
 
   for (const button of document.querySelectorAll<HTMLButtonElement>("[data-size]")) {
@@ -1039,8 +1141,7 @@ async function start(): Promise<void> {
     });
   }
 
-  await loadManifest();
-  refreshChart(performance.now(), true);
+  drawGrain();
   connect();
 }
 

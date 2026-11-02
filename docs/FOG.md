@@ -38,15 +38,17 @@ ask for geometry it has not discovered.
 
 ## Client views
 
-The ship view zooms from about 4 km to about 65 km across the shorter screen
-side, so a whole 50 km sight circle fits with a small dim margin. The chart
-screen zooms from the whole paper down to about 25 km. The chart is painted
-from cached blocks so the whole paper stays cheap to draw on a phone.
+The ship view zooms from 4 km to 65 km across the shorter screen side. It
+draws remembered sea and land dimly, covers never-seen cells in stained paper,
+and paints the live 25 km circle brightly above that paper. Wind streaks move
+across the whole screen. The chart button opens the whole paper and zooms in
+to 25 km; it is painted from the received private blocks and cached as a
+texture.
 
-Dev rooms (`dev-...`) are the only place the old TEMP-DEBUG whole-map jump,
-latitude/longitude readout, 10-degree grid and border remain. Their chart is
-fully explored and dimmed, with live circles in full colour. The `debug=1`
-address option is gone.
+Test and dev rooms show a small **TEMP-DEBUG** line with the room type,
+discovered-cell count, received-block count and sight radius. Dev rooms start
+fully explored. The old `debug=1` whole-map option, grid and latitude/longitude
+panel are gone.
 
-The debug view is temporary and must be removed before release (see
+The debug line is temporary and must be removed before release (see
 `RULES.md`).

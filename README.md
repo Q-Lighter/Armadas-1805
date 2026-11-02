@@ -19,8 +19,9 @@ npm install
 npm run build
 ```
 
-The build type checks everything, bundles the browser client, copies the chart
-tiles and writes the site to `dist/`.
+The build type checks everything, bundles the browser client and writes the
+site to `dist/`. Private chart blocks are bundled into the Worker, not the
+public page.
 
 The chart tiles and server land lookup are committed, so a normal build needs
 no map tooling. To rebuild them from Natural Earth:
@@ -42,19 +43,23 @@ npm run build
 npx wrangler dev
 ```
 
-Then open <http://localhost:8787/?room=test>. The room code can be any letters,
-numbers, dashes or underscores; everyone using the same code shares a world.
+Then open <http://localhost:8787/?room=test-1>. The room code can be any
+letters, numbers, dashes or underscores; everyone using the same code shares a
+world. A code starting `test` gets the fast frigate and an offshore start; a
+code starting `dev-` also starts fully explored. Other codes are normal rooms.
 
 Controls:
 
 - Tap or click the sea to order your ship to sail there.
-- Drag to pan; pinch or scroll to zoom between 5 km and 300 km across.
+- Drag to pan; pinch or scroll to zoom. The ship view covers 4–65 km across the
+  shorter screen side; **Chart** opens the whole paper down to 25 km.
 - **Follow my ship** keeps the camera on your flagship.
 - **S / M / L** set the UI size; the choice is remembered.
 
-The chart loads only the tiles around your view. A small "Charting…" note
-appears while they arrive. A coast or chart-edge order ends with a short paper
-notice that fades after a few seconds.
+Your ship has a 25 km daylight sight circle. Remembered ground is dim, unseen
+ground is stained paper, and live wind streaks cross the screen. A coast or
+chart-edge order ends with a short paper notice that fades after a few seconds.
+Test and dev rooms also show a small TEMP-DEBUG fog readout.
 
 A player id is made on first visit and kept in the browser, so refreshing keeps
 the same ship. Two tabs share that id; use two devices or two browser profiles
@@ -66,9 +71,9 @@ to sail as two players.
 npm test
 ```
 
-This compiles the shared code and runs 25 tests for the map projection and land
-lookup, sailing, the world, coast and edge rules, and the chart tile data on
-Node's test runner.
+This compiles the shared code and runs 35 tests for the map projection and land
+lookup, sailing, the world, coast and edge rules, fog, the chart data and the
+fog-view helpers on Node's test runner.
 
 ```sh
 npm run test:server
@@ -91,8 +96,9 @@ points and tile bytes, not GPU frame time.
 
 Cloudflare builds this project from `main`: it runs the build and deploys the
 Worker in `server/dist/worker.js`, the `GameRoom` Durable Object and the static
-files in `dist/`, including the chart tiles. For a manual deploy, log in once
-with `npx wrangler login` (a free Cloudflare account, no card needed), then:
+files in `dist/`. The private chart blocks travel in the Worker bundle. For a
+manual deploy, log in once with `npx wrangler login` (a free Cloudflare
+account, no card needed), then:
 
 ```sh
 npm run build
@@ -108,7 +114,7 @@ Durable Objects.
 | Folder               | Contents                                                        |
 | -------------------- | --------------------------------------------------------------- |
 | `client/`            | The game as shown in the browser (PixiJS and TypeScript).       |
-| `client/public/`     | Chart tiles and their index, copied into `dist/` by the build.  |
+| `map-data/`          | Private source tiles used to generate chart blocks.              |
 | `server/`            | The Cloudflare Worker and the `GameRoom` Durable Object.        |
 | `shared/`            | Game rules, world, map projection and land lookup.              |
 | `docs/`              | Build log, style guide and map notes.                           |

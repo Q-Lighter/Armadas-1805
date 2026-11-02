@@ -33,6 +33,10 @@
     "./fog": {
       "types": "./dist/fog.d.ts",
       "default": "./dist/fog.js"
+    },
+    "./fog-view": {
+      "types": "./dist/fogView.d.ts",
+      "default": "./dist/fogView.js"
     }
   },
   "files": [

@@ -344,26 +344,6 @@ h2 {
   font-weight: 600;
 }
 
-/* "Charting..." while a tile is on its way. Ink on a small paper scrap. */
-.charting {
-  position: fixed;
-  z-index: 3;
-  top: max(5.2rem, calc(env(safe-area-inset-top) + 4.6rem));
-  left: max(0.5rem, env(safe-area-inset-left));
-  margin: 0;
-  padding: 0.25rem 0.6rem;
-  border: 1px solid var(--rule);
-  background: rgba(232, 219, 189, 0.94);
-  color: var(--ink-faded);
-  font-size: calc(0.8rem * var(--ui-scale));
-  font-style: italic;
-  pointer-events: none;
-}
-
-.charting[hidden] {
-  display: none;
-}
-
 /* A short server message, on paper, fading after a few seconds. */
 .chart-notice {
   position: fixed;
@@ -399,41 +379,24 @@ h2 {
   display: none;
 }
 
-/* TEMP-DEBUG: whole-map debug panel. Hidden unless debug=1 is in the address. */
-.debug-panel {
+/* TEMP-DEBUG: a small readout in test and dev rooms only. */
+.fog-debug {
   z-index: 4;
   top: max(5.2rem, calc(env(safe-area-inset-top) + 4.6rem));
-  right: max(0.5rem, env(safe-area-inset-right));
-  width: min(15rem, calc(100% - 1rem));
-  padding: 0.6rem 0.7rem;
-}
-
-.debug-panel[hidden] {
-  display: none;
-}
-
-.debug-panel h2 {
-  margin-bottom: 0.45rem;
-  font-size: calc(1.1rem * var(--ui-scale));
-}
-
-.debug-actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.4rem;
-}
-
-.debug-actions .btn {
-  flex: 1 1 6rem;
-  padding: 0.4rem 0.55rem;
-  font-size: calc(0.85rem * var(--ui-scale));
-}
-
-.debug-position {
-  margin: 0.5rem 0 0;
+  left: max(0.5rem, env(safe-area-inset-left));
+  max-width: calc(100% - 1rem);
+  margin: 0;
+  padding: 0.25rem 0.55rem;
+  border: 1px solid var(--rule);
+  background: rgba(232, 219, 189, 0.94);
   color: var(--ink-faded);
-  font-size: calc(0.82rem * var(--ui-scale));
+  font-size: calc(0.78rem * var(--ui-scale));
   font-variant-numeric: tabular-nums;
+  pointer-events: none;
+}
+
+.fog-debug[hidden] {
+  display: none;
 }
 
 .hud-ship {
@@ -534,18 +497,13 @@ h2 {
     display: none;
   }
 
-  .charting {
-    top: max(4.8rem, calc(env(safe-area-inset-top) + 4.2rem));
-    font-size: calc(0.75rem * var(--ui-scale));
-  }
-
   .chart-notice {
     bottom: calc(env(safe-area-inset-bottom) + 11rem);
   }
 
-  /* TEMP-DEBUG: keep the debug panel clear of the taller phone HUD. */
-  .debug-panel {
+  /* TEMP-DEBUG: keep the readout clear of the taller phone HUD. */
+  .fog-debug {
     top: max(5.2rem, calc(env(safe-area-inset-top) + 4.6rem));
-    width: min(13rem, calc(100% - 1rem));
+    right: max(0.5rem, env(safe-area-inset-right));
   }
 }

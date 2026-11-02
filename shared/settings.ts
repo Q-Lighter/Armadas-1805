@@ -190,6 +190,19 @@ export const settings = {
     shipMaxKmAcross: 65,
     /** Chart-screen zoom range. */
     chartMinKmAcross: 25,
+    /** How dark remembered land and sea are outside a live sight circle. */
+    fogDimAlpha: 0.52,
+    /** Live wind streaks in the ship and chart views. */
+    windStreakCount: 24,
+    windStreakMinPx: 22,
+    windStreakMaxPx: 88,
+    windStreakAlpha: 0.22,
+    windStreakWidthPx: 1.2,
+    windStreakSpeedPxPerSec: 18,
+    /** Chart scale ruler: a readable bar and the distances it can show. */
+    chartRulerMinPx: 64,
+    chartRulerMaxPx: 150,
+    chartRulerStepsKm: [25, 50, 100, 250, 500, 1_000, 2_000, 4_000],
     /** Pick a tile level whose tiles are no larger than this share of the
      *  view. Two means a view spans at least two tiles. */
     tileLevelPickFactor: 2,

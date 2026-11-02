@@ -587,3 +587,66 @@ chart geometry, test/debug room starts, and compact updates.
   Part C. Until then, the page's chart will not load.
 - No browser or Cloudflare deployment was available. Message sizes were not
   measured over a live socket yet.
+
+## Session 1C-c: fog view on the live page
+
+**Date:** 2026-11-02
+**Branch:** main
+
+### What was asked
+
+Finish the missing ship view for prompt 1C. The test room was showing no fog:
+the expected 25 km live circle on paper, dimmed discovered ground and a live
+wind-streak layer. Check the room, server, block and client path, add a
+test/dev TEMP-DEBUG readout, test, build, commit and push.
+
+### What was broken
+
+The server was already sending `k`, discovered cells and private chart blocks.
+The browser client ignored all three, still fetched `./tiles/index.json` and
+tile JSON files that Part B had removed from public hosting, and drew no fog.
+The room type reached the Worker and `visibleStateFor`, but not the screen.
+
+### What was built
+
+- `client/main.ts` now consumes `state.chart.cells`, `state.chart.blocks`,
+  `state.k`, `state.l` and `state.ships` only. There are no tile fetches.
+- Ship view: 4–65 km across the shorter screen side, dim remembered sea and
+  land, opaque paper over undiscovered cells, a bright 25 km sight circle with
+  a soft sea rim, last-seen markers, and animated wind streaks.
+- Chart view: the whole paper down to 25 km, built from received blocks,
+  cached with Pixi's `cacheAsTexture`, with ships, last-seen markers, tap orders
+  and a scale ruler.
+- A test/dev-only TEMP-DEBUG line shows room type, discovered cells, received
+  map blocks and the sight radius. Normal rooms show nothing.
+- Removed the `debug=1` whole-map panel and its grid/position controls. The
+  chart is now a normal screen, not a debug option.
+- `RULES.md` now says the remaining TEMP-DEBUG line must be removed before
+  release. `docs/FOG.md` and `README.md` were updated for the block-based view.
+- `shared/fogView.ts`: pure helpers for the debug line and paper-cover rule;
+  `tests/fog-view.test.ts` covers them.
+
+### Path check
+
+A real local `wrangler dev` WebSocket to `test-1` returned:
+
+- `k: "test"`, one frigate, 77 discovered cells, 3 private blocks, 3,057 bytes.
+- The next state had 0 new cells, 0 new blocks and was 161 bytes.
+- The built page was HTTP 200 and contained the chart and fog-debug controls;
+  it contained no public tile path.
+
+### Checks
+
+- `npm test`: 35/35 passing.
+- `npm run build`: passing.
+- `grep` for `tiles/index.json`, `debug=1`, `charting` and `debug-panel` in the
+  client/server/public page: no matches.
+
+### Broken or unfinished
+
+- No browser is available, so the paper cover, bright circle, dim ground,
+  wind streaks, chart cache, pinch/drag and phone layout were not seen on a
+  screen. They are reasoned from the draw order and checked by type/build.
+- The map sheet is cached only in chart mode; panning more than about 1.5
+  screens or zooming rebuilds it. Frame cost was not measured.
+- Parts 1C-d (stress test) is still unfinished.

@@ -1,9 +1,9 @@
 // The game world. Plain TypeScript, so the server runs it and the tests can
 // run it without a browser or a network.
 //
-// The world lives in kilometres. One ship per player for now. The server is
-// authoritative: it checks every movement against the land lookup and the
-// chart frame before a ship is allowed to arrive there.
+// The world lives in kilometres. A human player has one ship; the temporary
+// load test adds multi-ship fake fleets. The server is authoritative: it checks
+// every movement against the land lookup and chart frame.
 
 import { settings } from "./settings.js";
 import {
@@ -32,6 +32,8 @@ import {
   type ChartUpdate,
   type RoomKind,
 } from "./fog.js";
+import { addBots, refreshBotOrders } from "./bots.js";
+import type { DebugStats } from "./loadMetrics.js";
 
 const DEG = Math.PI / 180;
 const RAD = 180 / Math.PI;
@@ -48,8 +50,10 @@ export interface World {
   /** The room code and its kind (normal, test or debug). */
   roomCode: string;
   kind: RoomKind;
-  /** The ships in this room, by player id. */
+  /** Human ships, by player id. */
   players: Map<string, Ship>;
+  /** TEMP-DEBUG: fake load-test owners and their fleets. */
+  botFleets: Map<string, Ship[]>;
   /** Each player's discovered ground and last-seen records. */
   charts: Map<string, ChartState>;
   /** Short messages waiting for each player; never part of the world state. */
@@ -96,6 +100,8 @@ export interface StateMessage {
   l: LastSeenSnapshot[];
   /** Newly discovered cells and private map blocks. */
   chart: ChartUpdate;
+  /** TEMP-DEBUG: dev-room load-test counters. */
+  d?: DebugStats;
 }
 
 export function createWorld(roomCode = "main"): World {
@@ -105,6 +111,7 @@ export function createWorld(roomCode = "main"): World {
     roomCode,
     kind: roomKindForCode(roomCode),
     players: new Map(),
+    botFleets: new Map(),
     charts: new Map(),
     notices: new Map(),
   };
@@ -288,6 +295,22 @@ export function addPlayer(
   return ship;
 }
 
+/** All ships belonging to one human or fake player. */
+export function shipsForOwner(world: World, ownerId: string): Ship[] {
+  const human = world.players.get(ownerId);
+  if (human) return [human];
+  return world.botFleets.get(ownerId) ?? [];
+}
+
+/** Add the temporary dev-room bot fleets once. */
+export function addBotFleets(
+  world: World,
+  count: number,
+  firstHumanId: string,
+): number {
+  return addBots(world, count, firstHumanId);
+}
+
 /** Apply a sail-to order from a player. Bad orders are simply refused. */
 export function applyOrder(world: World, playerId: string, x: unknown, y: unknown): boolean {
   if (typeof x !== "number" || typeof y !== "number") return false;
@@ -444,7 +467,8 @@ function haltAt(
   // one at the new safe position next tick.
   ship.coastEscapeHeadingRad = null;
 
-  pushNotice(world, playerId, notice);
+  // Fake players have no socket and need no paper notices.
+  if (world.players.has(playerId)) pushNotice(world, playerId, notice);
 }
 
 /** True when the straight water route from the ship to its order is clear. */
@@ -595,46 +619,65 @@ function chooseCoastEscapeHeading(ship: Ship, windFromDeg: number): number | nul
   return bestHeading;
 }
 
-/** Update every player's discovered ground from their own ships. */
+/** Update every owner's discovered ground from all of that owner's ships. */
 function updateFog(world: World): void {
-  for (const [playerId, chart] of world.charts) {
+  for (const [ownerId, chart] of world.charts) {
     if (chart.all) continue;
-    for (const ship of world.players.values()) {
-      if (ship.id === playerId) revealCircle(chart, ship.x, ship.y);
+    for (const ship of shipsForOwner(world, ownerId)) {
+      revealCircle(chart, ship.x, ship.y);
     }
   }
 }
 
 /** Advance every ship by a number of game seconds. */
+function stepOwnerShip(
+  world: World,
+  ownerId: string,
+  ship: Ship,
+  dtGameSeconds: number,
+  windFromDeg: number,
+): void {
+  // A ship close to a coast first turns and sails for open water. This gives
+  // a new seaward order a way out even when the wind is blowing onshore.
+  if (
+    ship.order &&
+    orderHasClearWaterPath(ship) &&
+    isNearLand(ship.x, ship.y, settings.coast.tackAwarenessKm)
+  ) {
+    ship.coastEscapeHeadingRad ??= chooseCoastEscapeHeading(ship, windFromDeg);
+  } else {
+    ship.coastEscapeHeadingRad = null;
+  }
+
+  const fromX = ship.x;
+  const fromY = ship.y;
+  stepShip(
+    ship,
+    dtGameSeconds,
+    windFromDeg,
+    undefined,
+    ship.coastEscapeHeadingRad ?? undefined,
+  );
+  resolveMovement(world, ownerId, ship, fromX, fromY);
+}
+
 export function stepWorld(
   world: World,
   dtGameSeconds: number,
   windFromDeg: number = settings.weather.windFromDeg,
 ): void {
   for (const [playerId, ship] of world.players) {
-    // A ship close to a coast first turns and sails for open water. This gives
-    // a new seaward order a way out even when the wind is blowing onshore.
-    if (
-      ship.order &&
-      orderHasClearWaterPath(ship) &&
-      isNearLand(ship.x, ship.y, settings.coast.tackAwarenessKm)
-    ) {
-      ship.coastEscapeHeadingRad ??= chooseCoastEscapeHeading(ship, windFromDeg);
-    } else {
-      ship.coastEscapeHeadingRad = null;
-    }
-
-    const fromX = ship.x;
-    const fromY = ship.y;
-    stepShip(
-      ship,
-      dtGameSeconds,
-      windFromDeg,
-      undefined,
-      ship.coastEscapeHeadingRad ?? undefined,
-    );
-    resolveMovement(world, playerId, ship, fromX, fromY);
+    stepOwnerShip(world, playerId, ship, dtGameSeconds, windFromDeg);
   }
+
+  // TEMP-DEBUG: load-test ships use the same movement path as players.
+  for (const [ownerId, fleet] of world.botFleets) {
+    for (const ship of fleet) {
+      stepOwnerShip(world, ownerId, ship, dtGameSeconds, windFromDeg);
+    }
+  }
+
+  refreshBotOrders(world);
   world.tick += 1;
   world.gameSeconds += Math.max(0, dtGameSeconds);
   updateFog(world);
@@ -657,7 +700,8 @@ export function visibleStateFor(
   playerId: string,
   blockLookup?: ReadonlyMap<string, ChartBlock>,
 ): StateMessage {
-  const own = [...world.players.values()].filter((ship) => ship.id === playerId);
+  const own = shipsForOwner(world, playerId);
+  const ownIds = new Set(own.map((ship) => ship.id));
   const sightSq = settings.fog.sightRangeKm ** 2;
   const isVisible = (ship: Ship): boolean =>
     own.some((mine) => (ship.x - mine.x) ** 2 + (ship.y - mine.y) ** 2 <= sightSq);
@@ -665,8 +709,14 @@ export function visibleStateFor(
   const ships: ShipSnapshot[] = [];
   const visibleIds = new Set<string>();
 
-  for (const ship of world.players.values()) {
-    if (ship.id !== playerId && !isVisible(ship)) continue;
+  // A fleet owner sees every one of its own ships plus foreign ships inside
+  // the sight circle of any of them. The client uses the same path for one
+  // ship; this only exists for the temporary load test.
+  const allShips: Ship[] = [...world.players.values()];
+  for (const fleet of world.botFleets.values()) allShips.push(...fleet);
+
+  for (const ship of allShips) {
+    if (!ownIds.has(ship.id) && !isVisible(ship)) continue;
 
     visibleIds.add(ship.id);
     ships.push([
@@ -684,8 +734,8 @@ export function visibleStateFor(
 
   // Remember foreign ships while they are visible; when they leave the circle
   // their last position becomes a faded marker with an age in game time.
-  for (const ship of world.players.values()) {
-    if (ship.id === playerId || !visibleIds.has(ship.id)) continue;
+  for (const ship of allShips) {
+    if (ownIds.has(ship.id) || !visibleIds.has(ship.id)) continue;
     chart.seen.set(ship.id, {
       classId: ship.classId,
       navy: "British",

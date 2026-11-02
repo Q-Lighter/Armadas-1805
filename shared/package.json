@@ -41,6 +41,14 @@
     "./room-loop": {
       "types": "./dist/roomLoop.d.ts",
       "default": "./dist/roomLoop.js"
+    },
+    "./load-metrics": {
+      "types": "./dist/loadMetrics.d.ts",
+      "default": "./dist/loadMetrics.js"
+    },
+    "./bots": {
+      "types": "./dist/bots.d.ts",
+      "default": "./dist/bots.js"
     }
   },
   "files": [

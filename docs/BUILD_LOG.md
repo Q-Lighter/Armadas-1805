@@ -588,6 +588,56 @@ chart geometry, test/debug room starts, and compact updates.
 - No browser or Cloudflare deployment was available. Message sizes were not
   measured over a live socket yet.
 
+## Session 1D-c: load test mode
+
+**Date:** 2026-11-02
+**Branch:** main
+
+### What was asked
+
+Add a temporary, dev-room-only computer fleet so the owner can run a live load
+test, with real fake-player updates, loop metrics and a local benchmark.
+
+### What was built
+
+- `shared/bots.ts`: 1–300 British frigates split across eight fake owners, with
+  sea-only spawns and destinations, normal sailing orders, and replacement
+  destinations after arrival or a coast stop. About 10% start within 40 km of
+  the first human; the rest are placed in the Caribbean and northern South
+  America.
+- Fake owners have their own charts and discover from every ship in their
+  fleet. The shared visibility path now accepts multi-ship owners, but human
+  players still have one ship and the same filtering as before.
+- `/?room=dev-load&bots=100` passes the count through to the socket. Normal and
+  test rooms ignore it; a dev room rejects counts outside 1–300.
+- `server/src/gameRoom.ts` builds and measures eight full `visibleStateFor`
+  updates at 5 Hz and discards them. `LoadMetrics` records real timer gaps and
+  per-player bytes over ten seconds without measuring CPU from inside.
+- Dev-room state carries the compact counters and the TEMP-DEBUG line shows
+  ships, world updates/s, average/worst gap, bytes/s per player, and the
+  client's received updates/s and worst receive gap.
+- `RULES.md` records that the whole mode is temporary and dev-only.
+- `scripts/benchmark-world.mjs` and `npm run benchmark:world`.
+
+### Checks
+
+- `npm test`: **45/45 passing**, including bot limits, sea-only spawn and
+  destinations, owner split, proof that a fake update leaks no out-of-sight
+  ship, and frozen/resumed room time.
+- `npm run build`: passing.
+- `npm run benchmark:world` (Node 26.13, rough local proxy): 25 ships 31.0 ms,
+  50 ships 39.0 ms, 100 ships 88.7 ms and 200 ships 158.6 ms for ten simulated
+  seconds including fake updates. Full table in `docs/STRESS.md`.
+
+### Broken or unfinished
+
+- The live browser load test was not run here, by instruction; there is no
+  browser and the owner will run it on their own devices. Actual Cloudflare
+  CPU, memory and live message sizes remain unmeasured.
+- The local benchmark omits private chart-block geometry, so its update bytes
+  are lower than a live room with new block data.
+- There is still no saving, and Part 1D-d (the game clock) is next.
+
 ## Session 1D-b: cache safety and idle sleep
 
 **Date:** 2026-11-02

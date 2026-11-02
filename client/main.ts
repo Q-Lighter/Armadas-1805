@@ -15,7 +15,11 @@ import {
   type RoomKind,
 } from "@naval/shared/fog";
 import type { LastSeenSnapshot, StateMessage } from "@naval/shared/world";
-import { cellNeedsPaper, fogDebugLine } from "@naval/shared/fog-view";
+import {
+  cellNeedsPaper,
+  fogDebugLine,
+  type FogDebugInfo,
+} from "@naval/shared/fog-view";
 
 // ---------------------------------------------------------------------------
 // Chart look.
@@ -161,7 +165,9 @@ async function start(): Promise<void> {
   let pageBuildId = buildMeta?.content ?? "";
   let buildCommit = commitMeta?.content ?? "unknown";
 
-  const room = new URLSearchParams(location.search).get("room") ?? "test";
+  const query = new URLSearchParams(location.search);
+  const room = query.get("room") ?? "test";
+  const requestedBots = query.get("bots");
   const roomPattern = new RegExp(`^[A-Za-z0-9_-]{1,${settings.server.maxRoomCodeLength}}$`);
   if (!roomPattern.test(room)) {
     status.textContent = "Room code must be letters, numbers, dash or underscore.";
@@ -274,6 +280,9 @@ async function start(): Promise<void> {
 
   let roomKind: RoomKind = "normal";
   let chartAll = false;
+  let debugInfo: FogDebugInfo = {};
+  const receivedAt: number[] = [];
+  let receivedGapMaxMs = 0;
   let ownId = "";
   let socket: WebSocket | null = null;
   let target: { x: number; y: number } | null = null;
@@ -693,13 +702,37 @@ async function start(): Promise<void> {
     }
   }
 
+  function noteStateReceived(): void {
+    const now = performance.now();
+    receivedAt.push(now);
+    while (receivedAt.length > 0 && receivedAt[0]! < now - 10_000) receivedAt.shift();
+    if (receivedAt.length >= 2) {
+      receivedGapMaxMs = 0;
+      for (let index = 1; index < receivedAt.length; index += 1) {
+        receivedGapMaxMs = Math.max(receivedGapMaxMs, receivedAt[index]! - receivedAt[index - 1]!);
+      }
+    }
+  }
+
   function updateDebugLine(): void {
+    const now = performance.now();
+    while (receivedAt.length > 0 && receivedAt[0]! < now - 10_000) receivedAt.shift();
+    const spanMs = receivedAt.length >= 2
+      ? receivedAt[receivedAt.length - 1]! - receivedAt[0]!
+      : 0;
+    const receivedHz = spanMs > 0 ? ((receivedAt.length - 1) * 1000) / spanMs : undefined;
+
     const line = fogDebugLine(
       roomKind,
       chartAll,
       discovered,
       blocks.size,
-      buildCommit,
+      {
+        ...debugInfo,
+        buildCommit,
+        receivedHz,
+        receivedGapMaxMs: receivedAt.length >= 2 ? receivedGapMaxMs : undefined,
+      },
     );
     fogDebugOut.textContent = line ?? "";
     fogDebugOut.hidden = line === null;
@@ -786,6 +819,17 @@ async function start(): Promise<void> {
 
     const state = message as StateMessage;
     if (!Array.isArray(state.ships)) return;
+
+    noteStateReceived();
+    if (state.k === "dev" && Array.isArray(state.d) && state.d.length >= 6) {
+      const [ships, worldHz, gapAvgMs, gapMaxMs, bytesAvg, bytesMax] = state.d;
+      if (
+        [ships, worldHz, gapAvgMs, gapMaxMs, bytesAvg, bytesMax]
+          .every((value) => typeof value === "number" && Number.isFinite(value))
+      ) {
+        debugInfo = { ships, worldHz, gapAvgMs, gapMaxMs, bytesAvg, bytesMax };
+      }
+    }
 
     ownId = state.you;
     windFrom = Number.isFinite(state.w) ? state.w : settings.weather.windFromDeg;
@@ -891,7 +935,10 @@ async function start(): Promise<void> {
 
     setStatus("Connecting…");
     const scheme = location.protocol === "https:" ? "wss" : "ws";
-    const url = `${scheme}://${location.host}/ws?room=${encodeURIComponent(room)}&player=${encodeURIComponent(playerId())}`;
+    const botsQuery = requestedBots === null
+      ? ""
+      : `&bots=${encodeURIComponent(requestedBots)}`;
+    const url = `${scheme}://${location.host}/ws?room=${encodeURIComponent(room)}&player=${encodeURIComponent(playerId())}${botsQuery}`;
     const next = new WebSocket(url);
     socket = next;
 

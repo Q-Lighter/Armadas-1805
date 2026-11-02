@@ -26,6 +26,12 @@ Read this file at the start of every prompt, then follow it for the whole sessio
 
 - The game must run in a browser on a phone, a Chromebook and a PC, and resize without looking broken.
 
+## Temporary load test
+
+- The built-in load-test mode (`bots=` and all `TEMP-DEBUG` bot code) is
+  temporary and must never be reachable outside a room whose code starts
+  `dev-`. Remove the mode before release.
+
 ## Ways of working
 
 - Each prompt is one job and must finish inside one session. At the end of every prompt: test what you built, commit, push to `main`, and report back.

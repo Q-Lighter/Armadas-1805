@@ -13,6 +13,7 @@
     "build": "node scripts/build.mjs",
     "build-map": "esbuild scripts/build-map.ts --bundle --platform=node --format=esm --target=node20 --outfile=.map-build/build-map.mjs && node .map-build/build-map.mjs",
     "measure-map": "node scripts/measure-map.mjs",
+    "benchmark:world": "node scripts/benchmark-world.mjs",
     "test": "node scripts/test.mjs",
     "test:server": "npm run build && node scripts/simulate-clients.mjs",
     "deploy": "wrangler deploy"

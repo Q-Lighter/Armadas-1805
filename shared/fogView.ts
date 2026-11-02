@@ -14,6 +14,19 @@ export interface SightCentre {
   y: number;
 }
 
+/** Values the temporary readout may show. Missing values are left out. */
+export interface FogDebugInfo {
+  buildCommit?: string;
+  ships?: number;
+  worldHz?: number;
+  gapAvgMs?: number;
+  gapMaxMs?: number;
+  bytesAvg?: number;
+  bytesMax?: number;
+  receivedHz?: number;
+  receivedGapMaxMs?: number;
+}
+
 /** How many cells the player knows, with dev rooms counting the whole chart. */
 export function discoveredCellCount(
   all: boolean,
@@ -28,18 +41,34 @@ export function fogDebugLine(
   all: boolean,
   discovered: ReadonlySet<number>,
   blockCount: number,
-  buildCommit = "unknown",
+  info: FogDebugInfo = {},
 ): string | null {
   if (kind === "normal") return null;
 
-  return [
+  const parts = [
     "TEMP-DEBUG",
     `room type ${kind}`,
     `${discoveredCellCount(all, discovered)} discovered cells`,
     `${blockCount} map blocks received`,
     `sight ${settings.fog.sightRangeKm} km`,
-    `build ${buildCommit.slice(0, 12)}`,
-  ].join(" · ");
+    `build ${(info.buildCommit ?? "unknown").slice(0, 12)}`,
+  ];
+
+  // The load-test counters are only meaningful in a dev room.
+  if (kind === "dev") {
+    if (info.ships !== undefined) parts.push(`${info.ships} ships`);
+    if (info.worldHz !== undefined) parts.push(`${info.worldHz.toFixed(1)} world/s`);
+    if (info.gapAvgMs !== undefined) parts.push(`gap avg ${Math.round(info.gapAvgMs)} ms`);
+    if (info.gapMaxMs !== undefined) parts.push(`worst ${Math.round(info.gapMaxMs)} ms`);
+    if (info.bytesAvg !== undefined) parts.push(`${Math.round(info.bytesAvg)} B/s avg/player`);
+    if (info.bytesMax !== undefined) parts.push(`${Math.round(info.bytesMax)} B/s worst/player`);
+    if (info.receivedHz !== undefined) parts.push(`${info.receivedHz.toFixed(1)} updates/s received`);
+    if (info.receivedGapMaxMs !== undefined) {
+      parts.push(`worst receive gap ${Math.round(info.receivedGapMaxMs)} ms`);
+    }
+  }
+
+  return parts.join(" · ");
 }
 
 /** True when no part of a discovery cell is inside a live sight circle. */

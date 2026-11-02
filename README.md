@@ -60,7 +60,9 @@ Controls:
 Your ship has a 25 km daylight sight circle. Remembered ground is dim, unseen
 ground is stained paper, and live wind streaks cross the screen. A coast or
 chart-edge order ends with a short paper notice that fades after a few seconds.
-Test and dev rooms also show a small TEMP-DEBUG fog readout.
+Test and dev rooms also show a small TEMP-DEBUG fog readout. A dev room can
+run a temporary load test, for example `/?room=dev-load&bots=100`; see
+[docs/STRESS.md](docs/STRESS.md).
 
 A player id is made on first visit and kept in the browser, so refreshing keeps
 the same ship. Two tabs share that id; use two devices or two browser profiles
@@ -72,9 +74,10 @@ to sail as two players.
 npm test
 ```
 
-This compiles the shared code and runs 35 tests for the map projection and land
-lookup, sailing, the world, coast and edge rules, fog, the chart data and the
-fog-view helpers on Node's test runner.
+This compiles the shared code and runs 45 tests for the map projection and land
+lookup, sailing, the world, coast and edge rules, fog, the chart data, the
+fog-view helpers, room timing and the temporary load-test ships on Node's test
+runner.
 
 ```sh
 npm run test:server
@@ -92,6 +95,13 @@ npm run build && npm run measure-map
 This reports the worst chart view found across the land tiles at 21 zoom
 levels on a phone-shaped and a Chromebook-shaped screen. It measures geometry
 points and tile bytes, not GPU frame time.
+
+```sh
+npm run benchmark:world
+```
+
+This is a rough local Node proxy for 25, 50, 100 and 200 temporary bot ships.
+It is not a Cloudflare CPU measurement.
 
 ## Deploy
 
@@ -127,5 +137,6 @@ Durable Objects.
 - [RULES.md](RULES.md): the project rules, read at the start of every session.
 - [docs/STYLE.md](docs/STYLE.md): the paper-and-ink style guide.
 - [docs/MAP.md](docs/MAP.md): the chart frame, Natural Earth data and tile build.
+- [docs/STRESS.md](docs/STRESS.md): idle cost, free-plan notes and the temporary load test.
 - [docs/BUILD_LOG.md](docs/BUILD_LOG.md): a short entry for each session.
 - [CREDITS.md](CREDITS.md): map data and font credits.

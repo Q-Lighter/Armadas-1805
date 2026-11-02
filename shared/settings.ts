@@ -161,6 +161,33 @@ export const settings = {
     offshoreProbeRays: 16,
   },
 
+  /** TEMP-DEBUG: built-in dev-room load test. Remove with the bot code. */
+  loadTest: {
+    minBots: 1,
+    maxBots: 300,
+    fakePlayers: 8,
+    /** Share of bots that start near the first human, within these distances. */
+    nearHumanShare: 0.1,
+    nearHumanMinKm: 3,
+    nearHumanMaxKm: 40,
+    /** Bots sail to nearby sea points so every order is a normal order. */
+    destinationMinKm: 40,
+    destinationMaxKm: 250,
+    /** Search boxes for the rest of the fleet. */
+    caribbean: {
+      lonMinDeg: -88,
+      lonMaxDeg: -60,
+      latMinDeg: 10,
+      latMaxDeg: 22,
+    },
+    northernSouthAmerica: {
+      lonMinDeg: -82,
+      lonMaxDeg: -50,
+      latMinDeg: 0,
+      latMaxDeg: 12,
+    },
+  },
+
   /** Server loop values. */
   server: {
     /** World updates per real second. Draft: 10. */

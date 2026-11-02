@@ -9,7 +9,10 @@
   // except /ws.
   "assets": {
     "directory": "./dist",
-    "binding": "ASSETS"
+    "binding": "ASSETS",
+    // Let the Worker add no-cache headers to index.html and version.json.
+    // Without this, Cloudflare serves matching static files first.
+    "run_worker_first": true
   },
 
   // One Durable Object per room code, holding that room's world.

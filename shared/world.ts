@@ -6,9 +6,22 @@
 // chart frame before a ship is allowed to arrive there.
 
 import { settings } from "./settings.js";
-import { createShip, sailTo, stepShip, type Ship } from "./sailing.js";
+import {
+  angleOffWindDeg,
+  createShip,
+  sailTo,
+  speedForHeading,
+  stepShip,
+  type Ship,
+  type ShipClassId,
+} from "./sailing.js";
 import { isLandAt } from "./land.js";
-import { MAP_HEIGHT_KM, MAP_WIDTH_KM, lonLatToMap } from "./map.js";
+import {
+  MAP_HEIGHT_KM,
+  MAP_WIDTH_KM,
+  isInsideMapFrame,
+  lonLatToMap,
+} from "./map.js";
 
 const DEG = Math.PI / 180;
 const RAD = 180 / Math.PI;
@@ -141,14 +154,27 @@ function newPlayerSpot(world: World, playerId: string): { x: number; y: number; 
   return spot;
 }
 
+/**
+ * Test and debug rooms get the faster frigate so a chart can be explored
+ * quickly. Every other room keeps the flagship and its real sailing numbers.
+ */
+export function shipClassForRoom(roomCode: string): ShipClassId {
+  return roomCode.startsWith("test") || roomCode.startsWith("dev-")
+    ? "frigate"
+    : "flagship";
+}
+
 /** Add a player's ship once. A returning id keeps its existing ship. */
-export function addPlayer(world: World, playerId: string): Ship {
+export function addPlayer(
+  world: World,
+  playerId: string,
+  classId: ShipClassId = "flagship",
+): Ship {
   const existing = world.players.get(playerId);
   if (existing) return existing;
 
   const spot = newPlayerSpot(world, playerId);
-  // New players start with a British flagship, as the design asks.
-  const ship = createShip(playerId, "flagship", spot.x, spot.y, spot.headingRad);
+  const ship = createShip(playerId, classId, spot.x, spot.y, spot.headingRad);
   world.players.set(playerId, ship);
   return ship;
 }
@@ -166,6 +192,9 @@ export function applyOrder(world: World, playerId: string, x: unknown, y: unknow
 /** Remember one short message for a player. Older messages are dropped. */
 function pushNotice(world: World, playerId: string, text: string): void {
   const queue = world.notices.get(playerId) ?? [];
+  // A ship held against the coast can be blocked on many ticks; do not flood
+  // the queue with the same warning.
+  if (queue[queue.length - 1] === text) return;
   queue.push(text);
   while (queue.length > 3) queue.shift();
   world.notices.set(playerId, queue);
@@ -208,6 +237,68 @@ function borderFraction(
   return first;
 }
 
+/** True when every probe direction around a point is open water. */
+function hasOffshoreClearance(x: number, y: number, radiusKm: number): boolean {
+  if (isLandAt(x, y) || !isInsideMapFrame(x, y)) return false;
+
+  const rays = settings.coast.offshoreProbeRays;
+  for (let ray = 0; ray < rays; ray += 1) {
+    const angle = (ray / rays) * Math.PI * 2;
+    const probeX = x + Math.sin(angle) * radiusKm;
+    const probeY = y - Math.cos(angle) * radiusKm;
+    if (isLandAt(probeX, probeY)) return false;
+  }
+  return true;
+}
+
+/**
+ * Find a water point about one kilometre from the coast. Walking back along
+ * the incoming track normally finds open water; a ring of probes handles
+ * narrow bays where simply reversing would still leave the ship too close.
+ */
+function offshorePoint(
+  fromX: number,
+  fromY: number,
+  toX: number,
+  toY: number,
+  boundaryFraction: number,
+): { x: number; y: number } {
+  const dx = toX - fromX;
+  const dy = toY - fromY;
+  const length = Math.hypot(dx, dy);
+  const clearance = settings.coast.offshoreClearanceKm;
+  const boundaryX = fromX + dx * boundaryFraction;
+  const boundaryY = fromY + dy * boundaryFraction;
+
+  if (length > 1e-9) {
+    const backX = -dx / length;
+    const backY = -dy / length;
+    const maxBack = clearance + settings.coast.offshoreProbeKm;
+    for (let back = 0.25; back <= maxBack; back += settings.coast.pathSampleKm) {
+      const x = boundaryX + backX * back;
+      const y = boundaryY + backY * back;
+      if (hasOffshoreClearance(x, y, clearance)) return { x, y };
+    }
+  }
+
+  // A tight bay may need a side step rather than a retreat along the track.
+  for (let ring = 1; ring <= 3; ring += 1) {
+    const radius = clearance * ring;
+    for (let ray = 0; ray < settings.coast.offshoreProbeRays; ray += 1) {
+      const angle = (ray / settings.coast.offshoreProbeRays) * Math.PI * 2;
+      const x = boundaryX + Math.sin(angle) * radius;
+      const y = boundaryY - Math.cos(angle) * radius;
+      if (hasOffshoreClearance(x, y, clearance)) return { x, y };
+    }
+  }
+
+  // Last resort: the point before the collision, if it is still water.
+  if (!isLandAt(fromX, fromY) && isInsideMapFrame(fromX, fromY)) {
+    return { x: fromX, y: fromY };
+  }
+  return { x: boundaryX, y: boundaryY };
+}
+
 /** Stop a ship at a fraction along this tick's movement and warn its player. */
 function haltAt(
   world: World,
@@ -221,17 +312,54 @@ function haltAt(
   fraction: number,
   notice: string,
 ): void {
-  // Keep a small margin of open water or chart inside the limit.
-  const margin = settings.coast.stopMarginKm / Math.max(lengthKm, 1e-9);
-  const safe = Math.max(0, Math.min(1, fraction - margin));
+  if (notice === COAST_NOTICE) {
+    const safe = offshorePoint(fromX, fromY, fromX + dx, fromY + dy, fraction);
+    ship.x = safe.x;
+    ship.y = safe.y;
+  } else {
+    // Keep a small margin inside the chart edge.
+    const margin = settings.coast.stopMarginKm / Math.max(lengthKm, 1e-9);
+    const safe = Math.max(0, Math.min(1, fraction - margin));
+    ship.x = fromX + dx * safe;
+    ship.y = fromY + dy * safe;
+  }
 
-  ship.x = fromX + dx * safe;
-  ship.y = fromY + dy * safe;
   ship.speedKnots = 0;
-  ship.order = null;
   ship.arrived = false;
 
+  // A short seaward order may simply need a few ticks to turn away from the
+  // shore. Keep that order alive; an order whose straight path crosses land,
+  // or that goes past the chart, still ends at the coast.
+  if (!orderHasClearWaterPath(ship)) ship.order = null;
+  // The held escape heading may itself have run into a headland. Pick a fresh
+  // one at the new safe position next tick.
+  ship.coastEscapeHeadingRad = null;
+
   pushNotice(world, playerId, notice);
+}
+
+/** True when the straight water route from the ship to its order is clear. */
+function orderHasClearWaterPath(ship: Ship): boolean {
+  const order = ship.order;
+  if (!order) return false;
+  if (!isInsideMapFrame(order.x, order.y) || isLandAt(order.x, order.y)) return false;
+
+  const dx = order.x - ship.x;
+  const dy = order.y - ship.y;
+  const distance = Math.hypot(dx, dy);
+  const steps = Math.max(1, Math.ceil(distance / settings.coast.pathSampleKm));
+  for (let step = 1; step <= steps; step += 1) {
+    const fraction = step / steps;
+    if (isLandAt(ship.x + dx * fraction, ship.y + dy * fraction)) return false;
+  }
+  return true;
+}
+
+/** A target in open water can be reached after the ship turns offshore. */
+function orderIsInOpenWater(ship: Ship): boolean {
+  const order = ship.order;
+  if (!order) return false;
+  return isInsideMapFrame(order.x, order.y) && !isLandAt(order.x, order.y);
 }
 
 /**
@@ -273,7 +401,18 @@ function resolveMovement(
         else low = middle;
       }
 
-      haltAt(world, playerId, ship, fromX, fromY, dx, dy, lengthKm, low, COAST_NOTICE);
+      haltAt(
+        world,
+        playerId,
+        ship,
+        fromX,
+        fromY,
+        dx,
+        dy,
+        lengthKm,
+        low,
+        COAST_NOTICE,
+      );
       return;
     }
 
@@ -285,12 +424,96 @@ function resolveMovement(
   }
 }
 
+/** True when land is within a short distance of a candidate point. */
+function isNearLand(x: number, y: number, radiusKm: number): boolean {
+  for (let ray = 0; ray < settings.coast.offshoreProbeRays; ray += 1) {
+    const angle = (ray / settings.coast.offshoreProbeRays) * Math.PI * 2;
+    if (isLandAt(x + Math.sin(angle) * radiusKm, y - Math.cos(angle) * radiusKm)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/** How far a heading can run before reaching land or the chart edge. */
+function openWaterDistance(ship: Ship, headingRad: number): number {
+  let distance = 0;
+  for (
+    let step = settings.coast.pathSampleKm;
+    step <= settings.coast.offshoreProbeKm;
+    step += settings.coast.pathSampleKm
+  ) {
+    const x = ship.x + Math.sin(headingRad) * step;
+    const y = ship.y - Math.cos(headingRad) * step;
+    if (isLandAt(x, y) || !isInsideMapFrame(x, y)) break;
+    distance = step;
+  }
+  return distance;
+}
+
+/**
+ * Pick a heading with open water and some speed. Near an onshore wind the
+ * direct seaward direction may be inside the no-sail angle, so try a spread
+ * of headings and prefer the one that gets furthest from this coast.
+ */
+function chooseCoastEscapeHeading(ship: Ship, windFromDeg: number): number | null {
+  const spec = settings.ships.types[ship.classId];
+  const order = ship.order;
+  const targetBearing = order
+    ? Math.atan2(order.x - ship.x, -(order.y - ship.y))
+    : 0;
+  let bestHeading: number | null = null;
+  let bestScore = -Infinity;
+
+  for (let ray = 0; ray < 32; ray += 1) {
+    const heading = (ray / 32) * Math.PI * 2;
+    if (speedForHeading(spec, heading, windFromDeg) <= 0) continue;
+
+    const distance = openWaterDistance(ship, heading);
+    if (distance < settings.coast.offshoreClearanceKm) continue;
+
+    // Open water comes first; progress towards the order only breaks ties.
+    // Trying to point straight at the target too early can keep a ship in a
+    // bay, so escape the land before resuming the normal upwind zigzag.
+    const progress = Math.cos(heading - targetBearing);
+    const score = distance * 1000 + progress;
+    if (score > bestScore) {
+      bestScore = score;
+      bestHeading = heading;
+    }
+  }
+
+  return bestHeading;
+}
+
 /** Advance every ship by a number of game seconds. */
-export function stepWorld(world: World, dtGameSeconds: number): void {
+export function stepWorld(
+  world: World,
+  dtGameSeconds: number,
+  windFromDeg: number = settings.weather.windFromDeg,
+): void {
   for (const [playerId, ship] of world.players) {
+    // A ship close to a coast first turns and sails for open water. This gives
+    // a new seaward order a way out even when the wind is blowing onshore.
+    if (
+      ship.order &&
+      orderHasClearWaterPath(ship) &&
+      isNearLand(ship.x, ship.y, settings.coast.tackAwarenessKm)
+    ) {
+      ship.coastEscapeHeadingRad ??= chooseCoastEscapeHeading(ship, windFromDeg);
+    } else {
+      ship.coastEscapeHeadingRad = null;
+    }
+
     const fromX = ship.x;
     const fromY = ship.y;
-    stepShip(ship, dtGameSeconds);
+    stepShip(
+      ship,
+      dtGameSeconds,
+      windFromDeg,
+      undefined,
+      ship.coastEscapeHeadingRad ?? undefined,
+    );
     resolveMovement(world, playerId, ship, fromX, fromY);
   }
   world.tick += 1;

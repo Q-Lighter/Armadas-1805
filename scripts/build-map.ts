@@ -58,7 +58,7 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const sourcePath = path.join(root, "node_modules/world-atlas/land-10m.json");
 const tileRoot = path.join(root, "client/public/tiles");
 const landMaskPath = path.join(root, "shared/data/landMask.ts");
-const expandKm = 0.75;
+const expandKm = settings.map.tileOverlapKm;
 
 const FRAME: Bounds = { minX: 0, minY: 0, maxX: MAP_WIDTH_KM, maxY: MAP_HEIGHT_KM };
 const CELL_KM = settings.map.landCellKm;

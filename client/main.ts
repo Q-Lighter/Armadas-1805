@@ -420,10 +420,12 @@ async function start(): Promise<void> {
     ];
   }
 
-  function drawSmoothPath(graphics: Graphics, points: number[]): void {
+  function drawSmoothPath(graphics: Graphics, points: number[], move = true): void {
     if (points.length < 4) return;
 
-    graphics.moveTo(points[0]!, points[1]!);
+    if (move) graphics.moveTo(points[0]!, points[1]!);
+    else graphics.lineTo(points[0]!, points[1]!);
+
     if (points.length === 4) {
       graphics.lineTo(points[2]!, points[3]!);
       return;
@@ -438,6 +440,76 @@ async function start(): Promise<void> {
     graphics.lineTo(points[points.length - 2]!, points[points.length - 1]!);
   }
 
+  /**
+   * The fill uses the same smoothed natural coastline as the ink and water
+   * lines. Segments along a tile's clipped edge stay straight so neighbouring
+   * tiles meet without a seam; only the real coast is curved.
+   */
+  function drawTileFill(graphics: Graphics, ring: number[], data: TileData): void {
+    if (ring.length < 6) return;
+
+    const count = ring.length / 2;
+    const overlap = settings.map.tileOverlapKm;
+    const minX = Math.max(0, data.x * data.km - overlap);
+    const maxX = Math.min(MAP_WIDTH_KM, (data.x + 1) * data.km + overlap);
+    const minY = Math.max(0, data.y * data.km - overlap);
+    const maxY = Math.min(MAP_HEIGHT_KM, (data.y + 1) * data.km + overlap);
+    const near = (value: number, edge: number): boolean => Math.abs(value - edge) < 0.02;
+    const pointX = (index: number): number => ring[(index % count) * 2]!;
+    const pointY = (index: number): number => ring[(index % count) * 2 + 1]!;
+    const isBoundaryEdge = (index: number): boolean => {
+      const x1 = pointX(index);
+      const y1 = pointY(index);
+      const x2 = pointX(index + 1);
+      const y2 = pointY(index + 1);
+      return (
+        (near(x1, minX) && near(x2, minX)) ||
+        (near(x1, maxX) && near(x2, maxX)) ||
+        (near(y1, minY) && near(y2, minY)) ||
+        (near(y1, maxY) && near(y2, maxY))
+      );
+    };
+
+    let start = 0;
+    for (let index = 0; index < count; index += 1) {
+      if (isBoundaryEdge((index - 1 + count) % count) && !isBoundaryEdge(index)) {
+        start = index;
+        break;
+      }
+    }
+
+    const [startX, startY] = screenPoint(pointX(start), pointY(start));
+    graphics.moveTo(startX, startY);
+
+    let index = start;
+    let guard = 0;
+    while (guard <= count) {
+      guard += 1;
+      if (isBoundaryEdge(index)) {
+        const next = index + 1;
+        const [x, y] = screenPoint(pointX(next), pointY(next));
+        graphics.lineTo(x, y);
+        index = next;
+        continue;
+      }
+
+      const run: number[] = [];
+      let end = index;
+      while (!isBoundaryEdge(end) && run.length <= count) {
+        const [x, y] = screenPoint(pointX(end), pointY(end));
+        run.push(x, y);
+        end += 1;
+      }
+      const [endX, endY] = screenPoint(pointX(end), pointY(end));
+      run.push(endX, endY);
+      drawSmoothPath(graphics, run, false);
+      index = end;
+    }
+
+    graphics.lineTo(startX, startY);
+    graphics.fill(LAND_COLOR);
+  }
+
   function addTileView(key: string, data: TileData): void {
     const water = new Graphics();
     const fill = new Graphics();
@@ -445,12 +517,7 @@ async function start(): Promise<void> {
 
     for (const ring of data.fill) {
       if (ring.length < 6) continue;
-      const points: number[] = [];
-      for (let index = 0; index < ring.length; index += 2) {
-        const [x, y] = screenPoint(ring[index]!, ring[index + 1]!);
-        points.push(x, y);
-      }
-      fill.poly(points).fill(LAND_COLOR);
+      drawTileFill(fill, ring, data);
     }
 
     for (const line of data.coast) {

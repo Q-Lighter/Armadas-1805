@@ -40,6 +40,9 @@ export const settings = {
     tileFileBudgetBytes: 60 * 1024,
     tilePointsBudget: 8_000,
 
+    /** How far neighbouring tiles overlap, in km, so their edges meet cleanly. */
+    tileOverlapKm: 0.75,
+
     /** The largest tile set allowed: Cloudflare static hosting limits. */
     maxTileFiles: 5_000,
     maxTileSetBytes: 20 * 1024 * 1024,
@@ -140,8 +143,16 @@ export const settings = {
   coast: {
     /** How far apart the path is sampled, in km, so thin land is not skipped. */
     pathSampleKm: 0.25,
-    /** How far short of a coast or edge a ship stops, in km. */
+    /** How far short of a chart edge a ship stops, in km. */
     stopMarginKm: 0.1,
+    /** Open-water clearance a stopped ship keeps from land, in km. */
+    offshoreClearanceKm: 1,
+    /** How far from land a ship starts looking for a seaward tack, in km. */
+    tackAwarenessKm: 5,
+    /** How far a seaward probe looks for open water, in km. */
+    offshoreProbeKm: 12,
+    /** Ray directions used to find the seaward side of a coast. */
+    offshoreProbeRays: 16,
   },
 
   /** Server loop values. */

@@ -37,6 +37,8 @@ export interface Ship {
   order: SailToOrder | null;
   /** The tack the ship will use the next time it has to beat upwind. */
   tackSide: TackSide;
+  /** A held escape heading while turning away from a nearby coast. */
+  coastEscapeHeadingRad?: number | null;
   /** True once the last order was completed. */
   arrived: boolean;
 }
@@ -144,8 +146,14 @@ export function holdPosition(ship: Ship): void {
  * arrival radius, crossing the target's wind line always brings the ship
  * within arrival range, so it can never circle short of the target.
  */
-function upwindHeadingRad(ship: Ship, spec: ShipSpec, order: SailToOrder): number {
-  const windFromRad = settings.weather.windFromDeg * DEG;
+function upwindHeadingRad(
+  ship: Ship,
+  spec: ShipSpec,
+  order: SailToOrder,
+  windFromDeg: number,
+  preferredTackSide?: TackSide,
+): number {
+  const windFromRad = windFromDeg * DEG;
 
   // Unit vector across the wind line, used to measure the ship's offset.
   // The world's y grows south, so a compass heading h points along
@@ -154,7 +162,7 @@ function upwindHeadingRad(ship: Ship, spec: ShipSpec, order: SailToOrder): numbe
   const acrossY = Math.sin(windFromRad);
   const offsetKm = (ship.x - order.x) * acrossX + (ship.y - order.y) * acrossY;
 
-  let side = ship.tackSide;
+  let side = preferredTackSide ?? ship.tackSide;
   const tackHeading = windFromRad + side * spec.closestAngleDeg * DEG;
 
   // How fast this tack pushes the ship further across the wind line.
@@ -169,11 +177,18 @@ function upwindHeadingRad(ship: Ship, spec: ShipSpec, order: SailToOrder): numbe
     Math.abs(acrossRate) * (tackSpeedKmh / 3600) * turnSeconds * settings.sailing.tackTurnLeadFactor;
   const switchAtKm = settings.sailing.tackHalfWidthKm - driftKm;
 
-  // Only change tack when this tack is pushing the ship outwards.
-  if (offsetKm * acrossRate > 0 && Math.abs(offsetKm) >= switchAtKm) {
+  // Only change tack when this tack is pushing the ship outwards. A coast
+  // preference is held until the ship is safely away from land.
+  if (
+    preferredTackSide === undefined &&
+    ship.speedKnots > 0.1 &&
+    offsetKm * acrossRate > 0 &&
+    Math.abs(offsetKm) >= switchAtKm
+  ) {
     side = side === 1 ? -1 : 1;
     ship.tackSide = side;
   }
+  if (preferredTackSide !== undefined) ship.tackSide = side;
 
   return windFromRad + side * spec.closestAngleDeg * DEG;
 }
@@ -189,6 +204,8 @@ export function stepShip(
   ship: Ship,
   dtGameSeconds: number,
   windFromDeg: number = settings.weather.windFromDeg,
+  preferredTackSide?: TackSide,
+  forcedHeadingRad?: number,
 ): void {
   if (!(dtGameSeconds > 0) || !Number.isFinite(dtGameSeconds)) return;
 
@@ -216,7 +233,8 @@ export function stepShip(
   // south, so north is negative y.
   const bearingRad = Math.atan2(dx, -dy);
   const sailable = angleOffWindDeg(bearingRad, windFromDeg) >= spec.closestAngleDeg - 1e-9;
-  const wantedRad = sailable ? bearingRad : upwindHeadingRad(ship, spec, order);
+  const wantedRad = forcedHeadingRad ??
+    (sailable ? bearingRad : upwindHeadingRad(ship, spec, order, windFromDeg, preferredTackSide));
 
   // Turn gradually towards the wanted heading.
   const maxTurnDeg = turnRateDegPerSecond(spec) * dtGameSeconds;

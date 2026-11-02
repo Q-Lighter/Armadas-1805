@@ -494,3 +494,51 @@ this build-log entry.
 - The debug panel may overlap the chart on very short landscape phone screens;
   this is unmeasured.
 - No server or deployment changes were made.
+
+## Session 1C-a: coast, test ships, and one coast outline
+
+**Date:** 2026-11-02
+**Branch:** main
+
+### What was asked
+
+Fix ships sticking at a coast, give test/dev rooms the British frigate, and
+draw the land wash, ink coast and water line from one smoothed outline.
+
+### What was built
+
+- `shared/world.ts`: a coast collision now keeps a seaward order alive. The
+  ship is placed about 1 km offshore, its heading is still allowed to turn,
+  and it holds a clear-water escape heading until it is away from land. An
+  order whose straight path crosses land still stops with the coast notice.
+- `shared/sailing.ts`: a stationary ship no longer flips tacks before it has
+  steerageway, which stopped the old upwind zigzag from oscillating at zero
+  speed. The world step accepts an optional wind direction for tests.
+- `shared/world.ts`: `shipClassForRoom` returns a frigate for room codes
+  starting `test` or `dev-`, and the flagship for every other room. Real ship
+  numbers are unchanged.
+- `client/main.ts`: the fill is traced from the same quadratic-smoothed
+  outline as the ink and water lines. Artificial tile-clipped edges remain
+  straight so neighbouring pieces overlap cleanly.
+- `shared/settings.ts`: open-water clearance, tack awareness, offshore probes
+  and tile overlap are settings.
+- Tests: 27 pass, including the new eight-wind coast escape and room-class
+  checks.
+
+### Checks
+
+- `npm test`: 27/27 passing.
+- `npm run build`: passing.
+- The new coast test puts a ship against western Jamaica, facing the shore,
+  and orders it 10 km back out to sea under winds from all eight directions.
+  It verifies the ship never ends aground, moves clear, and does not lose the
+  seaward order to a coast collision.
+
+### Broken or unfinished
+
+- No browser is available. The smoothed fill and coast were checked by type
+  checking and code inspection, not visually at Venezuela, a Caribbean island
+  or Tierra del Fuego.
+- The coast escape is deliberately simple: a sea target whose straight route
+  crosses land still cancels the order. A future routing pass can sail around
+  headlands.

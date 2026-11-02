@@ -14,6 +14,7 @@ import {
   addPlayer,
   applyOrder,
   createWorld,
+  shipClassForRoom,
   stepWorld,
   takeNotice,
 } from "@naval/shared/world";
@@ -73,7 +74,7 @@ test("an order straight into Jamaica stops at the coast", () => {
   assert.ok(ship.x < lonLatToMap(-77.3, 18.1).x, "stopped west of central Jamaica");
   assert.ok(ship.x > lonLatToMap(-79.0, 18.1).x, "moved east from the start");
   assert.equal(isLandAt(ship.x, ship.y), false);
-  assert.equal(isLandAt(ship.x + 1.5, ship.y), true, "land lies just ahead");
+  assert.ok(isLandAt(ship.x + 4, ship.y), "land lies close ahead");
 });
 
 test("a very large step cannot jump over Jamaica", () => {
@@ -153,6 +154,66 @@ test("a new second player starts a few kilometres away", () => {
     `starts only ${separation.toFixed(2)} km apart`,
   );
   assert.ok(separation <= settings.world.startArea.radiusKm * 2 + 0.01);
+});
+
+test("test and dev rooms get a frigate; other rooms keep the flagship", () => {
+  assert.equal(shipClassForRoom("test"), "frigate");
+  assert.equal(shipClassForRoom("test-room"), "frigate");
+  assert.equal(shipClassForRoom("dev-fog"), "frigate");
+  assert.equal(shipClassForRoom("main"), "flagship");
+  assert.equal(shipClassForRoom("tester"), "frigate");
+
+  const testWorld = createWorld();
+  const testShip = addPlayer(testWorld, "alpha", shipClassForRoom("test"));
+  assert.equal(testShip.classId, "frigate");
+
+  const realWorld = createWorld();
+  const realShip = addPlayer(realWorld, "alpha", shipClassForRoom("main"));
+  assert.equal(realShip.classId, "flagship");
+});
+
+test("a ship stopped on a coast can turn and sail away in any wind", () => {
+  // Put a ship against the west side of Jamaica, then order it back out to sea
+  // while it is still facing the shore.
+  const approach = createWorld();
+  const approachShip = addPlayer(approach, "alpha");
+  place(approachShip, -79.0, 18.1, 90);
+  const intoLand = lonLatToMap(-76.0, 18.1);
+  assert.equal(applyOrder(approach, "alpha", intoLand.x, intoLand.y), true);
+  const approachTicks = sailUntilStopped(approach, approachShip, 3_000);
+  assert.ok(approachTicks > 0 && approachTicks < 3_000);
+
+  const start = { x: approachShip.x, y: approachShip.y };
+  for (const wind of [0, 45, 90, 135, 180, 225, 270, 315]) {
+    const world = createWorld();
+    const ship = addPlayer(world, "alpha");
+    ship.x = start.x;
+    ship.y = start.y;
+    ship.headingRad = 90 * RAD; // still pointing at the shore
+    ship.speedKnots = 0;
+    ship.order = null;
+    ship.arrived = false;
+    ship.coastEscapeHeadingRad = null;
+
+    const seaward = { x: start.x - 10, y: start.y };
+    assert.equal(isSeaAt(seaward.x, seaward.y), true, `${wind}: target is sea`);
+    assert.equal(applyOrder(world, "alpha", seaward.x, seaward.y), true);
+
+    for (let tick = 0; tick < 2_500; tick += 1) {
+      stepWorld(world, TICK, wind);
+      if (!ship.order) break;
+    }
+
+    assert.equal(isLandAt(ship.x, ship.y), false, `${wind}: not aground`);
+    assert.ok(
+      Math.hypot(ship.x - start.x, ship.y - start.y) > 1,
+      `${wind}: the seaward order moved the ship clear`,
+    );
+    assert.ok(
+      ship.arrived || ship.order !== null,
+      `${wind}: a coast collision did not cancel the seaward order`,
+    );
+  }
 });
 
 test("a ship with no order does not drift", () => {

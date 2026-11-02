@@ -542,3 +542,48 @@ draw the land wash, ink coast and water line from one smoothed outline.
 - The coast escape is deliberately simple: a sea target whose straight route
   crosses land still cancels the order. A future routing pass can sail around
   headlands.
+
+## Session 1C-b: server fog and chart data
+
+**Date:** 2026-11-02
+**Branch:** main
+
+### What was asked
+
+Per-player discovered ground, live sight filtering, last-seen markers, private
+chart geometry, test/debug room starts, and compact updates.
+
+### What was built
+
+- `shared/fog.ts`: a 5 km discovery bitset per player, circle reveal, 25 km
+  block queues, and room kinds. Dev rooms start fully explored.
+- `shared/world.ts`: `createWorld(roomCode)` records the room kind; test rooms
+  start 30 km off the nearest coast to the British start, with a frigate.
+  `visibleStateFor` now returns only own and in-sight ships, last-seen markers
+  (class, navy, position, game-time age) and newly discovered chart data.
+- `server/src/chartBlocks.ts`: 10,440 private 25 km blocks generated from the
+  fine coastline (3.9 MB TypeScript; largest block 537 points / 8,798 bytes).
+  It is bundled into the Worker, not `dist/`.
+- `server/src/gameRoom.ts`: creates each room with its code and attaches at
+  most eight block geometries per state message.
+- Map drawing tiles moved to `map-data/tiles` and are no longer copied to
+  public hosting.
+- `docs/FOG.md`: one-page approach note.
+- Tests: 32 pass, covering sight in/out, fading markers, dev-all, independent
+  charts, block release only after discovery, and test-room frigates.
+
+### Checks
+
+- `npm test`: 32/32 passing.
+- `npm run build`: passing; `dist/` contains no tile or block geometry.
+- Chart blocks are only included through `visibleStateFor`; the normal state
+  contains only the player's own and in-sight ships.
+- The generated block bundle is a proxy for deployment; Wrangler bundle limits
+  have not been tested on a real Cloudflare account.
+
+### Broken or unfinished
+
+- The browser client still expects the old public tiles and is replaced in
+  Part C. Until then, the page's chart will not load.
+- No browser or Cloudflare deployment was available. Message sizes were not
+  measured over a live socket yet.

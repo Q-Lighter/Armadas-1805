@@ -9,7 +9,7 @@ import { fileURLToPath } from "node:url";
 
 import { settings } from "@naval/shared/settings";
 
-const tileRoot = fileURLToPath(new URL("../../client/public/tiles", import.meta.url));
+const tileRoot = fileURLToPath(new URL("../../map-data/tiles", import.meta.url));
 
 interface Manifest {
   levels: Array<{ z: number; km: number; tiles: Array<[number, number, number]> }>;

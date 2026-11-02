@@ -15,11 +15,12 @@ import {
   type NoticeMessage,
   type World,
 } from "@naval/shared/world";
+import { CHART_BLOCKS } from "./chartBlocks.js";
 
 const playerIdPattern = /^[A-Za-z0-9_-]{1,40}$/;
 
 export class GameRoom {
-  private readonly world: World = createWorld();
+  private world: World = createWorld();
   private readonly sockets = new Map<string, WebSocket>();
   private timer: ReturnType<typeof setInterval> | null = null;
   private ticks = 0;
@@ -29,7 +30,11 @@ export class GameRoom {
       return new Response("WebSocket expected", { status: 426 });
     }
 
-    const playerId = new URL(request.url).searchParams.get("player") ?? "";
+    const url = new URL(request.url);
+    const room = url.searchParams.get("room") ?? this.world.roomCode;
+    if (room !== this.world.roomCode) this.world = createWorld(room);
+
+    const playerId = url.searchParams.get("player") ?? "";
     if (!playerIdPattern.test(playerId)) {
       return new Response("Player id must be letters, numbers, dash or underscore.", {
         status: 400,
@@ -96,7 +101,7 @@ export class GameRoom {
 
   private sendState(playerId: string, socket: WebSocket): void {
     try {
-      socket.send(JSON.stringify(visibleStateFor(this.world, playerId)));
+      socket.send(JSON.stringify(visibleStateFor(this.world, playerId, CHART_BLOCKS)));
 
       // Notices are short events, not world state, so they travel separately.
       const notice = takeNotice(this.world, playerId);

@@ -45,13 +45,18 @@ test("the state for one player is compact and public", () => {
   const state = visibleStateFor(world, "alpha");
   const bytes = Buffer.byteLength(JSON.stringify(state), "utf8");
 
-  assert.deepEqual(Object.keys(state).sort(), ["ships", "t", "tick", "w", "you"]);
+  assert.deepEqual(Object.keys(state).sort(), [
+    "chart", "k", "l", "ships", "t", "tick", "w", "you",
+  ]);
   assert.equal(state.you, "alpha");
+  assert.equal(state.k, "normal");
   assert.equal(state.ships.length, 2);
   assert.equal(state.ships[0]?.length, 6);
+  assert.ok(Array.isArray(state.l));
+  assert.ok(Array.isArray(state.chart.cells));
 
-  // Two ships should fit in a small message.
-  assert.ok(bytes < 300, `state was ${bytes} bytes`);
+  // Two ships plus the first chart cells stay small.
+  assert.ok(bytes < 2_500, `state was ${bytes} bytes`);
 });
 
 test("orders are checked before they reach a ship", () => {

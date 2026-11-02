@@ -56,7 +56,7 @@ interface TileBody {
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const sourcePath = path.join(root, "node_modules/world-atlas/land-10m.json");
-const tileRoot = path.join(root, "client/public/tiles");
+const tileRoot = path.join(root, "map-data/tiles");
 const landMaskPath = path.join(root, "shared/data/landMask.ts");
 const expandKm = settings.map.tileOverlapKm;
 

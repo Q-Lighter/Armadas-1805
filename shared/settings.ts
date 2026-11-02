@@ -165,11 +165,31 @@ export const settings = {
     maxRoomCodeLength: 24,
   },
 
+  /** Fog of war and the chart's private map blocks. */
+  fog: {
+    /** How far every ship can see in daylight, in km. */
+    sightRangeKm: 25,
+    /** Width of the soft edge of the live sight circle, in km. */
+    sightFeatherKm: 2,
+    /** Discovery grid cell, and the map block sent for chart painting, in km. */
+    discoveryCellKm: 5,
+    chartBlockKm: 25,
+    /** Keep each websocket state message small by batching block geometry. */
+    maxBlocksPerMessage: 8,
+    /** How far offshore a test room starts from the nearest coast, in km. */
+    testStartCoastDistanceKm: 30,
+  },
+
   /** Camera limits and chart drawing for the client. */
   view: {
     minKmAcross: 5,
     maxKmAcross: 300,
     startKmAcross: 60,
+    /** Ship-view zoom range, measured across the shorter screen side. */
+    shipMinKmAcross: 4,
+    shipMaxKmAcross: 65,
+    /** Chart-screen zoom range. */
+    chartMinKmAcross: 25,
     /** Pick a tile level whose tiles are no larger than this share of the
      *  view. Two means a view spans at least two tiles. */
     tileLevelPickFactor: 2,

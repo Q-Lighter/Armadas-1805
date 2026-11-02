@@ -29,6 +29,10 @@
     "./land": {
       "types": "./dist/land.d.ts",
       "default": "./dist/land.js"
+    },
+    "./fog": {
+      "types": "./dist/fog.d.ts",
+      "default": "./dist/fog.js"
     }
   },
   "files": [

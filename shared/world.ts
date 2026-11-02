@@ -22,6 +22,16 @@ import {
   isInsideMapFrame,
   lonLatToMap,
 } from "./map.js";
+import {
+  createChart,
+  revealCircle,
+  roomKindForCode,
+  takeChartUpdate,
+  type ChartBlock,
+  type ChartState,
+  type ChartUpdate,
+  type RoomKind,
+} from "./fog.js";
 
 const DEG = Math.PI / 180;
 const RAD = 180 / Math.PI;
@@ -33,8 +43,15 @@ export const EDGE_NOTICE = "Edge of the charted world.";
 export interface World {
   /** Number of world steps taken. */
   tick: number;
+  /** Game seconds since the room started. */
+  gameSeconds: number;
+  /** The room code and its kind (normal, test or debug). */
+  roomCode: string;
+  kind: RoomKind;
   /** The ships in this room, by player id. */
   players: Map<string, Ship>;
+  /** Each player's discovered ground and last-seen records. */
+  charts: Map<string, ChartState>;
   /** Short messages waiting for each player; never part of the world state. */
   notices: Map<string, string[]>;
 }
@@ -56,9 +73,13 @@ export interface NoticeMessage {
   text: string;
 }
 
+/** Last-seen marker: class, navy, position, age in game seconds. */
+export type LastSeenSnapshot = [string, string, number, number, number];
+
 /**
  * The only shape of world information that is ever sent to a client.
- * A later phase will trim the ships list to what this player has seen.
+ * Ships outside the player's live sight circles are omitted; chart data and
+ * last-seen markers are added by `visibleStateFor` only.
  */
 export interface StateMessage {
   /** "s" means world state. */
@@ -68,11 +89,25 @@ export interface StateMessage {
   you: string;
   /** Wind direction in compass degrees (where it blows FROM). */
   w: number;
+  /** Room kind, so the client can show the dev chart correctly. */
+  k: RoomKind;
   ships: ShipSnapshot[];
+  /** Faded last-seen markers. */
+  l: LastSeenSnapshot[];
+  /** Newly discovered cells and private map blocks. */
+  chart: ChartUpdate;
 }
 
-export function createWorld(): World {
-  return { tick: 0, players: new Map(), notices: new Map() };
+export function createWorld(roomCode = "main"): World {
+  return {
+    tick: 0,
+    gameSeconds: 0,
+    roomCode,
+    kind: roomKindForCode(roomCode),
+    players: new Map(),
+    charts: new Map(),
+    notices: new Map(),
+  };
 }
 
 /** A small deterministic hash, so a returning player gets the same berth. */
@@ -89,10 +124,80 @@ function startCentre(): { x: number; y: number } {
   return lonLatToMap(settings.world.startArea.lonDeg, settings.world.startArea.latDeg);
 }
 
+let cachedTestCentre: { x: number; y: number } | null | undefined;
+
+/**
+ * Find a test-room start about 30 km offshore from the nearest coast to the
+ * normal British start. The search is done once and reused.
+ */
+function testCentre(): { x: number; y: number } {
+  if (cachedTestCentre !== undefined) return cachedTestCentre ?? startCentre();
+
+  const origin = startCentre();
+  let coast: { x: number; y: number } | null = null;
+  for (let radius = 2; radius <= 300 && !coast; radius += 2) {
+    for (let ray = 0; ray < 36; ray += 1) {
+      const angle = (ray / 36) * Math.PI * 2;
+      const x = origin.x + Math.sin(angle) * radius;
+      const y = origin.y - Math.cos(angle) * radius;
+      if (isLandAt(x, y)) {
+        coast = { x, y };
+        break;
+      }
+    }
+  }
+
+  if (!coast) {
+    cachedTestCentre = null;
+    return origin;
+  }
+
+  const awayX = origin.x - coast.x;
+  const awayY = origin.y - coast.y;
+  const length = Math.hypot(awayX, awayY);
+  if (length < 1e-9) {
+    cachedTestCentre = null;
+    return origin;
+  }
+
+  const distance = settings.fog.testStartCoastDistanceKm;
+  let candidate = {
+    x: coast.x + (awayX / length) * distance,
+    y: coast.y + (awayY / length) * distance,
+  };
+
+  // If the chosen direction lands in a bay or on an islet, try nearby
+  // seaward directions at the same distance.
+  if (isLandAt(candidate.x, candidate.y)) {
+    for (let turn = 1; turn <= 8; turn += 1) {
+      const angle = (turn / 8) * Math.PI * 2;
+      const cos = Math.cos(angle);
+      const sin = Math.sin(angle);
+      const rotated = {
+        x: coast.x + ((awayX / length) * cos - (awayY / length) * sin) * distance,
+        y: coast.y + ((awayX / length) * sin + (awayY / length) * cos) * distance,
+      };
+      if (!isLandAt(rotated.x, rotated.y)) {
+        candidate = rotated;
+        break;
+      }
+    }
+  }
+
+  cachedTestCentre = candidate;
+  return candidate;
+}
+
+function startCentreFor(world: World): { x: number; y: number } {
+  return world.kind === "test" ? testCentre() : startCentre();
+}
+
 /** A stable spot in the start area, different for each player id. */
-function startSpot(playerId: string): { x: number; y: number; headingRad: number } {
+function startSpot(
+  playerId: string,
+  centre: { x: number; y: number },
+): { x: number; y: number; headingRad: number } {
   const area = settings.world.startArea;
-  const centre = startCentre();
   const hash = hashPlayerId(playerId);
 
   const bearingRad = (hash % 360) * DEG;
@@ -123,8 +228,8 @@ function distanceKm(a: { x: number; y: number }, b: { x: number; y: number }): n
  * second player always starts a few kilometres away.
  */
 function newPlayerSpot(world: World, playerId: string): { x: number; y: number; headingRad: number } {
-  const centre = startCentre();
-  const initial = startSpot(playerId);
+  const centre = startCentreFor(world);
+  const initial = startSpot(playerId, centre);
   const offsetX = initial.x - centre.x;
   const offsetY = initial.y - centre.y;
   const radius = Math.hypot(offsetX, offsetY);
@@ -168,7 +273,7 @@ export function shipClassForRoom(roomCode: string): ShipClassId {
 export function addPlayer(
   world: World,
   playerId: string,
-  classId: ShipClassId = "flagship",
+  classId: ShipClassId = shipClassForRoom(world.roomCode),
 ): Ship {
   const existing = world.players.get(playerId);
   if (existing) return existing;
@@ -176,6 +281,10 @@ export function addPlayer(
   const spot = newPlayerSpot(world, playerId);
   const ship = createShip(playerId, classId, spot.x, spot.y, spot.headingRad);
   world.players.set(playerId, ship);
+
+  const chart = createChart(world.kind);
+  world.charts.set(playerId, chart);
+  revealCircle(chart, ship.x, ship.y);
   return ship;
 }
 
@@ -486,6 +595,16 @@ function chooseCoastEscapeHeading(ship: Ship, windFromDeg: number): number | nul
   return bestHeading;
 }
 
+/** Update every player's discovered ground from their own ships. */
+function updateFog(world: World): void {
+  for (const [playerId, chart] of world.charts) {
+    if (chart.all) continue;
+    for (const ship of world.players.values()) {
+      if (ship.id === playerId) revealCircle(chart, ship.x, ship.y);
+    }
+  }
+}
+
 /** Advance every ship by a number of game seconds. */
 export function stepWorld(
   world: World,
@@ -517,6 +636,8 @@ export function stepWorld(
     resolveMovement(world, playerId, ship, fromX, fromY);
   }
   world.tick += 1;
+  world.gameSeconds += Math.max(0, dtGameSeconds);
+  updateFog(world);
 }
 
 /** Normalise a heading in radians to whole compass degrees. */
@@ -531,10 +652,23 @@ function headingDegrees(headingRad: number): number {
  * server sends its result and nothing else; when hidden information arrives,
  * this is the one place that filters it.
  */
-export function visibleStateFor(world: World, playerId: string): StateMessage {
+export function visibleStateFor(
+  world: World,
+  playerId: string,
+  blockLookup?: ReadonlyMap<string, ChartBlock>,
+): StateMessage {
+  const own = [...world.players.values()].filter((ship) => ship.id === playerId);
+  const sightSq = settings.fog.sightRangeKm ** 2;
+  const isVisible = (ship: Ship): boolean =>
+    own.some((mine) => (ship.x - mine.x) ** 2 + (ship.y - mine.y) ** 2 <= sightSq);
+
   const ships: ShipSnapshot[] = [];
+  const visibleIds = new Set<string>();
 
   for (const ship of world.players.values()) {
+    if (ship.id !== playerId && !isVisible(ship)) continue;
+
+    visibleIds.add(ship.id);
     ships.push([
       ship.id,
       ship.classId,
@@ -545,11 +679,42 @@ export function visibleStateFor(world: World, playerId: string): StateMessage {
     ]);
   }
 
+  const chart = world.charts.get(playerId) ?? createChart(world.kind);
+  world.charts.set(playerId, chart);
+
+  // Remember foreign ships while they are visible; when they leave the circle
+  // their last position becomes a faded marker with an age in game time.
+  for (const ship of world.players.values()) {
+    if (ship.id === playerId || !visibleIds.has(ship.id)) continue;
+    chart.seen.set(ship.id, {
+      classId: ship.classId,
+      navy: "British",
+      x: Number(ship.x.toFixed(2)),
+      y: Number(ship.y.toFixed(2)),
+      atGameSeconds: world.gameSeconds,
+    });
+  }
+
+  const lastSeen: LastSeenSnapshot[] = [];
+  for (const [id, seen] of chart.seen) {
+    if (visibleIds.has(id)) continue;
+    lastSeen.push([
+      seen.classId,
+      seen.navy,
+      seen.x,
+      seen.y,
+      Math.max(0, Math.round(world.gameSeconds - seen.atGameSeconds)),
+    ]);
+  }
+
   return {
     t: "s",
     tick: world.tick,
     you: playerId,
     w: settings.weather.windFromDeg,
+    k: world.kind,
     ships,
+    l: lastSeen,
+    chart: takeChartUpdate(chart, blockLookup),
   };
 }

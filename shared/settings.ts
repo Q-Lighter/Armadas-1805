@@ -16,6 +16,46 @@ export const settings = {
     sailingTimeScale: 144,
   },
 
+  /** The chart: the flat map frame and how it is turned into tiles. */
+  map: {
+    /** The map frame, in degrees. x grows east and y grows south. */
+    frame: {
+      lonMinDeg: -100,
+      lonMaxDeg: -28,
+      latMaxDeg: 24,
+      latMinDeg: -78,
+    },
+
+    /** Half real-life scale. One degree is this many map kilometres. */
+    kmPerLonDegree: 52.93,
+    kmPerLatDegree: 55.3,
+
+    /** Drawing tiles: how many levels, and the size of a tile at the finest
+     *  level. Level 0 is the coarsest; each level halves the tile size. */
+    tileLevels: 5,
+    finestTileKm: 128,
+
+    /** A tile may not grow past these limits. Denser coast is simplified
+     *  further until it fits, so phones never draw a huge tile. */
+    tileFileBudgetBytes: 60 * 1024,
+    tilePointsBudget: 8_000,
+
+    /** The largest tile set allowed: Cloudflare static hosting limits. */
+    maxTileFiles: 5_000,
+    maxTileSetBytes: 20 * 1024 * 1024,
+
+    /** Coast simplification at each level, coarsest first, in map km. The
+     *  finest level keeps Natural Earth detail for the 5 km view. */
+    levelToleranceKm: [6, 3, 1, 0.25, 0.01],
+
+    /** Grid cell for the server land lookup, in map km. Smaller is more
+     *  accurate but larger to send to Cloudflare. */
+    landCellKm: 1,
+
+    /** The land lookup must stay under this size once compressed. */
+    maxLookupCompressedBytes: 1_000_000,
+  },
+
   /** Ship classes and their sailing values. All speeds are in knots. */
   ships: {
     types: {

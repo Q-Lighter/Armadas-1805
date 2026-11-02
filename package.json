@@ -11,6 +11,7 @@
   ],
   "scripts": {
     "build": "node scripts/build.mjs",
+    "build-map": "esbuild scripts/build-map.ts --bundle --platform=node --format=esm --target=node20 --outfile=.map-build/build-map.mjs && node .map-build/build-map.mjs",
     "test": "node scripts/test.mjs",
     "test:server": "npm run build && node scripts/simulate-clients.mjs",
     "deploy": "wrangler deploy"
@@ -21,9 +22,12 @@
   "devDependencies": {
     "@cloudflare/workers-types": "^5.20261102.1",
     "@types/node": "^22.0.0",
+    "@types/topojson-client": "^3.1.5",
     "@types/ws": "^8.18.2",
     "esbuild": "^0.25.0",
+    "topojson-client": "^3.1.0",
     "typescript": "^5.9.0",
+    "world-atlas": "^2.0.2",
     "wrangler": "^4.156.1",
     "ws": "^8.22.1"
   }

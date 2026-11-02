@@ -14,6 +14,10 @@
       "types": "./dist/settings.d.ts",
       "default": "./dist/settings.js"
     },
+    "./map": {
+      "types": "./dist/map.d.ts",
+      "default": "./dist/map.js"
+    },
     "./sailing": {
       "types": "./dist/sailing.d.ts",
       "default": "./dist/sailing.js"
@@ -21,6 +25,10 @@
     "./world": {
       "types": "./dist/world.d.ts",
       "default": "./dist/world.js"
+    },
+    "./land": {
+      "types": "./dist/land.d.ts",
+      "default": "./dist/land.js"
     }
   },
   "files": [

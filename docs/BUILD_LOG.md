@@ -258,3 +258,61 @@ not drop the socket, and the two clients stayed within one tick.
 - `topKnots` is still unused, and the wind is still the constant placeholder.
 - The client says so on screen if WebGL cannot start; this was not tested on a
   device without WebGL.
+
+## Session 1B-a: map data from Natural Earth
+
+**Date:** 2026-11-02
+**Branch:** main
+
+### What was asked
+
+The real chart, built only from Natural Earth 1:10m land through the
+`world-atlas` npm package: a `shared/map.ts` frame projection, a conversion
+script producing drawing tiles and a compact server land lookup, all named
+islands checked, credits and map documentation, and tests for the projection
+and known land/sea points.
+
+### What was built
+
+- `shared/settings.ts`: the frame (longitude -100 to -28, latitude 24 to -78),
+  half-scale factors (52.93 km per degree of longitude, 55.3 km per degree of
+  latitude), tile levels, simplification tolerances and lookup limits.
+- `shared/map.ts`: longitude/latitude to map kilometres and back, plus the
+  frame size and bounds check. The chart is 3,810.96 by 5,640.6 map km.
+- `scripts/build-map.ts` and `npm run build-map`: reads `land-10m.json`,
+  projects and clips the coast, merges the empty invented-features list,
+  simplifies each level, clips tiles without inking tile edges, and rasterises
+  the server lookup.
+- `client/public/tiles/`: 1,618 land tiles in five levels (2,048 km down to
+  128 km), 3.07 MB in total. Largest tile 56,578 bytes; most complex 3,579
+  points. `index.json` lists tiles and point counts.
+- `shared/data/landMask.ts`: a 1 km land mask (3,811 x 5,641 cells), run-length
+  encoded and base64 text. The generated file is 72,238 bytes, 45,687 bytes
+  after gzip.
+- `shared/land.ts`: constant-time `isLandAt`, decoding the mask once at load.
+- `shared/data/inventedFeatures.ts`: an empty extension point for later
+  invented land such as the Phantom's island.
+- `CREDITS.md` and `docs/MAP.md`.
+- `tests/map.test.ts`: frame size, projection round trip, frame bounds and
+  known land/sea points (inland Amazon, central Jamaica, mid-Atlantic, the
+  British start).
+
+### Checks
+
+- `npm run build-map`: passes. All checked islands are present in both the
+  source data and the lookup: Cuba, Jamaica, Hispaniola, Puerto Rico,
+  Trinidad, Guadeloupe, Martinique, Saint Lucia, Barbados, Galapagos,
+  Falklands, Tierra del Fuego, Chiloe, Trindade and South Georgia. The British
+  start at 13 N, 79.5 W is sea.
+- `npm test`: 17 tests, all passing.
+- `npm run build`: passing.
+
+### Broken or unfinished
+
+- No browser is available in this workspace. The tile data has not been drawn
+  yet; that is Part C.
+- The lookup is a 1 km raster, so its coast is accurate to about a kilometre.
+  Shallow-water grounding still needs depth data and comes later.
+- The generated tiles and lookup are committed. Rebuilding them needs the
+  `world-atlas` and `topojson-client` development dependencies, which are not
+  needed by a normal build.

@@ -588,100 +588,6 @@ chart geometry, test/debug room starts, and compact updates.
 - No browser or Cloudflare deployment was available. Message sizes were not
   measured over a live socket yet.
 
-## Session 1D-c: load test mode
-
-**Date:** 2026-11-02
-**Branch:** main
-
-### What was asked
-
-Add a temporary, dev-room-only computer fleet so the owner can run a live load
-test, with real fake-player updates, loop metrics and a local benchmark.
-
-### What was built
-
-- `shared/bots.ts`: 1–300 British frigates split across eight fake owners, with
-  sea-only spawns and destinations, normal sailing orders, and replacement
-  destinations after arrival or a coast stop. About 10% start within 40 km of
-  the first human; the rest are placed in the Caribbean and northern South
-  America.
-- Fake owners have their own charts and discover from every ship in their
-  fleet. The shared visibility path now accepts multi-ship owners, but human
-  players still have one ship and the same filtering as before.
-- `/?room=dev-load&bots=100` passes the count through to the socket. Normal and
-  test rooms ignore it; a dev room rejects counts outside 1–300.
-- `server/src/gameRoom.ts` builds and measures eight full `visibleStateFor`
-  updates at 5 Hz and discards them. `LoadMetrics` records real timer gaps and
-  per-player bytes over ten seconds without measuring CPU from inside.
-- Dev-room state carries the compact counters and the TEMP-DEBUG line shows
-  ships, world updates/s, average/worst gap, bytes/s per player, and the
-  client's received updates/s and worst receive gap.
-- `RULES.md` records that the whole mode is temporary and dev-only.
-- `scripts/benchmark-world.mjs` and `npm run benchmark:world`.
-
-### Checks
-
-- `npm test`: **45/45 passing**, including bot limits, sea-only spawn and
-  destinations, owner split, proof that a fake update leaks no out-of-sight
-  ship, and frozen/resumed room time.
-- `npm run build`: passing.
-- `npm run benchmark:world` (Node 26.13, rough local proxy): 25 ships 31.0 ms,
-  50 ships 39.0 ms, 100 ships 88.7 ms and 200 ships 158.6 ms for ten simulated
-  seconds including fake updates. Full table in `docs/STRESS.md`.
-
-### Broken or unfinished
-
-- The live browser load test was not run here, by instruction; there is no
-  browser and the owner will run it on their own devices. Actual Cloudflare
-  CPU, memory and live message sizes remain unmeasured.
-- The local benchmark omits private chart-block geometry, so its update bytes
-  are lower than a live room with new block data.
-- There is still no saving, and Part 1D-d (the game clock) is next.
-
-## Session 1D-b: cache safety and idle sleep
-
-**Date:** 2026-11-02
-**Branch:** main
-
-### What was asked
-
-Finish 1C status reporting, then make updates safe against stale browser files
-and stop the room's world timer when nobody is connected.
-
-### What was built
-
-- `scripts/build.mjs` now writes `main.<content-hash>.js` and
-  `paper.<content-hash>.css` and rewrites the page to those names. It also
-  writes `version.json` with the build id and source commit, plus build metadata
-  in the page. The page and version file are served with no-cache headers; the
-  hashed files can be cached forever.
-- The page checks `version.json` about once a minute and on returning to the
-  tab. If the build changed, a paper notice says "A new version is available:
-  tap to reload". It never reloads automatically.
-- The TEMP-DEBUG line now includes the build commit.
-- `shared/roomLoop.ts` owns the single world timer. The first connection starts
-  it, the last disconnect stops it, and extra connections or messages cannot
-  start another. Game time is frozen while empty and resumes without catching
-  up.
-- `docs/STRESS.md` records the idle behaviour and free-plan arithmetic:
-  128 MB × 3,600 s ≈ 460.8 GB-s for one active room-hour.
-- Tests: 37 pass, including the room timer lifecycle and frozen-time resume.
-
-### Cache note
-
-Private chart blocks are not fetched from URLs: `visibleStateFor` sends them
-inline in WebSocket state, so a browser cannot cache a block separately from
-the code. Moving them to URLs later would need the map data version in the path.
-The entry page, version file and content-hashed bundle now make stale mixes
-impossible through normal browser caching.
-
-### Broken or unfinished
-
-- No browser is available, so the reload notice and the hashed page were not
-  seen or exercised interactively.
-- A real Durable Object sleep/eviction was not observed locally. The timer stop
-  is unit-tested; deliberate eviction is not.
-
 ## Session 1C-c: fog view on the live page
 
 **Date:** 2026-11-02
@@ -744,3 +650,155 @@ A real local `wrangler dev` WebSocket to `test-1` returned:
 - The map sheet is cached only in chart mode; panning more than about 1.5
   screens or zooming rebuilds it. Frame cost was not measured.
 - Parts 1C-d (stress test) is still unfinished.
+
+## Session 1D-b: cache safety and idle sleep
+
+**Date:** 2026-11-02
+**Branch:** main
+
+### What was asked
+
+Finish 1C status reporting, then make updates safe against stale browser files
+and stop the room's world timer when nobody is connected.
+
+### What was built
+
+- `scripts/build.mjs` now writes `main.<content-hash>.js` and
+  `paper.<content-hash>.css` and rewrites the page to those names. It also
+  writes `version.json` with the build id and source commit, plus build metadata
+  in the page. The page and version file are served with no-cache headers; the
+  hashed files can be cached forever.
+- The page checks `version.json` about once a minute and on returning to the
+  tab. If the build changed, a paper notice says "A new version is available:
+  tap to reload". It never reloads automatically.
+- The TEMP-DEBUG line now includes the build commit.
+- `shared/roomLoop.ts` owns the single world timer. The first connection starts
+  it, the last disconnect stops it, and extra connections or messages cannot
+  start another. Game time is frozen while empty and resumes without catching
+  up.
+- `docs/STRESS.md` records the idle behaviour and free-plan arithmetic:
+  128 MB × 3,600 s ≈ 460.8 GB-s for one active room-hour.
+- Tests: 37 pass, including the room timer lifecycle and frozen-time resume.
+
+### Cache note
+
+Private chart blocks are not fetched from URLs: `visibleStateFor` sends them
+inline in WebSocket state, so a browser cannot cache a block separately from
+the code. Moving them to URLs later would need the map data version in the path.
+The entry page, version file and content-hashed bundle now make stale mixes
+impossible through normal browser caching.
+
+A real local workerd check then found that static assets were served before the
+Worker, so the first version of these headers never reached the browser. The
+follow-up commit `1194b0c` sets `assets.run_worker_first`. The same check now
+returns `Cache-Control: no-cache, no-store, must-revalidate` for `/` and
+`/version.json`; both hashed files return 200 and `/main.js` returns 404.
+
+### Broken or unfinished
+
+- No browser is available, so the reload notice and the hashed page were not
+  seen or exercised interactively.
+- A real Durable Object sleep/eviction was not observed locally. The timer stop
+  is unit-tested; deliberate eviction is not.
+
+## Session 1D-c: load test mode
+
+**Date:** 2026-11-02
+**Branch:** main
+
+### What was asked
+
+Add a temporary, dev-room-only computer fleet so the owner can run a live load
+test, with real fake-player updates, loop metrics and a local benchmark.
+
+### What was built
+
+- `shared/bots.ts`: 1–300 British frigates split across eight fake owners, with
+  sea-only spawns and destinations, normal sailing orders, and replacement
+  destinations after arrival or a coast stop. About 10% start within 40 km of
+  the first human; the rest are placed in the Caribbean and northern South
+  America.
+- Fake owners have their own charts and discover from every ship in their
+  fleet. The shared visibility path now accepts multi-ship owners, but human
+  players still have one ship and the same filtering as before.
+- `/?room=dev-load&bots=100` passes the count through to the socket. Normal and
+  test rooms ignore it; a dev room rejects counts outside 1–300.
+- `server/src/gameRoom.ts` builds and measures eight full `visibleStateFor`
+  updates at 5 Hz and discards them. `LoadMetrics` records real timer gaps and
+  per-player bytes over ten seconds without measuring CPU from inside.
+- Dev-room state carries the compact counters and the TEMP-DEBUG line shows
+  ships, world updates/s, average/worst gap, bytes/s per player, and the
+  client's received updates/s and worst receive gap.
+- `RULES.md` records that the whole mode is temporary and dev-only.
+- `scripts/benchmark-world.mjs` and `npm run benchmark:world`.
+
+### Checks
+
+- `npm test`: **45/45 passing**, including bot limits, sea-only spawn and
+  destinations, owner split, proof that a fake update leaks no out-of-sight
+  ship, and frozen/resumed room time.
+- `npm run build`: passing.
+- `npm run benchmark:world` (Node 26.13, rough local proxy): 25 ships 31.0 ms,
+  50 ships 39.0 ms, 100 ships 88.7 ms and 200 ships 158.6 ms for ten simulated
+  seconds including fake updates. Full table in `docs/STRESS.md`.
+
+### Broken or unfinished
+
+- The live browser load test was not run here, by instruction; there is no
+  browser and the owner will run it on their own devices. Actual Cloudflare
+  CPU, memory and live message sizes remain unmeasured.
+- The local benchmark omits private chart-block geometry, so its update bytes
+  are lower than a live room with new block data.
+- There is still no saving, and Part 1D-d (the game clock) is next.
+
+## Session 1D-d: game clock
+
+**Date:** 2026-11-02
+**Branch:** main
+
+### What was asked
+
+Finish Phase 1 with a server-owned 144× game clock, a free-running moon phase,
+a paper clock panel, and a gentle day/night wash that never hides the live
+circle or touches the chart and paper HUD.
+
+### What was built
+
+- `shared/time.ts`: Day 1 starts at 08:00. One game day is 24 game hours and
+  10 real minutes. Dawn and dusk blend smoothly for one game hour, and the moon
+  repeats every 29.5 game days with a phase and illumination value. The moon is
+  not used by any other game rule yet.
+- `World.gameMs` is the integer clock authority. It advances by a fixed number
+  of milliseconds per world update, freezes with the room, and cannot drift.
+  `world.gameSeconds` is derived from it for last-seen ages.
+- State messages carry a compact `g` game-millisecond value in the initial
+  state and every update. The client predicts forward at 144× and settles onto
+  each received value instead of jumping the display.
+- The ship panel shows `Day N, HH:MM` with a sun or moon icon. The ship view
+  gets a dark-blue night wash whose strength is a setting. It is drawn above
+  the chart but below live circles, ships, markers and the paper HUD, so it
+  stays readable at full night. Chart mode hides it completely.
+- Sight range is unchanged; night range changes wait for ship stats.
+- Settings cover the start hour, day length, daylight boundaries, twilight,
+moon cycle and night-wash strength. The existing `sailingTimeScale` is reused.
+
+### Checks
+
+- `npm test`: **50/50 passing**, including day/night boundaries, smooth dawn
+  and dusk, the 29.5-day moon cycle, no drift after 10,000 updates, and two
+  clients receiving the same clock.
+- `npm run build`: passing.
+- `npm run test:server`: passing. Two clients advanced 118 ticks, stayed in
+  sync and received `g` in normal state; the sample clock was 1,785,600 ms.
+- Local `wrangler dev` header check: `/` and `/version.json` return
+  `no-cache, no-store, must-revalidate`; hashed JS/CSS return 200; the old
+  unhashed `main.js` returns 404.
+
+### Broken or unfinished
+
+- No browser is available, so the sun/moon swap, paper clock layout, night
+  wash strength and transition smoothness were not seen on a screen.
+- The real Cloudflare clock coarsening and a long overnight session were not
+  observed.
+- There is still no saving. The temporary bot mode and TEMP-DEBUG readout
+  remain, as requested for this phase.

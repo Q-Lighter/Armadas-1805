@@ -42,6 +42,10 @@
       "types": "./dist/roomLoop.d.ts",
       "default": "./dist/roomLoop.js"
     },
+    "./time": {
+      "types": "./dist/time.d.ts",
+      "default": "./dist/time.js"
+    },
     "./load-metrics": {
       "types": "./dist/loadMetrics.d.ts",
       "default": "./dist/loadMetrics.js"

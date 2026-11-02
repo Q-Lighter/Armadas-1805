@@ -2,8 +2,9 @@
 
 A browser-based 1805 naval strategy game. This build draws the real chart of
 the western Atlantic and the Americas from Natural Earth, with coastline and
-chart-edge rules, sailing with automatic tacking, and live server rooms where
-two or more players sail together. There is no combat, economy or weather yet.
+chart-edge rules, sailing with automatic tacking, a 144× day/night clock, and
+live server rooms where two or more players sail together. There is no combat,
+economy or weather yet.
 
 ## Requirements
 
@@ -60,6 +61,8 @@ Controls:
 Your ship has a 25 km daylight sight circle. Remembered ground is dim, unseen
 ground is stained paper, and live wind streaks cross the screen. A coast or
 chart-edge order ends with a short paper notice that fades after a few seconds.
+The clock starts at **Day 1, 08:00**; one game day lasts 10 real minutes. Dawn
+and dusk tint the ship view, while the paper panels and chart stay clear.
 Test and dev rooms also show a small TEMP-DEBUG fog readout. A dev room can
 run a temporary load test, for example `/?room=dev-load&bots=100`; see
 [docs/STRESS.md](docs/STRESS.md).
@@ -74,10 +77,10 @@ to sail as two players.
 npm test
 ```
 
-This compiles the shared code and runs 45 tests for the map projection and land
+This compiles the shared code and runs 50 tests for the map projection and land
 lookup, sailing, the world, coast and edge rules, fog, the chart data, the
-fog-view helpers, room timing and the temporary load-test ships on Node's test
-runner.
+fog-view helpers, room timing, the temporary load-test ships and the game clock
+on Node's test runner.
 
 ```sh
 npm run test:server

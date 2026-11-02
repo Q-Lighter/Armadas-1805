@@ -42,6 +42,26 @@
 
     <section class="hud hud-ship paper" aria-label="Your ship">
       <h2>Your ship</h2>
+      <div class="game-clock" id="game-clock-panel" data-night="false">
+        <svg class="clock-icon" viewBox="0 0 24 24" aria-hidden="true">
+          <g class="clock-sun">
+            <circle cx="12" cy="12" r="4.5" fill="currentColor" />
+            <path
+              d="M12 2v2.5M12 19.5V22M2 12h2.5M19.5 12H22M4.9 4.9l1.8 1.8M17.3 17.3l1.8 1.8M19.1 4.9l-1.8 1.8M6.7 17.3l-1.8 1.8"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="1.4"
+              stroke-linecap="round"
+            />
+          </g>
+          <path
+            class="clock-moon"
+            d="M16.2 3.6a8.5 8.5 0 1 0 4.2 14.8A8 8 0 0 1 16.2 3.6Z"
+            fill="currentColor"
+          />
+        </svg>
+        <span id="game-clock">Day 1, 08:00</span>
+      </div>
       <dl class="readout">
         <dt>Speed</dt>
         <dd id="speed">–</dd>

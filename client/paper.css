@@ -437,6 +437,35 @@ h2 {
   font-size: calc(1.2rem * var(--ui-scale));
 }
 
+.game-clock {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  margin: 0.2rem 0 0.15rem;
+  color: var(--ink);
+  font-size: calc(1rem * var(--ui-scale));
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+}
+
+.clock-icon {
+  width: 1.15rem;
+  height: 1.15rem;
+  flex: 0 0 auto;
+}
+
+.clock-moon {
+  display: none;
+}
+
+.game-clock[data-night="true"] .clock-sun {
+  display: none;
+}
+
+.game-clock[data-night="true"] .clock-moon {
+  display: inline;
+}
+
 .readout {
   display: grid;
   grid-template-columns: auto 1fr;

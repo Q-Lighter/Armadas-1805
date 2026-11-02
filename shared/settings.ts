@@ -14,6 +14,17 @@ export const settings = {
   time: {
     /** Game seconds that pass for every real second. Draft: 144. */
     sailingTimeScale: 144,
+    /** The clock starts at Day 1, this hour. Draft: 08:00. */
+    startHour: 8,
+    /** One game day. Twenty-four is the design, not a calendar. */
+    hoursPerDay: 24,
+    /** Nominal daylight: 06:00 to 18:00. */
+    daylightStartHour: 6,
+    daylightEndHour: 18,
+    /** Dawn and dusk blend over this many game hours. Draft: 1. */
+    twilightHours: 1,
+    /** The moon repeats every this many game days. Draft: 29.5. */
+    moonCycleDays: 29.5,
   },
 
   /** The browser build and its update check. */
@@ -225,6 +236,8 @@ export const settings = {
     chartMinKmAcross: 25,
     /** How dark remembered land and sea are outside a live sight circle. */
     fogDimAlpha: 0.52,
+    /** Night wash over the ship view; the paper HUD and chart stay clear. */
+    nightTintStrength: 0.32,
     /** Live wind streaks in the ship and chart views. */
     windStreakCount: 24,
     windStreakMinPx: 22,

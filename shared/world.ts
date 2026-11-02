@@ -45,8 +45,10 @@ export const EDGE_NOTICE = "Edge of the charted world.";
 export interface World {
   /** Number of world steps taken. */
   tick: number;
-  /** Game seconds since the room started. */
+  /** Game seconds since the room started, for last-seen ages. */
   gameSeconds: number;
+  /** Integer game milliseconds since the room started; the clock authority. */
+  gameMs: number;
   /** The room code and its kind (normal, test or debug). */
   roomCode: string;
   kind: RoomKind;
@@ -95,6 +97,8 @@ export interface StateMessage {
   w: number;
   /** Room kind, so the client can show the dev chart correctly. */
   k: RoomKind;
+  /** Game time in milliseconds since the room started. */
+  g: number;
   ships: ShipSnapshot[];
   /** Faded last-seen markers. */
   l: LastSeenSnapshot[];
@@ -108,6 +112,7 @@ export function createWorld(roomCode = "main"): World {
   return {
     tick: 0,
     gameSeconds: 0,
+    gameMs: 0,
     roomCode,
     kind: roomKindForCode(roomCode),
     players: new Map(),
@@ -679,7 +684,13 @@ export function stepWorld(
 
   refreshBotOrders(world);
   world.tick += 1;
-  world.gameSeconds += Math.max(0, dtGameSeconds);
+  // Integer milliseconds avoid a slowly drifting clock. A tick always adds the
+  // same amount, and nothing is added while the room has no players.
+  const elapsedMs = Number.isFinite(dtGameSeconds)
+    ? Math.round(Math.max(0, dtGameSeconds) * 1000)
+    : 0;
+  world.gameMs += elapsedMs;
+  world.gameSeconds = world.gameMs / 1000;
   updateFog(world);
 }
 
@@ -763,6 +774,7 @@ export function visibleStateFor(
     you: playerId,
     w: settings.weather.windFromDeg,
     k: world.kind,
+    g: Math.round(world.gameMs),
     ships,
     l: lastSeen,
     chart: takeChartUpdate(chart, blockLookup),

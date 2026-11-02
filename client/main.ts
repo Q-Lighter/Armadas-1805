@@ -20,6 +20,7 @@ import {
   fogDebugLine,
   type FogDebugInfo,
 } from "@naval/shared/fog-view";
+import { formatGameClock, gameClockAt } from "@naval/shared/time";
 
 // ---------------------------------------------------------------------------
 // Chart look.
@@ -32,6 +33,7 @@ const WATERLINE_COLOR = 0xb79b6b;
 const PAPER_COLOR = 0xe8dbbd;
 const PAPER_INK = 0x5b4631;
 const WIND_COLOR = 0xf3e7cb;
+const NIGHT_COLOR = 0x0a1b33;
 
 const WHOLE_MAP_MARGIN = 1.03;
 const CHART_REBUILD_MS = 360;
@@ -152,6 +154,8 @@ async function start(): Promise<void> {
   const compassNeedle = element<SVGGElement>("compass-needle");
   const followButton = element<HTMLButtonElement>("follow-btn");
   const chartButton = element<HTMLButtonElement>("chart-btn");
+  const clockPanel = element<HTMLElement>("game-clock-panel");
+  const clockOut = element<HTMLElement>("game-clock");
   const roomOut = element<HTMLElement>("room-code");
   const notice = element<HTMLParagraphElement>("notice");
   const versionNotice = element<HTMLButtonElement>("version-notice");
@@ -196,6 +200,9 @@ async function start(): Promise<void> {
 
   const knownSea = new Graphics();
   const unknownPaper = new Graphics();
+  // The wash sits above the chart but below live circles, ships and paper HUD,
+  // so at full night the things the player must see stay clear and bright.
+  const nightTint = new Graphics();
   const liveHalo = new Graphics();
 
   const mapLayer = new Container();
@@ -240,6 +247,7 @@ async function start(): Promise<void> {
     knownSea,
     mapLayer,
     unknownPaper,
+    nightTint,
     liveHalo,
     liveMapLayer,
     liveMaskLayer,
@@ -290,6 +298,15 @@ async function start(): Promise<void> {
   let noticeTimer = 0;
   let noticeHideTimer = 0;
   let windFrom: number = settings.weather.windFromDeg;
+
+  // The server owns game time. The page predicts forward at the game rate and
+  // gently settles onto each received value instead of jumping the display.
+  let clockTargetMs = 0;
+  let clockTargetAt = 0;
+  let clockShownMs = 0;
+  let clockStarted = false;
+  let clockFrameAt = 0;
+  let lastClockText = "";
 
   const scale = (): number => Math.min(app.screen.width, app.screen.height) / view.kmAcross;
 
@@ -702,6 +719,45 @@ async function start(): Promise<void> {
     }
   }
 
+  function updateClockAndNight(now: number): void {
+    if (!clockStarted) return;
+
+    const predicted =
+      clockTargetMs + (now - clockTargetAt) * settings.time.sailingTimeScale;
+    const frameSeconds = clockFrameAt === 0
+      ? 0
+      : Math.min(0.1, (now - clockFrameAt) / 1000);
+    clockFrameAt = now;
+
+    const error = predicted - clockShownMs;
+    if (Math.abs(error) > 30_000) {
+      clockShownMs = predicted;
+    } else {
+      clockShownMs += error * Math.min(1, frameSeconds * 4);
+    }
+
+    const clock = gameClockAt(clockShownMs);
+    const text = formatGameClock(clock);
+    if (text !== lastClockText) {
+      clockOut.textContent = text;
+      clockPanel.dataset.night = String(!clock.isDay);
+      lastClockText = text;
+    }
+
+    const alpha = mode === "ship"
+      ? (1 - clock.daylight) * settings.view.nightTintStrength
+      : 0;
+    nightTint.clear();
+    if (alpha > 0.001 && app.screen.width > 0 && app.screen.height > 0) {
+      nightTint
+        .rect(0, 0, app.screen.width, app.screen.height)
+        .fill({ color: NIGHT_COLOR, alpha });
+      nightTint.visible = true;
+    } else {
+      nightTint.visible = false;
+    }
+  }
+
   function noteStateReceived(): void {
     const now = performance.now();
     receivedAt.push(now);
@@ -739,22 +795,22 @@ async function start(): Promise<void> {
   }
 
   /**
-   * Read the small version file, never from cache. The first read learns this
-   * page's build; later reads only show the reload notice when it changes.
+   * Read the small version file, never from cache. The page's build id comes
+   * from its no-cache HTML; any different live id shows the reload notice.
    */
-  async function checkForNewVersion(first: boolean): Promise<void> {
+  async function checkForNewVersion(): Promise<void> {
     try {
       const response = await fetch("./version.json", { cache: "no-store" });
       if (!response.ok) return;
       const data = (await response.json()) as { id?: unknown; commit?: unknown };
       if (typeof data.id !== "string") return;
 
-      if (first || !pageBuildId) pageBuildId = data.id;
+      if (!pageBuildId) pageBuildId = data.id;
       if (typeof data.commit === "string") {
         buildCommit = data.commit;
         updateDebugLine();
       }
-      if (!first && data.id !== pageBuildId) versionNotice.hidden = false;
+      if (data.id !== pageBuildId) versionNotice.hidden = false;
     } catch {
       // A version check failure is not a game failure. Try again next minute.
     }
@@ -821,6 +877,17 @@ async function start(): Promise<void> {
     if (!Array.isArray(state.ships)) return;
 
     noteStateReceived();
+    const receivedGameMs = Number(state.g);
+    if (Number.isFinite(receivedGameMs)) {
+      clockTargetMs = receivedGameMs;
+      clockTargetAt = performance.now();
+      if (!clockStarted) {
+        clockShownMs = receivedGameMs;
+        clockStarted = true;
+        lastClockText = "";
+      }
+    }
+
     if (state.k === "dev" && Array.isArray(state.d) && state.d.length >= 6) {
       const [ships, worldHz, gapAvgMs, gapMaxMs, bytesAvg, bytesMax] = state.d;
       if (
@@ -986,6 +1053,7 @@ async function start(): Promise<void> {
       chartButton.textContent = "Back to ship";
       chartButton.setAttribute("aria-pressed", "true");
       rulerLayer.visible = true;
+      nightTint.visible = false;
     } else {
       mode = "ship";
       view.x = savedShipView.x;
@@ -1144,6 +1212,7 @@ async function start(): Promise<void> {
     }
 
     const dt = Math.min(0.1, app.ticker.deltaMS / 1000);
+    updateClockAndNight(now);
     const own = ships.get(ownId);
 
     if (view.follow && own && mode === "ship") {
@@ -1229,13 +1298,13 @@ async function start(): Promise<void> {
 
   drawGrain();
   connect();
-  void checkForNewVersion(true);
+  void checkForNewVersion();
   window.setInterval(
-    () => void checkForNewVersion(false),
+    () => void checkForNewVersion(),
     settings.client.versionCheckMs,
   );
   document.addEventListener("visibilitychange", () => {
-    if (!document.hidden) void checkForNewVersion(false);
+    if (!document.hidden) void checkForNewVersion();
   });
 }
 

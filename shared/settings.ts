@@ -126,7 +126,22 @@ export const settings = {
 
   /** The placeholder starting area for new players. */
   world: {
-    startArea: { x: 0, y: 0, radiusKm: 10 },
+    /** The British start, west of Jamaica. */
+    startArea: {
+      lonDeg: -79.5,
+      latDeg: 13,
+      radiusKm: 6,
+      /** New ships are never placed closer than this to each other. */
+      minimumSeparationKm: 1.5,
+    },
+  },
+
+  /** What happens when a ship meets land or the chart edge. */
+  coast: {
+    /** How far apart the path is sampled, in km, so thin land is not skipped. */
+    pathSampleKm: 0.25,
+    /** How far short of a coast or edge a ship stops, in km. */
+    stopMarginKm: 0.1,
   },
 
   /** Server loop values. */

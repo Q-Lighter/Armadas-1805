@@ -4,6 +4,8 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import { settings } from "@naval/shared/settings";
+import { lonLatToMap } from "@naval/shared/map";
+import { isSeaAt } from "@naval/shared/land";
 import {
   addPlayer,
   applyOrder,
@@ -16,10 +18,12 @@ test("new players get a flagship inside the start area", () => {
   const world = createWorld();
   const ship = addPlayer(world, "alpha");
   const area = settings.world.startArea;
+  const centre = lonLatToMap(area.lonDeg, area.latDeg);
 
   assert.equal(ship.classId, "flagship");
   assert.equal(world.players.size, 1);
-  assert.ok(Math.hypot(ship.x - area.x, ship.y - area.y) <= area.radiusKm);
+  assert.ok(Math.hypot(ship.x - centre.x, ship.y - centre.y) <= area.radiusKm);
+  assert.equal(isSeaAt(ship.x, ship.y), true, "the British start is water");
 });
 
 test("a returning player id keeps the same ship", () => {
@@ -61,7 +65,7 @@ test("orders are checked before they reach a ship", () => {
   assert.equal(applyOrder(world, "nobody", 10, 0), false);
   assert.equal(ship.order, null);
 
-  assert.equal(applyOrder(world, "alpha", 10, 0), true);
+  assert.equal(applyOrder(world, "alpha", ship.x + 10, ship.y), true);
   assert.notEqual(ship.order, null);
 });
 

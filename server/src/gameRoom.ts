@@ -10,7 +10,9 @@ import {
   applyOrder,
   createWorld,
   stepWorld,
+  takeNotice,
   visibleStateFor,
+  type NoticeMessage,
   type World,
 } from "@naval/shared/world";
 
@@ -95,6 +97,13 @@ export class GameRoom {
   private sendState(playerId: string, socket: WebSocket): void {
     try {
       socket.send(JSON.stringify(visibleStateFor(this.world, playerId)));
+
+      // Notices are short events, not world state, so they travel separately.
+      const notice = takeNotice(this.world, playerId);
+      if (notice) {
+        const message: NoticeMessage = { t: "n", text: notice };
+        socket.send(JSON.stringify(message));
+      }
     } catch {
       // A dead socket is dropped; the ship stays in the world.
       this.sockets.delete(playerId);

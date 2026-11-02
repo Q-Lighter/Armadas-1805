@@ -154,11 +154,16 @@ try {
   }
 
   const startTick = alphaStart.message.tick;
-  const alphaX = alphaStart.message.ships.find((ship) => ship[0] === "alpha")?.[2];
-  const betaY = betaStart.message.ships.find((ship) => ship[0] === "beta")?.[3];
+  const alphaShip = alphaStart.message.ships.find((ship) => ship[0] === "alpha");
+  const betaShip = betaStart.message.ships.find((ship) => ship[0] === "beta");
+  if (!alphaShip || !betaShip) throw new Error("missing own ship in the first update");
 
-  alpha.socket.send(JSON.stringify({ t: "o", x: 20, y: 0 }));
-  beta.socket.send(JSON.stringify({ t: "o", x: 0, y: -20 }));
+  const alphaX = alphaShip[2];
+  const betaY = betaShip[3];
+
+  // Orders are relative to each ship's real starting berth near Jamaica.
+  alpha.socket.send(JSON.stringify({ t: "o", x: alphaX + 20, y: alphaShip[3] }));
+  beta.socket.send(JSON.stringify({ t: "o", x: betaShip[2], y: betaY - 20 }));
 
   // Junk orders must be ignored without dropping the connection.
   alpha.socket.send(JSON.stringify({ t: "o", x: "east", y: 4 }));

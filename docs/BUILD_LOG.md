@@ -316,3 +316,55 @@ and known land/sea points.
 - The generated tiles and lookup are committed. Rebuilding them needs the
   `world-atlas` and `topojson-client` development dependencies, which are not
   needed by a normal build.
+
+## Session 1B-b: coast and world edge
+
+**Date:** 2026-11-02
+**Branch:** main
+
+### What was asked
+
+Load the land lookup in the server, stop ships at the coast and cancel the
+order, check the whole path between ticks, add a hard chart edge with its own
+message, move the start area to 13 N, 79.5 W, and test Jamaica, the edge and an
+upwind order along a coast.
+
+### What was built
+
+- `shared/world.ts`: the world now owns a per-player notice queue. After every
+  step it checks the full line the ship travelled, sampled every 0.25 km, and
+  stops at the last water point before land or just inside the chart edge. The
+  order is cleared, speed is set to zero and a short notice is queued:
+  "Your ship stopped at the coast." or "Edge of the charted world."
+- `shared/settings.ts`: start area at 13 N, 79.5 W, a 6 km radius, a 1.5 km
+  minimum separation, and the path sample and stop margins.
+- `shared/world.ts` start placement: ships are placed around the British start
+  and a second new player is walked around the circle until at least 1.5 km
+  away.
+- `server/src/gameRoom.ts`: after the normal `visibleStateFor` update, sends any
+  waiting notice as a separate `{ "t": "n", "text": ... }` message.
+- `client/main.ts`: camera starts over the new British start.
+- `scripts/simulate-clients.mjs`: orders are now relative to each ship, because
+  the old absolute coordinates sat outside the 400 km order limit.
+- `tests/coast.test.ts`: Jamaica coast, a single enormous step that would jump
+  the island, the chart edge, an upwind arrival alongside Jamaica, start
+  separation and no drift without an order.
+- `tests/world.test.ts`: start placement and order checks updated for the new
+  start area.
+
+### Checks
+
+- `npm test`: 23 tests, all passing.
+- `npm run build`: passing.
+- `npm run test:server`: passing. Two clients near the new start moved 3.16 km
+  and 2.64 km and stayed in sync; the other room saw only its own ship. A
+  normal update is now 136 bytes.
+
+### Broken or unfinished
+
+- The notice is sent by the server but the paper notice that displays it is
+  part of Part C.
+- There is no order queue yet, so clearing queued orders means clearing the
+  ship's single current order.
+- The coast stop uses the 1 km lookup, so it can be up to about a kilometre
+  from the drawn coast. Shallow-water grounding still needs depth data.

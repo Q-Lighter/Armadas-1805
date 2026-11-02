@@ -6,6 +6,7 @@
 
 import { Application, Container, Graphics } from "pixi.js";
 import { settings } from "@naval/shared/settings";
+import { lonLatToMap } from "@naval/shared/map";
 import type { StateMessage } from "@naval/shared/world";
 
 // ---------------------------------------------------------------------------
@@ -142,9 +143,13 @@ async function start(): Promise<void> {
   marker.visible = false;
   app.stage.addChild(layer, marker);
 
+  const start = lonLatToMap(
+    settings.world.startArea.lonDeg,
+    settings.world.startArea.latDeg,
+  );
   const view: { x: number; y: number; kmAcross: number; follow: boolean } = {
-    x: settings.world.startArea.x,
-    y: settings.world.startArea.y,
+    x: start.x,
+    y: start.y,
     kmAcross: settings.view.startKmAcross,
     follow: true,
   };

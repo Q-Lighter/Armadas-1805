@@ -23,6 +23,15 @@ The build type checks everything, bundles the browser page and writes it to
 test page: **Armada's 1805** on a paper panel, sample buttons and an urgent
 alert, with the line **Build 1A: paper style and sailing** underneath.
 
+## Test
+
+```sh
+npm test
+```
+
+This compiles the shared code and the tests and runs the sailing-rule tests on
+Node's test runner.
+
 ## Deploy
 
 `wrangler.jsonc` tells Cloudflare to serve `dist/` as a static site. After

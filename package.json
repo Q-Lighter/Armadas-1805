@@ -11,6 +11,7 @@
   ],
   "scripts": {
     "build": "node scripts/build.mjs",
+    "test": "node scripts/test.mjs",
     "deploy": "wrangler deploy"
   },
   "engines": {

@@ -139,3 +139,49 @@ page with "Armada's 1805" on a paper panel and one example of each component.
   the only menu styling so far is the `.menu` list used by later screens.
 - UI size choice is stored in `localStorage`; with storage blocked the page
   falls back to medium.
+
+## Session 1A-b: sailing rules and tests
+
+**Date:** 2026-11-02
+**Branch:** main
+
+### What was asked
+
+Plain-TypeScript sailing rules in `shared/sailing.ts`, the three placeholder
+ships and a constant north-west wind in `shared/settings.ts`, gradual turning,
+automatic tacking for upwind orders that must always stop at the target, and
+automated tests for the no-sail angle, turn rate, downwind and upwind trips for
+all three ships, and determinism.
+
+### What was built
+
+- `shared/settings.ts`: the three ships (cruise/top speed in knots, closest
+  angle to the wind, minutes for a 90 degree turn), a constant 12-knot
+  north-west wind, the speed curve key values, the 4 km arrival radius, the
+  2.5 km tacking half-width and order limits.
+- `shared/sailing.ts`: ship state (position, heading, speed, order), angle to
+  the wind, a smooth speed curve, turn rate from the settings, and the sail-to
+  order. Upwind orders zigzag across the wind line through the target; tacks
+  start early enough to keep the zigzag inside its half-width.
+- Arrival is checked before every turn. The zigzag half-width (2.5 km) is kept
+  below the arrival radius (4 km), so crossing the target's wind line always
+  ends inside the radius. A ship can never circle short of an upwind target.
+- `tests/sailing.test.ts`, `tests/tsconfig.json` and `scripts/test.mjs`:
+  `npm test` compiles shared and the tests, then runs Node's test runner.
+- `shared/package.json` exports `@naval/shared/sailing`.
+
+### Checks
+
+- `npm test`: 7 tests, all passing. They cover the no-sail angle, a 90 degree
+turn against the settings, downwind arrival and stop, upwind tacking/arrival
+and stop for all three ships (both at a fine step and at the 14.4 game-second
+server tick), determinism over 5,000 steps, and refused orders.
+- `npm run build` still passes.
+
+### Broken or unfinished
+
+- The wind is a constant north-west placeholder; weather comes later.
+- `topKnots` is stored but not used yet, because only cruise speed is modelled.
+- The 4 km arrival radius is deliberately larger than the 5 km-wide zigzag. It
+  may want tuning once ships are visible on screen.
+- No client or server uses these rules yet; that is Part C.

@@ -52,3 +52,45 @@ reading "Naval game: build 0A" in `dist/`; plus `RULES.md`, `shared/settings.ts`
 - The client is bundled with esbuild but not minified. That is fine for a
   skeleton and can be decided later.
 - The settings groups are empty, so nothing reads them yet.
+
+## Session 0B: Cloudflare deployment settings
+
+**Date:** 2026-11-02
+**Branch:** main
+
+### What was asked
+
+Prepare the project to deploy to Cloudflare as a static web page, with no game
+features: a `wrangler.jsonc` that serves `dist/` as a static site; Wrangler as a
+development dependency with an `npm run deploy` script; a placeholder page with
+a large "Armada's 1805" heading and the line "Build 0B: deployment test" that
+works on a phone; checks, a build-log entry and a commit.
+
+### What was built
+
+- `wrangler.jsonc`: Worker name `armadas-1805`, today's compatibility date, and
+  `assets.directory` set to `./dist`. There is no server entry point, so
+  Cloudflare only serves the built files.
+- `wrangler` added as a root development dependency and an `npm run deploy`
+  script that runs `wrangler deploy`.
+- `shared/index.ts`: the game name is now "Armada's 1805", the build tag is
+  "0B", and a `BUILD_NOTE` of "deployment test" supplies the second line. The
+  page still reads all three from the shared code.
+- `client/index.html`, `client/main.ts`, `client/styles.css`: large centred
+  heading and a build line underneath, sized with `clamp()` so the text stays
+  readable on a phone and the frame never grows wider than the screen.
+- `README.md`: updated page text and a short deploy section.
+
+### Checks
+
+- `npm install` succeeded and installed Wrangler.
+- `npm run build` succeeded and `dist/` contains `index.html`, `main.js` and
+  `styles.css`, with the heading and build line in the page.
+- `npx wrangler deploy --dry-run` validated `wrangler.jsonc` and listed the
+  files that would be uploaded.
+
+### Broken or unfinished
+
+- Nothing has actually been deployed. Deploying needs a Cloudflare account and
+  a one-time `npx wrangler login`, which cannot be done from this workspace.
+- The page is still a placeholder: no game features, no server runtime.

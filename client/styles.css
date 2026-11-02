@@ -21,7 +21,7 @@ body {
 
 .frame {
   width: min(34rem, 100%);
-  padding: 2rem 1.5rem;
+  padding: 2rem 1.25rem;
   border: 1px solid #3f6175;
   border-radius: 0.75rem;
   background: rgba(9, 24, 34, 0.75);
@@ -29,13 +29,14 @@ body {
 }
 
 h1 {
-  margin: 0 0 0.75rem;
-  font-size: clamp(1.4rem, 5vw, 2.1rem);
-  letter-spacing: 0.02em;
+  margin: 0;
+  font-size: clamp(2rem, 10vw, 3.5rem);
+  line-height: 1.1;
+  overflow-wrap: break-word;
 }
 
-.note {
-  margin: 0;
+.build {
+  margin: 0.75rem 0 0;
   color: #a8c0cd;
-  font-size: clamp(0.9rem, 3vw, 1rem);
+  font-size: clamp(1rem, 4vw, 1.25rem);
 }

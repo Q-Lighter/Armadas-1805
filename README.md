@@ -20,7 +20,18 @@ npm run build
 
 The build type checks everything, bundles the browser page and writes it to
 `dist/`. Open `dist/index.html` in a browser to see the placeholder page, which
-should read **Naval game: build 0A**.
+shows **Armada's 1805** with the line **Build 0B: deployment test** underneath.
+
+## Deploy
+
+`wrangler.jsonc` tells Cloudflare to serve `dist/` as a static site. After
+logging in once with `npx wrangler login` (a free Cloudflare account, no card
+needed), build and deploy with:
+
+```sh
+npm run build
+npm run deploy
+```
 
 ## Folders
 

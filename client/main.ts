@@ -1,16 +1,21 @@
-// Client entry point. For now it only shows the build label from shared/,
-// which proves the browser page is built from the shared game code.
+// Client entry point. For now it only shows the game name and build line from
+// shared/, which proves the browser page is built from the shared game code.
 
-import { BUILD_TAG, GAME_NAME } from "@naval/shared";
+import { BUILD_NOTE, BUILD_TAG, GAME_NAME } from "@naval/shared";
 
-const label = `${GAME_NAME}: build ${BUILD_TAG}`;
+const buildLine = `Build ${BUILD_TAG}: ${BUILD_NOTE}`;
 
-function showBuildLabel(): void {
-  const heading = document.querySelector<HTMLElement>("#build-label");
+function showPageText(): void {
+  const heading = document.querySelector<HTMLElement>("#game-name");
+  const build = document.querySelector<HTMLElement>("#build-label");
+
   if (heading) {
-    heading.textContent = label;
+    heading.textContent = GAME_NAME;
   }
-  document.title = label;
+  if (build) {
+    build.textContent = buildLine;
+  }
+  document.title = `${GAME_NAME} - ${buildLine}`;
 }
 
-showBuildLabel();
+showPageText();

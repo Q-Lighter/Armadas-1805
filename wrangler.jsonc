@@ -1,0 +1,9 @@
+{
+  // Cloudflare settings for the static site.
+  // `npm run build` writes the page into dist/, and Cloudflare serves that folder.
+  "name": "armadas-1805",
+  "compatibility_date": "2026-11-02",
+  "assets": {
+    "directory": "./dist"
+  }
+}

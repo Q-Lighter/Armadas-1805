@@ -1,0 +1,41 @@
+/* Simple placeholder styling. It fits a phone, a Chromebook and a PC. */
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  display: grid;
+  place-items: center;
+  padding: 1.5rem;
+  background: radial-gradient(circle at 50% 20%, #1d3b53, #07131c 70%);
+  color: #e8f1f5;
+  font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+
+.frame {
+  width: min(34rem, 100%);
+  padding: 2rem 1.5rem;
+  border: 1px solid #3f6175;
+  border-radius: 0.75rem;
+  background: rgba(9, 24, 34, 0.75);
+  text-align: center;
+}
+
+h1 {
+  margin: 0 0 0.75rem;
+  font-size: clamp(1.4rem, 5vw, 2.1rem);
+  letter-spacing: 0.02em;
+}
+
+.note {
+  margin: 0;
+  color: #a8c0cd;
+  font-size: clamp(0.9rem, 3vw, 1rem);
+}

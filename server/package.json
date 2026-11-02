@@ -1,0 +1,16 @@
+{
+  "name": "@naval/server",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "main": "./dist/index.js",
+  "scripts": {
+    "build": "tsc -p tsconfig.json"
+  },
+  "dependencies": {
+    "@naval/shared": "*"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0"
+  }
+}

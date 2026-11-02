@@ -1,0 +1,16 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+
+# TypeScript incremental build files
+*.tsbuildinfo
+
+# Local secrets and logs
+.env
+.env.*
+*.log
+
+# OS files
+.DS_Store

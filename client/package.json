@@ -1,0 +1,12 @@
+{
+  "name": "@naval/client",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "node ../scripts/build.mjs"
+  },
+  "dependencies": {
+    "@naval/shared": "*"
+  }
+}

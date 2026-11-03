@@ -20,6 +20,7 @@ import {
 } from "@naval/shared/world";
 import { RoomLoop } from "@naval/shared/room-loop";
 import { GhostCleanup, PlayerSessions } from "@naval/shared/player-sessions";
+import { BlockSendBudget } from "@naval/shared/block-batch";
 import { CHART_BLOCKS } from "./chartBlocks.js";
 
 const playerIdPattern = /^[A-Za-z0-9_-]{1,40}$/;
@@ -29,6 +30,10 @@ export class GameRoom {
   private readonly sockets = new PlayerSessions<WebSocket>();
   private ticks = 0;
   private readonly metrics = new LoadMetrics();
+  private readonly blockBudget = new BlockSendBudget(
+    settings.fog.blockBatchPerSecond,
+    settings.fog.maxBlocksPerMessage,
+  );
   private readonly ghosts = new GhostCleanup(
     () => this.world.kind,
     () => settings.players.ghostRemoveAfterSeconds * 1000,
@@ -159,13 +164,16 @@ export class GameRoom {
 
   private sendState(playerId: string, socket: WebSocket): void {
     try {
-      const state = visibleStateFor(this.world, playerId, CHART_BLOCKS);
+      const now = Date.now();
+      const allowed = this.blockBudget.take(now);
+      const state = visibleStateFor(this.world, playerId, CHART_BLOCKS, allowed);
+      this.blockBudget.note(state.chart.blocks.length, now);
       // TEMP-DEBUG: dev rooms carry the live load-test counters.
       if (this.world.kind === "dev") {
         state.d = this.metrics.snapshot(
           this.world.players.size + botShipCount(this.world),
           botShipCount(this.world),
-          Date.now(),
+          now,
         );
       }
       socket.send(JSON.stringify(state));

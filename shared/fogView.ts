@@ -27,6 +27,10 @@ export interface FogDebugInfo {
   bytesMax?: number;
   receivedHz?: number;
   receivedGapMaxMs?: number;
+  fps?: number;
+  liveBlocks?: number;
+  graphicsResets?: number;
+  devicePixelRatio?: number;
 }
 
 /** How many cells the player knows, with dev rooms counting the whole chart. */
@@ -56,6 +60,12 @@ export function fogDebugLine(
     `build ${(info.buildCommit ?? "unknown").slice(0, 12)}`,
   ];
   if (info.playerId) parts.push(`player ${info.playerId.slice(0, 8)}`);
+  if (info.fps !== undefined) parts.push(`${Math.round(info.fps)} fps`);
+  if (info.liveBlocks !== undefined) parts.push(`${info.liveBlocks} live block graphics`);
+  if (info.graphicsResets !== undefined) parts.push(`${info.graphicsResets} graphics resets`);
+  if (info.devicePixelRatio !== undefined) {
+    parts.push(`dpr ${info.devicePixelRatio.toFixed(2)}`);
+  }
 
   // The load-test counters are only meaningful in a dev room.
   if (kind === "dev") {

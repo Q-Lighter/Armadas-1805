@@ -77,6 +77,14 @@
     "./render-plan": {
       "types": "./dist/renderPlan.d.ts",
       "default": "./dist/renderPlan.js"
+    },
+    "./graphics-safety": {
+      "types": "./dist/graphicsSafety.d.ts",
+      "default": "./dist/graphicsSafety.js"
+    },
+    "./block-batch": {
+      "types": "./dist/blockBatch.d.ts",
+      "default": "./dist/blockBatch.js"
     }
   },
   "files": [

@@ -4,7 +4,7 @@
 // visibleStateFor() sends: the ship view, the remembered chart, live sight
 // circles and short-lived last-seen markers. It never predicts the world.
 
-import { Application, Container, Graphics, RenderTexture, Sprite, Text } from "pixi.js";
+import { Application, Container, Graphics, RenderTexture, Sprite, Text, Texture } from "pixi.js";
 import { settings } from "@naval/shared/settings";
 import { MAP_HEIGHT_KM, MAP_WIDTH_KM, lonLatToMap } from "@naval/shared/map";
 import {
@@ -24,6 +24,7 @@ import { TAKEN_OVER_CLOSE_CODE } from "@naval/shared/player-sessions";
 import type { LastSeenSnapshot, StateMessage } from "@naval/shared/world";
 import { orderedChartBlocks } from "@naval/shared/chart-draw";
 import { fogDebugLine, type FogDebugInfo } from "@naval/shared/fog-view";
+import { GRAPHICS_RESET_NOTICE, GraphicsRecovery } from "@naval/shared/graphics-safety";
 import { formatGameClock, gameClockAt } from "@naval/shared/time";
 
 // ---------------------------------------------------------------------------
@@ -54,10 +55,10 @@ function mixedColor(from: number, to: number, amount: number): number {
 
 // Remembered colours are pre-mixed with paper, so they can be painted opaque.
 // Nothing overlaps with alpha, and adjacent blocks cannot show seams.
-const DIM_SEA_COLOR = mixedColor(PAPER_COLOR, SEA_COLOR, settings.view.fogDimAlpha + 0.22);
+const DIM_SEA_COLOR = mixedColor(PAPER_COLOR, SEA_COLOR, settings.view.dimSeaBlend);
 const DIM_LAND_COLOR = mixedColor(DIM_SEA_COLOR, LAND_COLOR, settings.view.fogDimAlpha);
-const DIM_WATERLINE_COLOR = mixedColor(DIM_LAND_COLOR, WATERLINE_COLOR, 0.55);
-const DIM_INK_COLOR = mixedColor(DIM_LAND_COLOR, INK_COLOR, 0.62);
+const DIM_WATERLINE_COLOR = mixedColor(DIM_LAND_COLOR, WATERLINE_COLOR, settings.view.dimWaterBlend);
+const DIM_INK_COLOR = mixedColor(DIM_LAND_COLOR, INK_COLOR, settings.view.dimInkBlend);
 
 // ---------------------------------------------------------------------------
 // UI size, remembered between visits.
@@ -344,6 +345,12 @@ async function start(): Promise<void> {
   let noticeTimer = 0;
   let noticeHideTimer = 0;
   let windFrom: number = settings.weather.windFromDeg;
+  const graphicsRecovery = new GraphicsRecovery();
+  let graphicsResets = 0;
+  let frameCount = 0;
+  let fpsWindowAt = performance.now();
+  let fps = 0;
+  let lastDebugLineAt = 0;
 
   // The server owns game time. The page predicts forward at the game rate and
   // gently settles onto each received value instead of jumping the display.
@@ -408,12 +415,21 @@ async function start(): Promise<void> {
     followButton.setAttribute("aria-pressed", String(on));
   }
 
-  function showNotice(text: string): void {
+  function showNotice(
+    text: string,
+    options: { persistent?: boolean; reload?: boolean } = {},
+  ): void {
     window.clearTimeout(noticeTimer);
     window.clearTimeout(noticeHideTimer);
     notice.textContent = text;
     notice.hidden = false;
+    notice.dataset.reload = options.reload ? "true" : "false";
+    notice.setAttribute("role", options.reload ? "button" : "status");
+    if (options.reload) notice.tabIndex = 0;
+    else notice.removeAttribute("tabindex");
     requestAnimationFrame(() => notice.classList.add("is-visible"));
+
+    if (options.persistent) return;
 
     noticeTimer = window.setTimeout(() => {
       notice.classList.remove("is-visible");
@@ -469,19 +485,29 @@ async function start(): Promise<void> {
       return;
     }
 
-    for (const index of discovered) {
-      const column = index % chartColumns;
-      const row = Math.floor(index / chartColumns);
-      if (column < 0 || column >= chartColumns || row < 0 || row >= chartRows) continue;
-      const topLeft = toScreen(column * chartCellKm, row * chartCellKm);
-      dimSea
-        .rect(
-          topLeft.x,
-          topLeft.y,
-          chartCellKm * scale(),
-          chartCellKm * scale(),
-        )
-        .fill(DIM_SEA_COLOR);
+    // Only visit cells that can touch the screen. A player who has explored
+    // most of the ocean still paints a small, constant number of rectangles.
+    const s = scale();
+    const halfWidth = app.screen.width / (2 * s);
+    const halfHeight = app.screen.height / (2 * s);
+    const firstColumn = Math.max(0, Math.floor((view.x - halfWidth) / chartCellKm));
+    const lastColumn = Math.min(
+      chartColumns - 1,
+      Math.floor((view.x + halfWidth) / chartCellKm),
+    );
+    const firstRow = Math.max(0, Math.floor((view.y - halfHeight) / chartCellKm));
+    const lastRow = Math.min(
+      chartRows - 1,
+      Math.floor((view.y + halfHeight) / chartCellKm),
+    );
+    for (let row = firstRow; row <= lastRow; row += 1) {
+      for (let column = firstColumn; column <= lastColumn; column += 1) {
+        if (!discovered.has(row * chartColumns + column)) continue;
+        const topLeft = toScreen(column * chartCellKm, row * chartCellKm);
+        dimSea
+          .rect(topLeft.x, topLeft.y, chartCellKm * s, chartCellKm * s)
+          .fill(DIM_SEA_COLOR);
+      }
     }
   }
 
@@ -807,9 +833,29 @@ async function start(): Promise<void> {
         .stroke({
           width: Math.max(1, featherPx / rings),
           color: SEA_COLOR,
-          alpha: settings.view.sightFeatherAlpha * (1 - share * 0.7),
+          alpha: settings.view.sightFeatherAlpha * (1 - share * settings.view.sightFeatherFade),
         });
     }
+  }
+
+  /** Recreate the parts Pixi loses when the WebGL context is restored. */
+  function rebuildAfterGraphicsReset(): void {
+    chartTexture?.destroy(true);
+    chartTexture = null;
+    chartSprite.texture = Texture.EMPTY;
+    chartBuiltRevision = -1;
+    chartGraphics.clear();
+    lastChartBuild = 0;
+    destroyBlockPaints();
+    builtScale = 0;
+    drawGrain();
+    refreshMap(performance.now(), true);
+    refreshFogPaper();
+    updateLiveCircles();
+    updateLayerOffset();
+    drawLastSeen();
+    drawBorders();
+    updateDebugLine();
   }
 
   // ---- Last seen and ships ------------------------------------------------
@@ -949,6 +995,10 @@ async function start(): Promise<void> {
         buildCommit,
         receivedHz,
         receivedGapMaxMs: receivedAt.length >= 2 ? receivedGapMaxMs : undefined,
+        fps,
+        liveBlocks: liveBlockGraphics,
+        graphicsResets,
+        devicePixelRatio: app.renderer.resolution,
       },
     );
     fogDebugOut.textContent = line ?? "";
@@ -1438,11 +1488,45 @@ async function start(): Promise<void> {
   }
 
   versionNotice.addEventListener("click", () => location.reload());
+  notice.addEventListener("click", () => {
+    if (notice.dataset.reload === "true") location.reload();
+  });
+  notice.addEventListener("keydown", (event) => {
+    if (
+      notice.dataset.reload === "true" &&
+      (event.key === "Enter" || event.key === " ")
+    ) {
+      event.preventDefault();
+      location.reload();
+    }
+  });
+
+  // Pixi restores its GL resources itself; this handler asks the browser to
+  // keep the canvas alive and rebuilds our textures and graphics from state.
+  app.canvas.addEventListener("webglcontextlost", (event) => {
+    event.preventDefault();
+    const result = graphicsRecovery.lost(performance.now());
+    showNotice(result.message, { persistent: result.reload, reload: result.reload });
+  });
+  app.canvas.addEventListener("webglcontextrestored", () => {
+    graphicsRecovery.restored();
+    graphicsResets = graphicsRecovery.resetCount;
+    rebuildAfterGraphicsReset();
+    if (!graphicsRecovery.reloadRequired) showNotice(GRAPHICS_RESET_NOTICE);
+  });
 
   // ---- Frame loop ---------------------------------------------------------
 
   app.ticker.add(() => {
     const now = performance.now();
+    frameCount += 1;
+    const fpsElapsed = now - fpsWindowAt;
+    if (fpsElapsed >= 1_000) {
+      fps = (frameCount * 1_000) / fpsElapsed;
+      frameCount = 0;
+      fpsWindowAt = now;
+    }
+
     if (app.screen.width !== lastWidth || app.screen.height !== lastHeight) {
       lastWidth = app.screen.width;
       lastHeight = app.screen.height;
@@ -1527,6 +1611,10 @@ async function start(): Promise<void> {
 
     updateRuler();
     drawBorders();
+    if (now - lastDebugLineAt >= 500) {
+      lastDebugLineAt = now;
+      updateDebugLine();
+    }
   });
 
   for (const button of document.querySelectorAll<HTMLButtonElement>("[data-size]")) {

@@ -150,19 +150,34 @@ export function revealCircle(
 export function takeChartUpdate(
   chart: ChartState,
   blocks: ReadonlyMap<string, ChartBlock> | undefined,
-  maxBlocks = settings.fog.maxBlocksPerMessage,
+  maxBlocks: number = settings.fog.maxBlocksPerMessage,
+  near?: { x: number; y: number },
 ): ChartUpdate {
   const cells = chart.pendingCells.splice(0, chart.pendingCells.length);
   const updateBlocks: ChartBlock[] = [];
 
-  if (blocks) {
-    for (const id of [...chart.pendingBlocks]) {
-      if (updateBlocks.length >= maxBlocks) break;
-      if (chart.sentBlocks.has(id)) {
-        chart.pendingBlocks.delete(id);
-        continue;
-      }
+  if (blocks && maxBlocks > 0) {
+    const pending = [...chart.pendingBlocks].filter((id) => !chart.sentBlocks.has(id));
+    if (near) {
+      // A dev room starts with every block queued. Send the blocks around the
+      // player first, so the useful chart arrives before the horizon.
+      pending.sort((a, b) => {
+        const blockA = blocks.get(a);
+        const blockB = blocks.get(b);
+        const distanceA = blockA
+          ? (blockA.x + blockA.km / 2 - near.x) ** 2 + (blockA.y + blockA.km / 2 - near.y) ** 2
+          : Number.POSITIVE_INFINITY;
+        const distanceB = blockB
+          ? (blockB.x + blockB.km / 2 - near.x) ** 2 + (blockB.y + blockB.km / 2 - near.y) ** 2
+          : Number.POSITIVE_INFINITY;
+        return distanceA - distanceB || (a < b ? -1 : a > b ? 1 : 0);
+      });
+    } else {
+      pending.sort();
+    }
 
+    for (const id of pending) {
+      if (updateBlocks.length >= maxBlocks) break;
       const block = blocks.get(id);
       chart.pendingBlocks.delete(id);
       chart.sentBlocks.add(id);

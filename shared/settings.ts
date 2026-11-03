@@ -233,6 +233,8 @@ export const settings = {
     chartBlockKm: 25,
     /** Keep each websocket state message small by batching block geometry. */
     maxBlocksPerMessage: 8,
+    /** Dev rooms send no more than this many blocks in any one second. */
+    blockBatchPerSecond: 40,
     /** How far offshore a test room starts from the nearest coast, in km. */
     testStartCoastDistanceKm: 30,
   },
@@ -249,6 +251,12 @@ export const settings = {
     chartMinKmAcross: 25,
     /** How dark remembered land and sea are outside a live sight circle. */
     fogDimAlpha: 0.52,
+    /** Mix of the remembered sea colour into paper. */
+    dimSeaBlend: 0.74,
+    /** Mix of the lighter water line into remembered land. */
+    dimWaterBlend: 0.55,
+    /** Mix of the ink coast into remembered land. */
+    dimInkBlend: 0.62,
     /** Extra screen widths of nearby chart blocks kept ready while panning. */
     blockMarginScreens: 0.5,
     /** Hard ceiling on live block graphics; nearest blocks win. */
@@ -261,6 +269,8 @@ export const settings = {
     sightFeatherRings: 3,
     /** Opacity of the innermost soft sight ring. */
     sightFeatherAlpha: 0.38,
+    /** How quickly each outward sight ring fades. */
+    sightFeatherFade: 0.7,
     /** Night wash over the ship view; the paper HUD and chart stay clear. */
     nightTintStrength: 0.32,
     /** Live wind streaks in the ship and chart views. */

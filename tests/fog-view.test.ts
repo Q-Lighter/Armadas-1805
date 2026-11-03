@@ -37,6 +37,10 @@ test("test and dev rooms show the fog debug line; normal rooms do not", () => {
     bytesMax: 3_000,
     receivedHz: 5,
     receivedGapMaxMs: 250,
+    fps: 59.6,
+    liveBlocks: 12,
+    graphicsResets: 1,
+    devicePixelRatio: 1.5,
   });
   assert.match(devLine ?? "", new RegExp(`${chartColumns * chartRows} discovered cells`));
   assert.match(devLine ?? "", /50 bots/);
@@ -45,6 +49,10 @@ test("test and dev rooms show the fog debug line; normal rooms do not", () => {
   assert.match(devLine ?? "", /gap avg 101 ms/);
   assert.match(devLine ?? "", /worst 140 ms/);
   assert.match(devLine ?? "", /5\.0 updates\/s received/);
+  assert.match(devLine ?? "", /60 fps/);
+  assert.match(devLine ?? "", /12 live block graphics/);
+  assert.match(devLine ?? "", /1 graphics resets/);
+  assert.match(devLine ?? "", /dpr 1\.50/);
 });
 
 test("live sight hides paper inside the circle and leaves the outside blank", () => {

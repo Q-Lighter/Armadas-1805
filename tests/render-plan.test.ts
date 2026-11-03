@@ -134,3 +134,27 @@ test("a dev room has a fully explored dim sea under the live layers", () => {
   const dimSea = plan.layers.find((layer) => layer.name === "dimSea")!;
   assert.deepEqual(dimSea.bounds, { x: 0, y: 0, width: 1_200, height: 800 });
 });
+
+test("the live block graphics budget keeps only the nearest blocks", () => {
+  const blocks = Array.from({ length: settings.view.maxLiveBlockGraphics + 50 }, (_, index) => ({
+    id: `block-${String(index).padStart(3, "0")}`,
+    x: index * 2,
+    y: 0,
+    km: 1,
+    fill: [] as number[][],
+    coast: [] as number[][],
+  }));
+
+  const plan = buildShipRenderPlan({
+    width: 4_000,
+    height: 1_000,
+    view: { x: 350, y: 0, kmAcross: 1_000 },
+    blocks,
+    all: false,
+    discovered: new Set(),
+    sight: [],
+    ships: [],
+  });
+
+  assert.equal(plan.activeBlocks, settings.view.maxLiveBlockGraphics);
+});

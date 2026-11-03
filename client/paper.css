@@ -375,6 +375,11 @@ h2 {
   opacity: 1;
 }
 
+.chart-notice[data-reload="true"] {
+  pointer-events: auto;
+  cursor: pointer;
+}
+
 .chart-notice[hidden] {
   display: none;
 }

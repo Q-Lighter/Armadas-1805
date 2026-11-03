@@ -728,6 +728,7 @@ export function visibleStateFor(
   world: World,
   playerId: string,
   blockLookup?: ReadonlyMap<string, ChartBlock>,
+  maxBlocks: number = settings.fog.maxBlocksPerMessage,
 ): StateMessage {
   const own = shipsForOwner(world, playerId);
   const ownIds = new Set(own.map((ship) => ship.id));
@@ -760,6 +761,7 @@ export function visibleStateFor(
 
   const chart = world.charts.get(playerId) ?? createChart(world.kind);
   world.charts.set(playerId, chart);
+  const near = own[0] ? { x: own[0].x, y: own[0].y } : undefined;
 
   // Remember foreign ships while they are visible; when they leave the circle
   // their last position becomes a faded marker with an age in game time.
@@ -795,6 +797,6 @@ export function visibleStateFor(
     g: Math.round(world.gameMs),
     ships,
     l: lastSeen,
-    chart: takeChartUpdate(chart, blockLookup),
+    chart: takeChartUpdate(chart, blockLookup, maxBlocks, near),
   };
 }

@@ -1001,3 +1001,54 @@ by reading the Pixi mask path against the client stage.
   asserts those layers at the test-room start instead.
 - The chart cache is rebuilt from all received blocks; a very large dev chart
   may still take a noticeable moment on its once-per-second rebuild.
+
+## Session 1F-b: graphics safety
+
+**Date:** 2026-11-03
+**Branch:** main
+
+### What was asked
+
+Handle WebGL context loss and restoration, cap device pixel ratio and texture
+sizes, batch dev-room block delivery nearest-first, keep loaded rooms lazy, and
+extend TEMP-DEBUG with frame rate, live block graphics, reset count and DPR.
+
+### What was built
+
+- `webglcontextlost` now calls `preventDefault()` and shows `Graphics reset`.
+  `webglcontextrestored` recreates the chart texture and redraws the paper,
+  blocks, sight circles, markers and borders from current state without a page
+  reload. The chart texture is destroyed and rebuilt rather than holding a
+  stale GPU texture.
+- `GraphicsRecovery` counts losses in a rolling one-minute window. The third
+  loss shows `Graphics keep failing. Tap to reload.`; that notice is persistent,
+  keyboard-accessible and reloads only when tapped. Two losses still show the
+  short reset notice.
+- Device pixel ratio is capped by `settings.client.maxDevicePixelRatio` (2), and
+  the chart texture is capped at 2,048 px on its long side.
+- Dev-room chart blocks are ordered by squared distance from the player's ship,
+  sent under a 40-block-per-second budget and at most 8 per state message. The
+  client still only builds graphics for the screen plus margin, so receiving a
+  dev chart does not create 1,900 live block graphics. The remembered sea also
+  visits only the visible 5 km cell range, not every remembered cell.
+- TEMP-DEBUG now includes FPS, live block graphics, graphics resets and the DPR
+  actually used by the renderer.
+
+### Checks
+
+- `npm test`: **70/70 passing**, including nearest-first blocks, the 40/second
+  budget, the live block cap and the three-loss recovery rule.
+- `npm run build`: passing.
+- `npm run test:server`: passing (`SIMULATION PASSED`, 118 ticks, 63 updates,
+  214-byte typical update).
+
+### Broken or unfinished
+
+- No browser is available, so the context-loss events and the actual restored
+  Pixi stage were not fired or seen. The pure recovery rules and source paths
+  were tested; the browser event path is not exercised.
+- The chart texture's orientation, the opaque sea colours and the per-block
+  graphics were not visually checked.
+- The loaded-room performance claim is a structural improvement (no new block
+  graphics off screen, no chart redraw without new data); it was not measured
+  on a phone or Chromebook.

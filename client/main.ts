@@ -4,7 +4,7 @@
 // visibleStateFor() sends: the ship view, the remembered chart, live sight
 // circles and short-lived last-seen markers. It never predicts the world.
 
-import { Application, Container, Graphics, Text } from "pixi.js";
+import { Application, Container, Graphics, RenderTexture, Sprite, Text } from "pixi.js";
 import { settings } from "@naval/shared/settings";
 import { MAP_HEIGHT_KM, MAP_WIDTH_KM, lonLatToMap } from "@naval/shared/map";
 import {
@@ -23,7 +23,6 @@ import {
 import { TAKEN_OVER_CLOSE_CODE } from "@naval/shared/player-sessions";
 import type { LastSeenSnapshot, StateMessage } from "@naval/shared/world";
 import { orderedChartBlocks } from "@naval/shared/chart-draw";
-import { fogPaintPlan } from "@naval/shared/fog-paint";
 import { fogDebugLine, type FogDebugInfo } from "@naval/shared/fog-view";
 import { formatGameClock, gameClockAt } from "@naval/shared/time";
 
@@ -41,7 +40,24 @@ const WIND_COLOR = 0xf3e7cb;
 const NIGHT_COLOR = 0x0a1b33;
 
 const WHOLE_MAP_MARGIN = 1.03;
-const CHART_REBUILD_MS = 360;
+
+/** Mix one colour towards another; the result is opaque. */
+function mixedColor(from: number, to: number, amount: number): number {
+  const t = Math.max(0, Math.min(1, amount));
+  const mix = (shift: number): number => {
+    const a = (from >> shift) & 0xff;
+    const b = (to >> shift) & 0xff;
+    return Math.round(a + (b - a) * t) << shift;
+  };
+  return mix(16) | mix(8) | mix(0);
+}
+
+// Remembered colours are pre-mixed with paper, so they can be painted opaque.
+// Nothing overlaps with alpha, and adjacent blocks cannot show seams.
+const DIM_SEA_COLOR = mixedColor(PAPER_COLOR, SEA_COLOR, settings.view.fogDimAlpha + 0.22);
+const DIM_LAND_COLOR = mixedColor(DIM_SEA_COLOR, LAND_COLOR, settings.view.fogDimAlpha);
+const DIM_WATERLINE_COLOR = mixedColor(DIM_LAND_COLOR, WATERLINE_COLOR, 0.55);
+const DIM_INK_COLOR = mixedColor(DIM_LAND_COLOR, INK_COLOR, 0.62);
 
 // ---------------------------------------------------------------------------
 // UI size, remembered between visits.
@@ -194,49 +210,42 @@ async function start(): Promise<void> {
     background: PAPER_COLOR,
     antialias: true,
     autoDensity: true,
-    resolution: Math.min(window.devicePixelRatio || 1, 2),
+    resolution: Math.min(window.devicePixelRatio || 1, settings.client.maxDevicePixelRatio),
     preference: "webgl",
   });
   root.appendChild(app.canvas);
 
-  // The screen layers are in screen pixels. The three chart layers (known
-  // land, live land and the live mask) are built for one camera snapshot and
-  // then shifted while the player pans.
+  // The screen layers are in screen pixels. Chart blocks are built for one
+  // camera snapshot and shifted while the player pans. There are no screen
+  // sized render textures and no alpha masks.
   const grainLayer = new Container();
   const grain = new Graphics();
   grainLayer.addChild(grain);
 
-  // One screen-sized wash with one alpha, clipped by a mask of discovered
-  // cells. This replaces the old per-cell translucent rectangles that left a
-  // faint grid at every cell edge.
-  const knownSea = new Graphics();
-  const knownMaskLayer = new Container();
-  const knownMask = new Graphics();
-  knownMask.renderable = false;
-  knownMaskLayer.addChild(knownMask);
-  knownSea.mask = knownMask;
+  // Blank paper, then opaque remembered sea and land. Opaque pre-mixed colours
+  // mean neighbouring blocks cannot blend into block-sized rectangles.
   const unknownPaper = new Graphics();
-  // The wash sits above the chart but below live circles, ships and paper HUD,
-  // so at full night the things the player must see stay clear and bright.
+  const dimSea = new Graphics();
+  const dimBlockLayer = new Container();
+
+  // The chart is a fixed low-resolution texture of the received blocks.
+  const chartBlockLayer = new Container();
+  const chartSprite = new Sprite();
+  chartBlockLayer.addChild(chartSprite);
+  chartBlockLayer.visible = false;
+
+  // The night wash sits above the chart but below live circles, ships and HUD.
   const nightTint = new Graphics();
   const liveHalo = new Graphics();
 
-  const mapLayer = new Container();
-  const mapFill = new Graphics();
-  const mapWater = new Graphics();
-  const mapCoast = new Graphics();
-  mapLayer.addChild(mapFill, mapWater, mapCoast);
-
   const liveMapLayer = new Container();
   const liveSea = new Graphics();
-  const liveFill = new Graphics();
-  const liveWater = new Graphics();
-  const liveCoast = new Graphics();
-  const liveMaskLayer = new Container();
+  const liveBlockLayer = new Container();
+  liveMapLayer.addChild(liveSea, liveBlockLayer);
+
+  // A geometry mask made from one Graphics full of circles. It must stay
+  // renderable: Pixi builds a stencil mask from the mask graphic's renderables.
   const liveMask = new Graphics();
-  liveMask.renderable = false;
-  liveMaskLayer.addChild(liveMask);
-  liveMapLayer.addChild(liveSea, liveFill, liveWater, liveCoast);
   liveMapLayer.mask = liveMask;
 
   const marker = new Graphics();
@@ -262,13 +271,13 @@ async function start(): Promise<void> {
 
   app.stage.addChild(
     unknownPaper,
-    knownSea,
-    knownMaskLayer,
-    mapLayer,
+    dimSea,
+    dimBlockLayer,
+    chartBlockLayer,
     nightTint,
     liveHalo,
     liveMapLayer,
-    liveMaskLayer,
+    liveMask,
     lastSeenLayer,
     fleetLayer,
     windLayer,
@@ -304,6 +313,22 @@ async function start(): Promise<void> {
   const ships = new Map<string, ShipView>();
   let lastSeen: LastSeenSnapshot[] = [];
   let lastSeenViews: Container[] = [];
+
+  interface BlockPaint {
+    blockId: string;
+    dim: Graphics;
+    live: Graphics;
+  }
+  const blockPaints = new Map<string, BlockPaint>();
+
+  const chartGraphics = new Graphics();
+  const chartBuildLayer = new Container();
+  chartBuildLayer.addChild(chartGraphics);
+  let chartTexture: RenderTexture | null = null;
+  let chartTextureScale = 1;
+  let chartBuiltRevision = -1;
+  let lastChartBuild = 0;
+  let liveBlockGraphics = 0;
 
   let roomKind: RoomKind = "normal";
   let chartAll = false;
@@ -424,66 +449,39 @@ async function start(): Promise<void> {
     }
   }
 
-  function visibleCellRange(): {
-    firstColumn: number;
-    lastColumn: number;
-    firstRow: number;
-    lastRow: number;
-  } {
-    const s = scale();
-    const halfWidth = app.screen.width / (2 * s);
-    const halfHeight = app.screen.height / (2 * s);
-    return {
-      firstColumn: Math.max(0, Math.floor((view.x - halfWidth) / chartCellKm)),
-      lastColumn: Math.min(
-        chartColumns - 1,
-        Math.floor((view.x + halfWidth) / chartCellKm),
-      ),
-      firstRow: Math.max(0, Math.floor((view.y - halfHeight) / chartCellKm)),
-      lastRow: Math.min(chartRows - 1, Math.floor((view.y + halfHeight) / chartCellKm)),
-    };
-  }
-
-  function screenCellRect(column: number, row: number): [number, number, number, number] {
-    const left = toScreen(column * chartCellKm, row * chartCellKm);
-    const right = toScreen((column + 1) * chartCellKm, (row + 1) * chartCellKm);
-    return [left.x, left.y, right.x - left.x, right.y - left.y];
-  }
-
-  /**
-   * Paint one opaque paper sheet, then one semi-transparent sea wash clipped by
-   * an opaque mask of discovered cells. The live circles are painted above.
-   */
+  /** Paint stained paper, then only the discovered 5 km cells in opaque sea. */
   function refreshFogPaper(): void {
-    knownSea.clear();
-    knownMask.clear();
     unknownPaper.clear();
+    dimSea.clear();
 
-    const plan = fogPaintPlan(
-      app.screen.width,
-      app.screen.height,
-      mode === "chart",
-      chartAll,
-      discovered,
-      visibleCellRange(),
-      (column, row) => {
-        const [x, y, width, height] = screenCellRect(column, row);
-        return { x, y, width, height };
-      },
-    );
-
-    if (plan.paper) {
-      unknownPaper.rect(plan.paper.x, plan.paper.y, plan.paper.width, plan.paper.height)
-        .fill(PAPER_COLOR);
+    if (mode === "chart" || app.screen.width <= 0) {
+      unknownPaper.visible = false;
+      dimSea.visible = false;
+      return;
     }
-    knownSea.visible = plan.seaAlpha !== null;
-    if (plan.seaAlpha !== null) {
-      knownSea
-        .rect(0, 0, app.screen.width, app.screen.height)
-        .fill({ color: SEA_COLOR, alpha: plan.seaAlpha });
-      for (const cell of plan.mask) {
-        knownMask.rect(cell.x, cell.y, cell.width, cell.height).fill(0xffffff);
-      }
+
+    unknownPaper.visible = true;
+    dimSea.visible = true;
+    unknownPaper.rect(0, 0, app.screen.width, app.screen.height).fill(PAPER_COLOR);
+
+    if (chartAll) {
+      dimSea.rect(0, 0, app.screen.width, app.screen.height).fill(DIM_SEA_COLOR);
+      return;
+    }
+
+    for (const index of discovered) {
+      const column = index % chartColumns;
+      const row = Math.floor(index / chartColumns);
+      if (column < 0 || column >= chartColumns || row < 0 || row >= chartRows) continue;
+      const topLeft = toScreen(column * chartCellKm, row * chartCellKm);
+      dimSea
+        .rect(
+          topLeft.x,
+          topLeft.y,
+          chartCellKm * scale(),
+          chartCellKm * scale(),
+        )
+        .fill(DIM_SEA_COLOR);
     }
   }
 
@@ -498,7 +496,7 @@ async function start(): Promise<void> {
     );
   }
 
-  function drawFill(graphics: Graphics, block: ChartBlock): void {
+  function drawFill(graphics: Graphics, block: ChartBlock, color: number): void {
     for (const ring of block.fill) {
       if (ring.length < 6) continue;
       const points: number[] = [];
@@ -506,11 +504,17 @@ async function start(): Promise<void> {
         const point = builtScreen(ring[index]!, ring[index + 1]!);
         points.push(point.x, point.y);
       }
-      graphics.poly(points).fill(LAND_COLOR);
+      graphics.poly(points).fill(color);
     }
   }
 
-  function drawLines(graphics: Graphics, block: ChartBlock, width: number, color: number, alpha: number): void {
+  function drawLines(
+    graphics: Graphics,
+    block: ChartBlock,
+    width: number,
+    color: number,
+    alpha: number,
+  ): void {
     for (const line of block.coast) {
       if (line.length < 4) continue;
       const first = builtScreen(line[0]!, line[1]!);
@@ -529,73 +533,200 @@ async function start(): Promise<void> {
     }
   }
 
+  function paintBlock(
+    graphics: Graphics,
+    block: ChartBlock,
+    land: number,
+    water: number,
+    ink: number,
+  ): void {
+    drawFill(graphics, block, land);
+    drawLines(graphics, block, settings.view.waterLinePx, water, 1);
+    drawLines(graphics, block, settings.view.coastLinePx, ink, 1);
+  }
+
+  function destroyBlockPaints(): void {
+    for (const paint of blockPaints.values()) {
+      dimBlockLayer.removeChild(paint.dim);
+      liveBlockLayer.removeChild(paint.live);
+      paint.dim.destroy();
+      paint.live.destroy();
+    }
+    blockPaints.clear();
+    liveBlockGraphics = 0;
+  }
+
+  function screenBlockList(): ChartBlock[] {
+    const s = scale();
+    const margin = settings.view.blockMarginScreens;
+    const halfWidth = app.screen.width / (2 * s);
+    const halfHeight = app.screen.height / (2 * s);
+    const keep = 1 + margin * 2;
+    const left = view.x - halfWidth * keep;
+    const right = view.x + halfWidth * keep;
+    const top = view.y - halfHeight * keep;
+    const bottom = view.y + halfHeight * keep;
+
+    const visible = orderedChartBlocks(blocks).filter((block) =>
+      blockInView(block, left, top, right, bottom),
+    );
+    if (visible.length <= settings.view.maxLiveBlockGraphics) return visible;
+
+    // Keep the nearest blocks when a huge dev chart is loaded. Sorting by id
+    // afterwards keeps the paint order deterministic.
+    return [...visible]
+      .sort((a, b) => {
+        const da = Math.hypot(a.x + a.km / 2 - view.x, a.y + a.km / 2 - view.y);
+        const db = Math.hypot(b.x + b.km / 2 - view.x, b.y + b.km / 2 - view.y);
+        return da - db || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0);
+      })
+      .slice(0, settings.view.maxLiveBlockGraphics)
+      .sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+  }
+
+  function rebuildShipBlocks(): void {
+    destroyBlockPaints();
+    const visible = screenBlockList();
+    for (const block of visible) {
+      const dim = new Graphics();
+      paintBlock(dim, block, DIM_LAND_COLOR, DIM_WATERLINE_COLOR, DIM_INK_COLOR);
+      dimBlockLayer.addChild(dim);
+
+      const live = new Graphics();
+      paintBlock(live, block, LAND_COLOR, WATERLINE_COLOR, INK_COLOR);
+      liveBlockLayer.addChild(live);
+
+      blockPaints.set(block.id, { blockId: block.id, dim, live });
+    }
+    liveBlockGraphics = visible.length;
+  }
+
+  function chartTextureDimensions(): { width: number; height: number; scale: number } {
+    const max = settings.view.chartCacheMaxPx;
+    const scale = Math.min(max / MAP_WIDTH_KM, max / MAP_HEIGHT_KM);
+    return {
+      width: Math.max(1, Math.round(MAP_WIDTH_KM * scale)),
+      height: Math.max(1, Math.round(MAP_HEIGHT_KM * scale)),
+      scale,
+    };
+  }
+
+  function ensureChartTexture(): void {
+    const dimensions = chartTextureDimensions();
+    chartTextureScale = dimensions.scale;
+    if (
+      chartTexture &&
+      chartTexture.width === dimensions.width &&
+      chartTexture.height === dimensions.height
+    ) {
+      return;
+    }
+
+    chartTexture?.destroy(true);
+    chartTexture = RenderTexture.create({
+      width: dimensions.width,
+      height: dimensions.height,
+      resolution: 1,
+      antialias: false,
+    });
+    chartSprite.texture = chartTexture;
+    chartSprite.width = MAP_WIDTH_KM;
+    chartSprite.height = MAP_HEIGHT_KM;
+    chartBuiltRevision = -1;
+  }
+
+  /** Draw all received blocks into a small fixed texture, at most once a second. */
+  function rebuildChartCache(now: number): boolean {
+    if (chartBuiltRevision === chartRevision) return true;
+    if (now - lastChartBuild < settings.view.chartCacheRebuildMs) return false;
+
+    ensureChartTexture();
+    const scale = chartTextureScale;
+    chartGraphics.clear();
+
+    for (const block of orderedChartBlocks(blocks)) {
+      const left = block.x * scale;
+      const top = block.y * scale;
+      const size = block.km * scale;
+      chartGraphics.rect(left, top, size, size).fill(SEA_COLOR);
+
+      for (const ring of block.fill) {
+        if (ring.length < 6) continue;
+        const points: number[] = [];
+        for (let index = 0; index < ring.length; index += 2) {
+          points.push(ring[index]! * scale, ring[index + 1]! * scale);
+        }
+        chartGraphics.poly(points).fill(LAND_COLOR);
+      }
+
+      for (const line of block.coast) {
+        if (line.length < 4) continue;
+        chartGraphics.moveTo(line[0]! * scale, line[1]! * scale);
+        for (let index = 2; index < line.length; index += 2) {
+          chartGraphics.lineTo(line[index]! * scale, line[index + 1]! * scale);
+        }
+        chartGraphics.stroke({
+          width: settings.view.coastLinePx,
+          color: INK_COLOR,
+          alpha: 1,
+          cap: "round",
+          join: "round",
+        });
+      }
+    }
+
+    app.renderer.render({
+      container: chartBuildLayer,
+      target: chartTexture!,
+      clear: true,
+      clearColor: PAPER_COLOR,
+    });
+    chartBuiltRevision = chartRevision;
+    lastChartBuild = now;
+    return true;
+  }
+
   function drawMap(now: number): void {
     const s = scale();
     builtView = { x: view.x, y: view.y };
     builtScale = s;
-    builtRevision = chartRevision;
-
-    mapFill.clear();
-    mapWater.clear();
-    mapCoast.clear();
-    liveSea.clear();
-    liveFill.clear();
-    liveWater.clear();
-    liveCoast.clear();
-    liveMask.clear();
 
     if (app.screen.width <= 0) return;
 
-    const left = view.x - app.screen.width / (2 * s);
-    const right = view.x + app.screen.width / (2 * s);
-    const top = view.y - app.screen.height / (2 * s);
-    const bottom = view.y + app.screen.height / (2 * s);
-
-    // A generous margin lets a pan move the built chart before it is rebuilt.
-    const marginX = (right - left) * 1.5;
-    const marginY = (bottom - top) * 1.5;
-    const withMargin = {
-      left: left - marginX,
-      right: right + marginX,
-      top: top - marginY,
-      bottom: bottom + marginY,
-    };
-
-    for (const block of orderedChartBlocks(blocks)) {
-      if (!blockInView(block, withMargin.left, withMargin.top, withMargin.right, withMargin.bottom)) {
-        continue;
-      }
-
-      drawFill(mapFill, block);
-      drawLines(mapWater, block, settings.view.waterLinePx, WATERLINE_COLOR, 0.55);
-      drawLines(mapCoast, block, settings.view.coastLinePx, INK_COLOR, 1);
-
-      if (mode === "ship") {
-        drawFill(liveFill, block);
-        drawLines(liveWater, block, settings.view.waterLinePx, WATERLINE_COLOR, 0.55);
-        drawLines(liveCoast, block, settings.view.coastLinePx, INK_COLOR, 1);
-      }
-    }
-
-    mapLayer.alpha = mode === "chart" ? 1 : settings.view.fogDimAlpha;
-    lastMapBuild = now;
-
-    // The chart is a static painted sheet. Cache it after each rebuild, and
-    // leave the live ship view uncached so sight circles can move every frame.
     if (mode === "chart") {
-      if (mapLayer.isCachedAsTexture) mapLayer.updateCacheTexture();
-      else mapLayer.cacheAsTexture(true);
-    } else if (mapLayer.isCachedAsTexture) {
-      mapLayer.cacheAsTexture(false);
+      destroyBlockPaints();
+      dimSea.clear();
+      unknownPaper.clear();
+      dimSea.visible = false;
+      unknownPaper.visible = false;
+      dimBlockLayer.visible = false;
+      chartBlockLayer.visible = true;
+      if (rebuildChartCache(now)) {
+        builtRevision = chartRevision;
+        lastMapBuild = now;
+      }
+      return;
     }
+
+    chartBlockLayer.visible = false;
+    dimBlockLayer.visible = true;
+    unknownPaper.visible = true;
+    dimSea.visible = true;
+    rebuildShipBlocks();
+    builtRevision = chartRevision;
+    lastMapBuild = now;
   }
 
   function updateLayerOffset(): void {
     const x = (builtView.x - view.x) * builtScale;
     const y = (builtView.y - view.y) * builtScale;
-    mapLayer.position.set(x, y);
+    dimBlockLayer.position.set(x, y);
     liveMapLayer.position.set(x, y);
-    liveMaskLayer.position.set(x, y);
+    liveMask.position.set(x, y);
+
+    const origin = toScreen(0, 0);
+    chartBlockLayer.position.set(origin.x, origin.y);
+    chartBlockLayer.scale.set(scale(), scale());
   }
 
   function refreshMap(now: number, force = false): void {
@@ -603,10 +734,11 @@ async function start(): Promise<void> {
 
     const currentScale = scale();
     const zoomChanged = Math.abs(currentScale - builtScale) > 1e-9;
+    const panLimit = mode === "chart" ? 1.5 : settings.view.blockMarginScreens * 0.8;
     const farPan =
       builtScale > 0 &&
-      (Math.abs(view.x - builtView.x) * builtScale > app.screen.width * 1.5 ||
-        Math.abs(view.y - builtView.y) * builtScale > app.screen.height * 1.5);
+      (Math.abs(view.x - builtView.x) * builtScale > app.screen.width * panLimit ||
+        Math.abs(view.y - builtView.y) * builtScale > app.screen.height * panLimit);
     const dataChanged = builtRevision !== chartRevision;
 
     if (!force && !zoomChanged && !farPan && !dataChanged) {
@@ -614,15 +746,13 @@ async function start(): Promise<void> {
       return;
     }
 
-    // A chart with every block arriving in batches should not repaint the
-    // whole sheet for each batch. This throttle is only for the chart view.
     if (
       !force &&
       dataChanged &&
       !zoomChanged &&
       !farPan &&
       mode === "chart" &&
-      now - lastMapBuild < CHART_REBUILD_MS
+      now - lastMapBuild < settings.view.chartCacheRebuildMs
     ) {
       updateLayerOffset();
       return;
@@ -635,7 +765,6 @@ async function start(): Promise<void> {
 
     drawMap(now);
     updateLayerOffset();
-
   }
 
   // ---- Live sight circles -------------------------------------------------
@@ -658,6 +787,7 @@ async function start(): Promise<void> {
     }
 
     liveMapLayer.visible = true;
+    liveBlockLayer.visible = true;
     const radiusPx = settings.fog.sightRangeKm * builtScale;
     const featherPx = settings.fog.sightFeatherKm * builtScale;
     const centre = builtScreen(own.x, own.y);
@@ -666,15 +796,19 @@ async function start(): Promise<void> {
     liveSea.circle(centre.x, centre.y, radiusPx).fill(SEA_COLOR);
     liveMask.circle(centre.x, centre.y, radiusPx).fill(0xffffff);
 
-    // A faint sea-coloured rim softens the line between sight and paper.
+    // A ring per step, each wider and fainter, softens the sight edge without
+    // a texture or a filter.
     liveHalo.clear();
-    if (featherPx > 1) {
+    const rings = settings.view.sightFeatherRings;
+    for (let ring = 1; ring <= rings; ring += 1) {
+      const share = ring / rings;
       liveHalo
-        .circle(screenCentre.x, screenCentre.y, radiusPx + featherPx * 0.35)
-        .stroke({ width: featherPx * 0.7, color: SEA_COLOR, alpha: 0.38 });
-      liveHalo
-        .circle(screenCentre.x, screenCentre.y, radiusPx + featherPx * 0.8)
-        .stroke({ width: featherPx * 0.55, color: SEA_COLOR, alpha: 0.18 });
+        .circle(screenCentre.x, screenCentre.y, radiusPx + featherPx * share)
+        .stroke({
+          width: Math.max(1, featherPx / rings),
+          color: SEA_COLOR,
+          alpha: settings.view.sightFeatherAlpha * (1 - share * 0.7),
+        });
     }
   }
 

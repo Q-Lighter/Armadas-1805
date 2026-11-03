@@ -945,3 +945,59 @@ the box at the map's top-left.
 - The filtering of coast lines to the lookup boundary can remove a very small
   islet that the 1 km lookup does not contain.
 - Saving is still absent.
+
+## Session 1F-a: sea drawing
+
+**Date:** 2026-11-03
+**Branch:** main
+
+### What was asked
+
+Restore the missing blue-green sea in the ship view, make the dim and live
+layers safe, add a browser-free render-plan test, cap live block graphics, and
+cache the chart at no more than 2048 x 2048.
+
+### Root cause
+
+The two sea layers were clipped by Pixi geometry masks whose mask Graphics had
+`renderable = false`. Pixi's stencil-mask pipe builds the mask by collecting the
+mask container's renderables, so an unrenderable Graphics produces an empty
+stencil. The result was a missing sea (and missing live land/ink) while the
+dim land, ink, ships and weather still drew. The first render-plan test failed
+on the old code because there was no render plan; the mask flag was then found
+by reading the Pixi mask path against the client stage.
+
+### What was built
+
+- Removed the alpha/stencil mask from the remembered layer. Remembered sea and
+  land are now opaque colours pre-mixed with paper; discovered 5 km cells are
+  painted as opaque rectangles.
+- Removed the old screen-sized wash and screen-sized cached layer. The chart is
+  now a `RenderTexture` with its long side capped at 2,048 px, rebuilt only when
+  new blocks arrive and no more than once a second.
+- The live layer is full-colour sea and land, clipped by one renderable
+  Graphics containing the sight circles. Its soft edge uses concentric ring
+  strokes; no texture or filter is involved.
+- Chart blocks are kept as per-block graphics. Only blocks intersecting the
+  screen plus a margin are built, far-off graphics are destroyed, and the
+  nearest 300 blocks are kept when a huge dev chart is loaded.
+- Added `shared/renderPlan.ts` and `tests/render-plan.test.ts`. It builds the
+  ship-view layer list for a test-room start and a dev room with real blocks,
+  including visibility, alpha, bounds and sight-mask extents.
+
+### Checks
+
+- `npm test`: **65/65 passing**, including both render-plan scenarios.
+- `npm run build`: passing.
+- The test-room plan has a non-empty dim sea (80 cells), dim land/water/coast,
+  live sea, live land/coast, ships and weather, in that order. The dev plan has
+  a full-screen opaque dim sea under the live layers.
+
+### Broken or unfinished
+
+- No browser is available, so the reconstructed colours, mask rendering, chart
+  texture orientation and per-block seams were not seen on screen.
+- The dev start is open sea, so its in-view plan has no land/coast; the test
+  asserts those layers at the test-room start instead.
+- The chart cache is rebuilt from all received blocks; a very large dev chart
+  may still take a noticeable moment on its once-per-second rebuild.

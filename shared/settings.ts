@@ -31,6 +31,12 @@ export const settings = {
   client: {
     /** How often an open page checks for a newer build. Draft: 60 seconds. */
     versionCheckMs: 60_000,
+    /** Largest device pixel ratio the canvas may use. */
+    maxDevicePixelRatio: 2,
+    /** Context losses inside this window count toward the reload notice. */
+    graphicsFailureWindowMs: 60_000,
+    /** This many losses shows the tap-to-reload notice. */
+    graphicsFailureLimit: 3,
   },
 
   /** The chart: the flat map frame and how it is turned into tiles. */
@@ -243,6 +249,18 @@ export const settings = {
     chartMinKmAcross: 25,
     /** How dark remembered land and sea are outside a live sight circle. */
     fogDimAlpha: 0.52,
+    /** Extra screen widths of nearby chart blocks kept ready while panning. */
+    blockMarginScreens: 0.5,
+    /** Hard ceiling on live block graphics; nearest blocks win. */
+    maxLiveBlockGraphics: 300,
+    /** Maximum side of the cached chart texture, in pixels. */
+    chartCacheMaxPx: 2_048,
+    /** The chart cache redraws no more often than this. */
+    chartCacheRebuildMs: 1_000,
+    /** Concentric soft rings outside each live sight circle. */
+    sightFeatherRings: 3,
+    /** Opacity of the innermost soft sight ring. */
+    sightFeatherAlpha: 0.38,
     /** Night wash over the ship view; the paper HUD and chart stay clear. */
     nightTintStrength: 0.32,
     /** Live wind streaks in the ship and chart views. */

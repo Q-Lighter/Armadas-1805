@@ -73,6 +73,10 @@
     "./fog-paint": {
       "types": "./dist/fogPaint.d.ts",
       "default": "./dist/fogPaint.js"
+    },
+    "./render-plan": {
+      "types": "./dist/renderPlan.d.ts",
+      "default": "./dist/renderPlan.js"
     }
   },
   "files": [

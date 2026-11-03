@@ -22,11 +22,9 @@ import {
 } from "@naval/shared/player-identity";
 import { TAKEN_OVER_CLOSE_CODE } from "@naval/shared/player-sessions";
 import type { LastSeenSnapshot, StateMessage } from "@naval/shared/world";
-import {
-  cellNeedsPaper,
-  fogDebugLine,
-  type FogDebugInfo,
-} from "@naval/shared/fog-view";
+import { orderedChartBlocks } from "@naval/shared/chart-draw";
+import { fogPaintPlan } from "@naval/shared/fog-paint";
+import { fogDebugLine, type FogDebugInfo } from "@naval/shared/fog-view";
 import { formatGameClock, gameClockAt } from "@naval/shared/time";
 
 // ---------------------------------------------------------------------------
@@ -156,6 +154,7 @@ async function start(): Promise<void> {
   const compassNeedle = element<SVGGElement>("compass-needle");
   const followButton = element<HTMLButtonElement>("follow-btn");
   const chartButton = element<HTMLButtonElement>("chart-btn");
+  const bordersButton = element<HTMLButtonElement>("borders-btn");
   const clockPanel = element<HTMLElement>("game-clock-panel");
   const clockOut = element<HTMLElement>("game-clock");
   const roomOut = element<HTMLElement>("room-code");
@@ -207,7 +206,15 @@ async function start(): Promise<void> {
   const grain = new Graphics();
   grainLayer.addChild(grain);
 
+  // One screen-sized wash with one alpha, clipped by a mask of discovered
+  // cells. This replaces the old per-cell translucent rectangles that left a
+  // faint grid at every cell edge.
   const knownSea = new Graphics();
+  const knownMaskLayer = new Container();
+  const knownMask = new Graphics();
+  knownMask.renderable = false;
+  knownMaskLayer.addChild(knownMask);
+  knownSea.mask = knownMask;
   const unknownPaper = new Graphics();
   // The wash sits above the chart but below live circles, ships and paper HUD,
   // so at full night the things the player must see stay clear and bright.
@@ -243,6 +250,7 @@ async function start(): Promise<void> {
   const fleetLayer = new Container();
   const lastSeenLayer = new Container();
   const windLayer = new Graphics();
+  const borderLayer = new Graphics();
   const rulerLayer = new Container();
   const rulerLine = new Graphics();
   const rulerText = new Text({
@@ -253,9 +261,10 @@ async function start(): Promise<void> {
   rulerLayer.visible = false;
 
   app.stage.addChild(
-    knownSea,
-    mapLayer,
     unknownPaper,
+    knownSea,
+    knownMaskLayer,
+    mapLayer,
     nightTint,
     liveHalo,
     liveMapLayer,
@@ -263,6 +272,7 @@ async function start(): Promise<void> {
     lastSeenLayer,
     fleetLayer,
     windLayer,
+    borderLayer,
     grainLayer,
     marker,
     rulerLayer,
@@ -305,6 +315,7 @@ async function start(): Promise<void> {
   let target: { x: number; y: number } | null = null;
   let retry: number | null = null;
   let takenOver = false;
+  let bordersVisible = false;
   let noticeTimer = 0;
   let noticeHideTimer = 0;
   let windFrom: number = settings.weather.windFromDeg;
@@ -440,33 +451,38 @@ async function start(): Promise<void> {
   }
 
   /**
-   * Paint remembered sea and cover everything still unknown in paper. The live
-   * circles are excluded from the paper cover; they are painted brightly above.
+   * Paint one opaque paper sheet, then one semi-transparent sea wash clipped by
+   * an opaque mask of discovered cells. The live circles are painted above.
    */
   function refreshFogPaper(): void {
     knownSea.clear();
+    knownMask.clear();
     unknownPaper.clear();
 
-    if (mode === "chart" || app.screen.width <= 0) return;
-
-    const range = visibleCellRange();
-
-    for (let row = range.firstRow; row <= range.lastRow; row += 1) {
-      for (let column = range.firstColumn; column <= range.lastColumn; column += 1) {
-        const index = row * chartColumns + column;
+    const plan = fogPaintPlan(
+      app.screen.width,
+      app.screen.height,
+      mode === "chart",
+      chartAll,
+      discovered,
+      visibleCellRange(),
+      (column, row) => {
         const [x, y, width, height] = screenCellRect(column, row);
+        return { x, y, width, height };
+      },
+    );
 
-        if (chartAll || discovered.has(index)) {
-          knownSea
-            .rect(x, y, width + 0.5, height + 0.5)
-            .fill({ color: SEA_COLOR, alpha: settings.view.fogDimAlpha + 0.22 });
-        } else if (cellNeedsPaper(index, chartAll, discovered)) {
-          // Paint every unknown cell. The bright live layer is drawn above
-          // this paper, so a circle never needs a cell-shaped hole.
-          unknownPaper
-            .rect(x, y, width + 0.5, height + 0.5)
-            .fill({ color: PAPER_COLOR, alpha: 1 });
-        }
+    if (plan.paper) {
+      unknownPaper.rect(plan.paper.x, plan.paper.y, plan.paper.width, plan.paper.height)
+        .fill(PAPER_COLOR);
+    }
+    knownSea.visible = plan.seaAlpha !== null;
+    if (plan.seaAlpha !== null) {
+      knownSea
+        .rect(0, 0, app.screen.width, app.screen.height)
+        .fill({ color: SEA_COLOR, alpha: plan.seaAlpha });
+      for (const cell of plan.mask) {
+        knownMask.rect(cell.x, cell.y, cell.width, cell.height).fill(0xffffff);
       }
     }
   }
@@ -545,7 +561,7 @@ async function start(): Promise<void> {
       bottom: bottom + marginY,
     };
 
-    for (const block of blocks.values()) {
+    for (const block of orderedChartBlocks(blocks)) {
       if (!blockInView(block, withMargin.left, withMargin.top, withMargin.right, withMargin.bottom)) {
         continue;
       }
@@ -912,6 +928,12 @@ async function start(): Promise<void> {
     ownId = state.you;
     windFrom = Number.isFinite(state.w) ? state.w : settings.weather.windFromDeg;
     roomKind = validRoomKind(state.k) ? state.k : "normal";
+    bordersButton.hidden = roomKind === "normal";
+    if (roomKind === "normal") {
+      bordersVisible = false;
+      bordersButton.setAttribute("aria-pressed", "false");
+      borderLayer.clear();
+    }
     windArrow.setAttribute("transform", `rotate(${(windFrom + 180) % 360} 12 12)`);
     windLabel.textContent = `Wind from ${compassPoint(windFrom)} (${Math.round(windFrom)}°)`;
 
@@ -1223,6 +1245,64 @@ async function start(): Promise<void> {
     setMode(mode === "chart" ? "ship" : "chart");
   });
 
+  // TEMP-DEBUG: block and cell outlines for screenshots in test/dev rooms.
+  bordersButton.addEventListener("click", () => {
+    bordersVisible = !bordersVisible;
+    bordersButton.setAttribute("aria-pressed", String(bordersVisible));
+    drawBorders();
+  });
+
+  function drawBorders(): void {
+    borderLayer.clear();
+    if (
+      !bordersVisible ||
+      (roomKind !== "test" && roomKind !== "dev") ||
+      app.screen.width <= 0
+    ) {
+      return;
+    }
+
+    const s = scale();
+    const halfW = app.screen.width / (2 * s);
+    const halfH = app.screen.height / (2 * s);
+    const left = Math.max(0, view.x - halfW);
+    const right = Math.min(MAP_WIDTH_KM, view.x + halfW);
+    const top = Math.max(0, view.y - halfH);
+    const bottom = Math.min(MAP_HEIGHT_KM, view.y + halfH);
+
+    for (const block of blocks.values()) {
+      if (block.x + block.km < left || block.x > right || block.y + block.km < top || block.y > bottom) {
+        continue;
+      }
+      const topLeft = toScreen(block.x, block.y);
+      borderLayer
+        .rect(topLeft.x, topLeft.y, block.km * s, block.km * s)
+        .stroke({ width: 1, color: 0x8c1d1d, alpha: settings.view.borderLineAlpha });
+    }
+
+    const cellPx = chartCellKm * s;
+    if (cellPx < settings.view.borderGridMinPx) return;
+
+    const firstColumn = Math.max(0, Math.floor(left / chartCellKm));
+    const lastColumn = Math.min(chartColumns, Math.ceil(right / chartCellKm));
+    const firstRow = Math.max(0, Math.floor(top / chartCellKm));
+    const lastRow = Math.min(chartRows, Math.ceil(bottom / chartCellKm));
+    for (let column = firstColumn; column <= lastColumn; column += 1) {
+      const x = toScreen(column * chartCellKm, 0).x;
+      borderLayer
+        .moveTo(x, toScreen(0, top).y)
+        .lineTo(x, toScreen(0, bottom).y)
+        .stroke({ width: 0.75, color: 0x2a1c10, alpha: settings.view.borderLineAlpha });
+    }
+    for (let row = firstRow; row <= lastRow; row += 1) {
+      const y = toScreen(0, row * chartCellKm).y;
+      borderLayer
+        .moveTo(toScreen(left, 0).x, y)
+        .lineTo(toScreen(right, 0).x, y)
+        .stroke({ width: 0.75, color: 0x2a1c10, alpha: settings.view.borderLineAlpha });
+    }
+  }
+
   versionNotice.addEventListener("click", () => location.reload());
 
   // ---- Frame loop ---------------------------------------------------------
@@ -1312,6 +1392,7 @@ async function start(): Promise<void> {
     }
 
     updateRuler();
+    drawBorders();
   });
 
   for (const button of document.querySelectorAll<HTMLButtonElement>("[data-size]")) {

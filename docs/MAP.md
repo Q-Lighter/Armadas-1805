@@ -80,9 +80,17 @@ tiles overlap slightly, which hides seams in the fill and keeps the coast
 continuous. Coordinates are rounded to 10 metres so the closest zoom still
 looks smooth.
 
-`client/public/tiles/index.json` lists which tiles exist and their point
-counts, so the client can choose a level that fits its per-frame point budget
-without downloading the whole pyramid first.
+The source tiles stay under `map-data/tiles/`. The server's private chart
+blocks are generated into `shared/data/chartBlocks.ts` and bundled only into
+the Worker; the browser receives a block only after discovering its ground.
+
+Each 25 km chart block is clipped to its exact square, so the land fill does
+not carry a rectangle edge into a neighbour. Degenerate rings are removed and
+coast ink is kept only where the 1 km land lookup actually has a land/sea
+boundary. The client draws blocks sorted by id and paints the dim discovered
+sea once with one alpha mask, not as one translucent rectangle per 5 km cell.
+The tests in `tests/chart-geometry.test.ts` rebuild land from the blocks and
+compare it with the lookup over 12,000 samples.
 
 ## Server land lookup
 
@@ -126,8 +134,9 @@ Panning shifts the already-built layer; a zoom rebuilds it at most about every
 of 30,000 chart points; if a view would exceed it, the client drops the
 furthest tiles rather than drawing an unbounded frame.
 
-The build copies all tiles into `dist/tiles/`, so Wrangler and Cloudflare serve
-`/tiles/...` beside the page.
+The old drawing tile pipeline remains the source for the private chart blocks;
+the browser does not fetch the level pyramid. A test/dev-only `Show borders`
+toggle draws 25 km block outlines and 5 km cell lines for screenshots.
 
 ### Measured worst view
 

@@ -264,6 +264,9 @@ export const settings = {
     /** Ink coast line and the lighter water line outside it, in screen px. */
     coastLinePx: 1.5,
     waterLinePx: 7,
+    /** TEMP-DEBUG: 5 km grid is hidden when a cell is smaller than this. */
+    borderGridMinPx: 12,
+    borderLineAlpha: 0.5,
   },
 } as const;
 

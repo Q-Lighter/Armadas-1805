@@ -421,7 +421,8 @@ h2 {
   pointer-events: none;
 }
 
-.fog-debug[hidden] {
+.fog-debug[hidden],
+#borders-btn[hidden] {
   display: none;
 }
 

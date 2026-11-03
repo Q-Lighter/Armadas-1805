@@ -66,7 +66,8 @@ and dusk tint the ship view, while the paper panels and chart stay clear.
 Test and dev rooms also show a small TEMP-DEBUG fog readout. A dev room can
 run a temporary load test, for example `/?room=dev-load&bots=100`; a later join
 with a different `bots=` value changes the count, and values are clamped to
-0–300. See [docs/STRESS.md](docs/STRESS.md).
+0–300. The same rooms show a `Show borders` toggle for 25 km block and 5 km
+cell outlines. See [docs/STRESS.md](docs/STRESS.md).
 
 A player id is made on first visit and kept in the browser, so refreshing keeps
 the same ship and chart. A second tab takes over the same ship; the older tab

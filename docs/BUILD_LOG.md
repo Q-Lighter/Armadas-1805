@@ -882,3 +882,66 @@ counts separately.
 - The bot-increase path runs inside the join request. Adding 300 ships at once
   was not timed separately from the earlier local benchmark.
 - No browser load test was run here, by instruction.
+
+## Session 1E-c: drawing fixes
+
+**Date:** 2026-11-03
+**Branch:** main
+
+### What was asked
+
+Fix the chart's rectangular land edges and block-edge ink, and the faint 5 km
+grid in the dimmed ship view. Add browser-free tests using the real map data,
+explain the causes, and add a test/dev-only border toggle for screenshots.
+
+### Root causes found
+
+- The private chart blocks were clipped to a rectangle **0.75 km larger than
+the block**, for both land fill and coast. The clipped fill therefore had
+straight block-rectangle sides, and the coast could keep segments running along
+those sides. In the old data, 90 coast segments lay exactly on block borders and
+224 fill rings were degenerate slivers. This produced rectangular pale shapes
+and ink along block seams. Some coast also followed the chart frame, which made
+the box at the map's top-left.
+- Coast lines came from source-tile geometry and had no real boundary check.
+  About 5.4% of old segments were more than 1 km from the 1 km land lookup; those
+  are the straight-looking runs through land and redundant source-tile edges.
+- The dim ship view painted every discovered 5 km cell as a separate translucent
+  rectangle and extended each rectangle by 0.5 px. Adjacent translucent cells
+  double-blended along their edges, producing the faint grid.
+- Chart blocks were drawn in Map insertion (network arrival) order, so neighbours
+  arriving in a different order could change overdraw at shared edges. There was
+  no two-detail-level drawing path: the client only uses these blocks. The
+  duplicate appearance came from overlapping block geometry and separate dim /
+  live land layers.
+
+### What was changed
+
+- `scripts/build-chart-blocks.mjs` now clips fill and coast to the exact 25 km
+  block, removes duplicate consecutive points and degenerate rings, rejects ink
+  on block or chart edges, and keeps only segments within 1.2 km of the server
+  land/sea lookup. The private table moved to `shared/data/chartBlocks.ts` so
+  tests use exactly the committed data; `server/src/chartBlocks.ts` re-exports it.
+- `shared/chartDraw.ts` sorts blocks by id. `client/main.ts` uses that order and
+  clears/rebuilds the layers, so a block replaces its previous graphics and
+  neighbour arrival order cannot change the result.
+- `shared/fogPaint.ts` returns one screen-sized paper sheet and one sea alpha
+  value with an opaque cell mask. The client draws that once per frame instead
+  of one translucent rectangle per cell.
+- TEMP-DEBUG `Show borders` button (test and dev rooms only): 25 km block
+  outlines and 5 km cell lines. The button is hidden in normal rooms.
+- Tests: **63 pass**. Geometry reports 35/12,000 land reconstruction mismatches
+  (0.292%), 56,297 coast segments with **0 on block edges** and **0 away from a
+  lookup boundary**, 15,335 fill rings with **0 degenerate** and **0 block-area
+  mismatches**, deterministic block ordering/replacement, and a single-alpha
+  mask with no overlapping mask cells.
+
+### Broken or unfinished
+
+- No browser is available, so the new paper/fill/mask layers, coast look, border
+  toggle and phone layout were not seen on screen. There are no screenshots.
+- The area test uses a 1 km lookup and allows 30 km² / 30% for small edge
+  slivers; it is not a survey-grade comparison.
+- The filtering of coast lines to the lookup boundary can remove a very small
+  islet that the 1 km lookup does not contain.
+- Saving is still absent.

@@ -61,6 +61,18 @@
     "./player-sessions": {
       "types": "./dist/playerSessions.d.ts",
       "default": "./dist/playerSessions.js"
+    },
+    "./chart-blocks": {
+      "types": "./dist/data/chartBlocks.d.ts",
+      "default": "./dist/data/chartBlocks.js"
+    },
+    "./chart-draw": {
+      "types": "./dist/chartDraw.d.ts",
+      "default": "./dist/chartDraw.js"
+    },
+    "./fog-paint": {
+      "types": "./dist/fogPaint.d.ts",
+      "default": "./dist/fogPaint.js"
     }
   },
   "files": [

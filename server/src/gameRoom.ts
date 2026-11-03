@@ -11,8 +11,11 @@ import {
   addPlayer,
   applyOrder,
   applyPortOrder,
+  buyShip,
   createWorld,
+  hireCrew,
   removePlayer,
+  selectShip,
   stepWorld,
   takeNotice,
   undock,
@@ -25,6 +28,8 @@ import { GhostCleanup, PlayerSessions } from "@naval/shared/player-sessions";
 import { BlockSendBudget } from "@naval/shared/block-batch";
 import { findPortByName, type PlacedPort } from "@naval/shared/ports";
 import { parseNavy, type NavyId } from "@naval/shared/navies";
+import { parseShipClass } from "@naval/shared/ship-rules";
+import type { ShipClassId } from "@naval/shared/ships";
 import { roomKindForCode } from "@naval/shared/fog";
 import { CHART_BLOCKS } from "./chartBlocks.js";
 
@@ -70,6 +75,8 @@ export class GameRoom {
 
     let navy: NavyId = "British";
     let startPort: PlacedPort | null = null;
+    let shipClass: ShipClassId | null = null;
+    let startMoney: number | undefined;
     if (kind !== "normal") {
       const rawNavy = url.searchParams.get("navy");
       if (rawNavy !== null) {
@@ -89,11 +96,31 @@ export class GameRoom {
           return new Response("Start must name a placed port.", { status: 400 });
         }
       }
+
+      const rawShip = url.searchParams.get("ship");
+      if (rawShip !== null) {
+        shipClass = parseShipClass(rawShip);
+        if (!shipClass) {
+          return new Response("Ship must be flagship, line, frigate, escort, raider or trade.", {
+            status: 400,
+          });
+        }
+      }
+
+      const rawCash = url.searchParams.get("cash");
+      if (rawCash !== null) {
+        if (!/^\d{1,9}$/.test(rawCash)) {
+          return new Response("Cash must be a whole number from 0 to 999999999.", {
+            status: 400,
+          });
+        }
+        startMoney = Number(rawCash);
+      }
     }
 
     if (room !== this.world.roomCode) {
       this.ghosts.clear();
-      this.world = createWorld(room, { navy, startPort });
+      this.world = createWorld(room, { navy, startPort, shipClass: shipClass ?? undefined, startMoney });
     }
 
     const playerId = url.searchParams.get("player") ?? "";
@@ -118,9 +145,14 @@ export class GameRoom {
     const server = pair[1];
     server.accept();
 
-    // A new player gets a flagship; a returning id keeps its ship and chart.
+    // A new player gets the room's first ship; a returning id keeps its fleet.
     this.ghosts.reconnected(playerId);
-    addPlayer(this.world, playerId);
+    addPlayer(
+      this.world,
+      playerId,
+      shipClass ?? this.world.startShipClass,
+      startMoney ?? this.world.startMoney,
+    );
 
     // TEMP-DEBUG: every join with bots=N sets the target count. This is what
     // lets a second tab change 25 bots to 50, or 100 bots down to 10.
@@ -223,7 +255,7 @@ export class GameRoom {
 
   /** Orders are untrusted: parse defensively and let the shared rules check. */
   private onMessage(playerId: string, data: unknown): void {
-    if (typeof data !== "string" || data.length > 200) return;
+    if (typeof data !== "string" || data.length > 400) return;
 
     let message: unknown;
     try {
@@ -239,14 +271,24 @@ export class GameRoom {
       x?: unknown;
       y?: unknown;
       port?: unknown;
+      ship?: unknown;
+      type?: unknown;
+      name?: unknown;
+      count?: unknown;
     };
 
     if (order.t === "o") {
-      applyOrder(this.world, playerId, order.x, order.y);
+      applyOrder(this.world, playerId, order.x, order.y, order.ship);
     } else if (order.t === "sailToPort") {
-      applyPortOrder(this.world, playerId, order.port);
+      applyPortOrder(this.world, playerId, order.port, order.ship);
     } else if (order.t === "undock") {
-      undock(this.world, playerId);
+      undock(this.world, playerId, order.ship);
+    } else if (order.t === "select") {
+      selectShip(this.world, playerId, order.ship);
+    } else if (order.t === "buy") {
+      buyShip(this.world, playerId, order.port, order.type, order.name);
+    } else if (order.t === "hire") {
+      hireCrew(this.world, playerId, order.ship, order.port, order.count);
     }
   }
 }

@@ -43,6 +43,17 @@ import {
   type PlacedPort,
   type PortSize,
 } from "./data/ports.js";
+import { SHIP_NAMES, shipTypeFor, type ShipClassId as DataShipClassId } from "./data/ships.js";
+import {
+  canAddShip,
+  canShipSail,
+  cleanShipName,
+  crewHireCost,
+  deliveryGameMs,
+  portSellsShip,
+  refillCrewPool,
+  shipPrice,
+} from "./shipRules.js";
 
 const DEG = Math.PI / 180;
 const RAD = 180 / Math.PI;
@@ -51,6 +62,18 @@ const RAD = 180 / Math.PI;
 export const COAST_NOTICE = "Your ship stopped at the coast.";
 export const EDGE_NOTICE = "Edge of the charted world.";
 export const PORT_FULL_NOTICE = "Port is full: waiting at anchor.";
+
+/** One player's money and current selection. */
+export interface OwnerState {
+  money: number;
+  selectedShipId: string | null;
+}
+
+/** The shared crew pool at a port. Lazy-created full. */
+export interface PortCrewPool {
+  crew: number;
+  capacity: number;
+}
 
 export interface World {
   /** Number of world steps taken. */
@@ -68,8 +91,22 @@ export interface World {
   startPort: PlacedPort | null;
   /** All placed ports. They have no owner yet. */
   ports: ReadonlyMap<string, PlacedPort>;
-  /** Human ships, by player id. */
+  /** The first ship of each human player, kept as the old single-ship alias. */
   players: Map<string, Ship>;
+  /** Every ship belonging to each human player. */
+  fleets: Map<string, Ship[]>;
+  /** Money and selected ship, by human player id. */
+  owners: Map<string, OwnerState>;
+  /** Shared crew available at each port that has been used. */
+  crewPools: Map<string, PortCrewPool>;
+  /** Reserved for future port ownership; empty means every port is unowned. */
+  portOwners: Map<string, string>;
+  /** Next internal id for a bought ship. */
+  nextShipId: number;
+  /** Starting money for a player joining this room. */
+  startMoney: number;
+  /** Class the room's first ship uses unless the join chooses another. */
+  startShipClass: ShipClassId;
   /** TEMP-DEBUG: fake load-test owners and their fleets. */
   botFleets: Map<string, Ship[]>;
   /** Each player's discovered ground and last-seen records. */
@@ -117,6 +154,23 @@ export interface NoticeMessage {
 /** Last-seen marker: class, navy, position, age in game seconds. */
 export type LastSeenSnapshot = [string, string, number, number, number];
 
+export type ShipStatus = "sailing" | "docked" | "waiting" | "delivery";
+
+/** Full private detail for one of the receiving player's own ships. */
+export interface OwnShipSnapshot {
+  id: string;
+  name: string;
+  classId: ShipClassId;
+  navy: NavyId;
+  crew: number;
+  fullCrew: number;
+  status: ShipStatus;
+  portId: string | null;
+  deliveryLeftMs: number;
+  x: number;
+  y: number;
+}
+
 /**
  * The only shape of world information that is ever sent to a client.
  * Ships outside the player's live sight circles are omitted; chart data and
@@ -141,6 +195,12 @@ export interface StateMessage {
   chart: ChartUpdate;
   /** Only ports this player has found. */
   ports: PortSnapshot[];
+  /** This player's money in pieces of eight. Never another player's. */
+  m: number;
+  /** This player's selected ship id, if one is selectable. */
+  sel: string | null;
+  /** Full private detail for this player's own fleet only. */
+  fleet: OwnShipSnapshot[];
   /** TEMP-DEBUG: dev-room load-test counters. */
   d?: DebugStats;
 }
@@ -148,6 +208,8 @@ export interface StateMessage {
 export interface WorldOptions {
   navy?: NavyId;
   startPort?: PlacedPort | null;
+  shipClass?: ShipClassId;
+  startMoney?: number;
 }
 
 export function createWorld(roomCode = "main", options: WorldOptions = {}): World {
@@ -161,6 +223,11 @@ export function createWorld(roomCode = "main", options: WorldOptions = {}): Worl
         ? options.startPort ?? null
         : null;
 
+  const defaultClass: ShipClassId = kind === "normal" ? "flagship" : "frigate";
+  const startMoney = kind === "normal"
+    ? settings.ships.startMoney.normal
+    : options.startMoney ?? settings.ships.startMoney[kind];
+
   return {
     tick: 0,
     gameSeconds: 0,
@@ -171,6 +238,13 @@ export function createWorld(roomCode = "main", options: WorldOptions = {}): Worl
     startPort,
     ports: PORT_BY_ID,
     players: new Map(),
+    fleets: new Map(),
+    owners: new Map(),
+    crewPools: new Map(),
+    portOwners: new Map(),
+    nextShipId: 1,
+    startMoney,
+    startShipClass: kind === "normal" ? "flagship" : options.shipClass ?? defaultClass,
     botFleets: new Map(),
     charts: new Map(),
     notices: new Map(),
@@ -281,10 +355,13 @@ function newPlayerSpot(world: World, playerId: string): { x: number; y: number; 
       y: centre.y - Math.cos(bearing) * radius,
     };
 
+    const occupied = [...world.players.values()];
+    for (const fleet of world.fleets.values()) occupied.push(...fleet);
+    for (const fleet of world.botFleets.values()) occupied.push(...fleet);
     const clear =
       isInsideMapFrame(candidate.x, candidate.y) &&
       !isLandAt(candidate.x, candidate.y) &&
-      [...world.players.values()].every(
+      occupied.every(
         (ship) => distanceKm(ship, candidate) >= settings.world.minimumSeparationKm,
       );
     if (clear) {
@@ -311,16 +388,26 @@ export function shipClassForRoom(roomCode: string): ShipClassId {
     : "flagship";
 }
 
-/** Add a player's ship once. A returning id keeps its existing ship. */
+function initialShipName(world: World, playerId: string): string {
+  const pool = SHIP_NAMES[world.navy];
+  return pool[hashPlayerId(playerId) % pool.length] ?? shipTypeFor(world.navy, "flagship").name;
+}
+
+/** Add a player's first ship once. A returning id keeps its fleet and chart. */
 export function addPlayer(
   world: World,
   playerId: string,
-  classId: ShipClassId = shipClassForRoom(world.roomCode),
+  classId: ShipClassId = world.startShipClass,
+  startMoney: number = world.startMoney,
 ): Ship {
   const existing = world.players.get(playerId);
   if (existing) {
     // A returning player keeps the same chart. This also repairs an old
-    // room created before charts existed.
+    // room created before charts or fleets existed.
+    if (!world.fleets.has(playerId)) world.fleets.set(playerId, [existing]);
+    if (!world.owners.has(playerId)) {
+      world.owners.set(playerId, { money: startMoney, selectedShipId: existing.id });
+    }
     if (!world.charts.has(playerId)) {
       const chart = createChart(world.kind);
       world.charts.set(playerId, chart);
@@ -337,8 +424,13 @@ export function addPlayer(
     spot.y,
     spot.headingRad,
     world.navy,
+    initialShipName(world, playerId),
   );
+  // Starting ships are ready for sea at once. Only bought ships arrive empty.
+  ship.crew = ship.fullCrew;
   world.players.set(playerId, ship);
+  world.fleets.set(playerId, [ship]);
+  world.owners.set(playerId, { money: startMoney, selectedShipId: ship.id });
 
   const chart = createChart(world.kind);
   world.charts.set(playerId, chart);
@@ -346,9 +438,12 @@ export function addPlayer(
   return ship;
 }
 
-/** Remove a human player's ship, chart and waiting messages. */
+/** Remove a human player's fleet, chart and waiting messages. */
 export function removePlayer(world: World, playerId: string): boolean {
-  const removedShip = world.players.delete(playerId);
+  const removedPrimary = world.players.delete(playerId);
+  const removedFleet = world.fleets.delete(playerId);
+  const removedShip = removedPrimary || removedFleet;
+  world.owners.delete(playerId);
   world.botFleets.delete(playerId);
   world.charts.delete(playerId);
   world.notices.delete(playerId);
@@ -357,9 +452,45 @@ export function removePlayer(world: World, playerId: string): boolean {
 
 /** All ships belonging to one human or fake player. */
 export function shipsForOwner(world: World, ownerId: string): Ship[] {
+  const fleet = world.fleets.get(ownerId);
+  if (fleet) return fleet;
   const human = world.players.get(ownerId);
   if (human) return [human];
   return world.botFleets.get(ownerId) ?? [];
+}
+
+/** The player's selected ship, or its first ship if the selection went stale. */
+export function selectedShip(world: World, playerId: string): Ship | null {
+  const fleet = shipsForOwner(world, playerId);
+  if (fleet.length === 0) return null;
+  const owner = world.owners.get(playerId);
+  const selected = fleet.find((ship) => ship.id === owner?.selectedShipId);
+  return selected ?? fleet[0] ?? null;
+}
+
+/** Select one of the player's ships. Ships still being delivered cannot win. */
+export function selectShip(world: World, playerId: string, shipId: unknown): boolean {
+  if (typeof shipId !== "string") return false;
+  const ship = shipsForOwner(world, playerId).find((candidate) => candidate.id === shipId);
+  if (!ship || ship.deliveryPortId) return false;
+  const owner = world.owners.get(playerId);
+  if (!owner) return false;
+  owner.selectedShipId = ship.id;
+  return true;
+}
+
+function shipForOrder(world: World, playerId: string, shipId?: unknown): Ship | null {
+  if (shipId === undefined || shipId === null) return selectedShip(world, playerId);
+  if (typeof shipId !== "string") return null;
+  return shipsForOwner(world, playerId).find((ship) => ship.id === shipId) ?? null;
+}
+
+/** The public status derived from the ship's position and delivery. */
+export function shipStatus(ship: Ship): ShipStatus {
+  if (ship.deliveryPortId) return "delivery";
+  if (ship.dockedPortId) return "docked";
+  if (ship.waitingPortId) return "waiting";
+  return "sailing";
 }
 
 /** Add the temporary dev-room bot fleets once. */
@@ -372,14 +503,26 @@ export function addBotFleets(
 }
 
 /** Apply a sail-to order from a player. Bad orders are simply refused. */
-export function applyOrder(world: World, playerId: string, x: unknown, y: unknown): boolean {
+export function applyOrder(
+  world: World,
+  playerId: string,
+  x: unknown,
+  y: unknown,
+  shipId?: unknown,
+): boolean {
   if (typeof x !== "number" || typeof y !== "number") return false;
 
-  const ship = world.players.get(playerId);
-  if (!ship || ship.dockedPortId) return false;
+  const ship = shipForOrder(world, playerId, shipId);
+  if (!ship || ship.deliveryPortId) return false;
+  if (!canShipSail(ship)) {
+    if (world.players.has(playerId)) pushNotice(world, playerId, "Needs crew.");
+    return false;
+  }
+  if (ship.dockedPortId) return false;
   if (!sailTo(ship, x, y)) return false;
 
   ship.waitingPortId = null;
+  ship.waitingSinceGameMs = 0;
   ship.portOrderId = null;
   return true;
 }
@@ -407,7 +550,9 @@ export function takeNotice(world: World, playerId: string): string | null {
 
 function allShips(world: World): Array<{ ownerId: string; ship: Ship }> {
   const ships: Array<{ ownerId: string; ship: Ship }> = [];
-  for (const [ownerId, ship] of world.players) ships.push({ ownerId, ship });
+  for (const [ownerId, fleet] of world.fleets) {
+    for (const ship of fleet) ships.push({ ownerId, ship });
+  }
   for (const [ownerId, fleet] of world.botFleets) {
     for (const ship of fleet) ships.push({ ownerId, ship });
   }
@@ -471,11 +616,17 @@ export function applyPortOrder(
   world: World,
   playerId: string,
   portId: unknown,
+  shipId?: unknown,
 ): boolean {
   if (typeof portId !== "string") return false;
-  const ship = world.players.get(playerId);
+  const ship = shipForOrder(world, playerId, shipId);
   const port = world.ports.get(portId);
-  if (!ship || !port || ship.dockedPortId) return false;
+  if (!ship || !port || ship.deliveryPortId) return false;
+  if (!canShipSail(ship)) {
+    pushNotice(world, playerId, "Needs crew.");
+    return false;
+  }
+  if (ship.dockedPortId) return false;
   if (!world.charts.get(playerId)?.foundPorts.has(portId)) return false;
 
   ship.waitingPortId = null;
@@ -496,8 +647,8 @@ export function applyPortOrder(
 }
 
 /** Free a docking place. The ship stays at the anchorage and may sail again. */
-export function undock(world: World, playerId: string): boolean {
-  const ship = world.players.get(playerId);
+export function undock(world: World, playerId: string, shipId?: unknown): boolean {
+  const ship = shipForOrder(world, playerId, shipId);
   const portId = ship?.dockedPortId;
   if (!ship || !portId) return false;
   const port = world.ports.get(portId);
@@ -510,6 +661,187 @@ export function undock(world: World, playerId: string): boolean {
   ship.arrived = true;
   pushNotice(world, playerId, port ? `Undocked from ${port.name}.` : "Undocked.");
   return true;
+}
+
+/** The player's money. Unknown and fake owners have none. */
+export function ownerMoney(world: World, playerId: string): number {
+  return world.owners.get(playerId)?.money ?? 0;
+}
+
+/** The shared pool at a port. The first look starts it full. */
+export function portCrewPool(world: World, port: PlacedPort): PortCrewPool {
+  let pool = world.crewPools.get(port.id);
+  if (!pool) {
+    pool = { crew: settings.ports.sizes[port.size].crewPool, capacity: settings.ports.sizes[port.size].crewPool };
+    world.crewPools.set(port.id, pool);
+  }
+  return pool;
+}
+
+/**
+ * Whether this player may use the port's shipyard today.
+ *
+ * There are no port owners yet, so a normal room sells nothing. Test and dev
+ * rooms treat every placed capturable port as usable. When ownership arrives,
+ * `portOwners` is the single flag the rest of the game already reads.
+ */
+export function portUsableForBuying(
+  world: World,
+  port: PlacedPort,
+  playerId: string,
+): boolean {
+  if (port.npc) return false;
+  const owner = world.portOwners.get(port.id);
+  if (owner) return owner === playerId;
+  return world.kind !== "normal";
+}
+
+/**
+ * Buy a ship. Money is taken immediately and the hull is delivered later at
+ * the port, empty of crew. Returns the new ship, or null after a paper notice.
+ */
+export function buyShip(
+  world: World,
+  playerId: string,
+  portId: unknown,
+  classId: unknown,
+  rawName: unknown,
+): Ship | null {
+  if (typeof portId !== "string" || typeof classId !== "string" || typeof rawName !== "string") {
+    return null;
+  }
+  const port = world.ports.get(portId);
+  const owner = world.owners.get(playerId);
+  const fleet = world.fleets.get(playerId);
+  if (!port || !owner || !fleet) return null;
+
+  if (!world.charts.get(playerId)?.foundPorts.has(port.id)) {
+    pushNotice(world, playerId, "You have not found this port.");
+    return null;
+  }
+  if (port.npc) {
+    pushNotice(world, playerId, "This port does not sell ships.");
+    return null;
+  }
+  if (!portUsableForBuying(world, port, playerId)) {
+    pushNotice(world, playerId, "You must own a port to buy ships here.");
+    return null;
+  }
+
+  const price = shipPrice(classId as DataShipClassId);
+  const portStockSize = port.size === "S" ? "small" : port.size === "M" ? "mid" : "large";
+  if (price === null || !portSellsShip(portStockSize, classId as DataShipClassId)) {
+    pushNotice(world, playerId, "This port does not sell that ship.");
+    return null;
+  }
+  if (owner.money < price) {
+    pushNotice(world, playerId, "Not enough money.");
+    return null;
+  }
+  if (!canAddShip(fleet.length)) {
+    pushNotice(world, playerId, `Your fleet is full (${settings.ships.maxShipsPerPlayer} ships).`);
+    return null;
+  }
+  const name = cleanShipName(rawName);
+  if (!name) {
+    pushNotice(world, playerId, "That ship name cannot be used.");
+    return null;
+  }
+
+  owner.money -= price;
+  const ship = createShip(
+    `ship-${world.nextShipId}`,
+    classId as DataShipClassId,
+    port.anchorage.x,
+    port.anchorage.y,
+    0,
+    world.navy,
+    name,
+    0,
+  );
+  world.nextShipId += 1;
+  ship.deliveryPortId = port.id;
+  ship.deliveryReadyGameMs = world.gameMs + deliveryGameMs(world.kind, ship.classId);
+  fleet.push(ship);
+  pushNotice(world, playerId, `Ship ordered: ${name}.`);
+  return ship;
+}
+
+/**
+ * Hire sailors from one port's shared pool into a docked ship.
+ * The ship, pool and complement all have to cover the whole request.
+ */
+export function hireCrew(
+  world: World,
+  playerId: string,
+  shipId: unknown,
+  portId: unknown,
+  requested: unknown,
+): boolean {
+  if (typeof portId !== "string" || typeof requested !== "number") return false;
+  const count = Math.floor(requested);
+  if (!Number.isInteger(count) || count <= 0) return false;
+
+  const ship = shipForOrder(world, playerId, shipId);
+  const port = world.ports.get(portId);
+  const owner = world.owners.get(playerId);
+  if (!ship || !port || !owner || ship.deliveryPortId) return false;
+  if (ship.dockedPortId !== port.id) return false;
+  if (!world.charts.get(playerId)?.foundPorts.has(port.id)) return false;
+
+  const wanted = ship.crew + count;
+  if (wanted > ship.fullCrew) {
+    pushNotice(world, playerId, "That is more crew than the ship can carry.");
+    return false;
+  }
+
+  const pool = portCrewPool(world, port);
+  if (pool.crew < count) {
+    pushNotice(world, playerId, "Not enough sailors at this port.");
+    return false;
+  }
+
+  const cost = crewHireCost(count);
+  if (owner.money < cost) {
+    pushNotice(world, playerId, "Not enough money.");
+    return false;
+  }
+
+  owner.money -= cost;
+  pool.crew -= count;
+  ship.crew = wanted;
+  pushNotice(world, playerId, `Hired ${count} sailors for ${cost} pieces of eight.`);
+  return true;
+}
+
+/** Refill every pool that has been used, from real time while occupied. */
+function updateCrewPools(world: World, dtGameSeconds: number): void {
+  const realSeconds = dtGameSeconds / settings.time.sailingTimeScale;
+  if (!(realSeconds > 0)) return;
+  for (const pool of world.crewPools.values()) {
+    pool.crew = refillCrewPool(pool.crew, pool.capacity, realSeconds);
+  }
+}
+
+/** Finish any delivery whose game-time moment has arrived. */
+function deliverReadyShips(world: World): void {
+  for (const [ownerId, fleet] of world.fleets) {
+    for (const ship of fleet) {
+      if (!ship.deliveryPortId || ship.deliveryReadyGameMs > world.gameMs) continue;
+      const port = world.ports.get(ship.deliveryPortId);
+      ship.deliveryPortId = null;
+      ship.deliveryReadyGameMs = 0;
+      if (!port) continue;
+
+      ship.x = port.anchorage.x;
+      ship.y = port.anchorage.y;
+      ship.headingRad = 0;
+      ship.speedKnots = 0;
+      ship.order = null;
+      pushNotice(world, ownerId, `Ship delivered: ${ship.name} at ${port.name}.`);
+      arriveAtPort(world, ownerId, ship, port);
+    }
+  }
 }
 
 /** Dock an arriving port order, or clear the order if it ended at a coast. */
@@ -837,6 +1169,7 @@ function updateFog(world: World): void {
   for (const [ownerId, chart] of world.charts) {
     if (chart.all) continue;
     for (const ship of shipsForOwner(world, ownerId)) {
+      if (ship.deliveryPortId) continue;
       revealCircle(chart, ship.x, ship.y);
     }
   }
@@ -850,6 +1183,12 @@ function stepOwnerShip(
   dtGameSeconds: number,
   windFromDeg: number,
 ): void {
+  if (ship.deliveryPortId) {
+    ship.speedKnots = 0;
+    ship.order = null;
+    return;
+  }
+
   if (ship.dockedPortId) {
     ship.speedKnots = 0;
     ship.order = null;
@@ -886,8 +1225,10 @@ export function stepWorld(
   dtGameSeconds: number,
   windFromDeg: number = settings.weather.windFromDeg,
 ): void {
-  for (const [playerId, ship] of world.players) {
-    stepOwnerShip(world, playerId, ship, dtGameSeconds, windFromDeg);
+  for (const [playerId, fleet] of world.fleets) {
+    for (const ship of fleet) {
+      stepOwnerShip(world, playerId, ship, dtGameSeconds, windFromDeg);
+    }
   }
 
   // TEMP-DEBUG: load-test ships use the same movement path as players.
@@ -906,6 +1247,8 @@ export function stepWorld(
     : 0;
   world.gameMs += elapsedMs;
   world.gameSeconds = world.gameMs / 1000;
+  updateCrewPools(world, dtGameSeconds);
+  deliverReadyShips(world);
   updateFog(world);
   tryWaitingShips(world);
 }
@@ -931,8 +1274,9 @@ export function visibleStateFor(
   const own = shipsForOwner(world, playerId);
   const ownIds = new Set(own.map((ship) => ship.id));
   const sightSq = settings.fog.sightRangeKm ** 2;
+  const activeOwn = own.filter((ship) => !ship.deliveryPortId);
   const isVisible = (ship: Ship): boolean =>
-    own.some((mine) => (ship.x - mine.x) ** 2 + (ship.y - mine.y) ** 2 <= sightSq);
+    activeOwn.some((mine) => (ship.x - mine.x) ** 2 + (ship.y - mine.y) ** 2 <= sightSq);
 
   const chart = world.charts.get(playerId) ?? createChart(world.kind);
   world.charts.set(playerId, chart);
@@ -944,7 +1288,7 @@ export function visibleStateFor(
     for (const port of PLACED_PORTS) {
       if (chart.foundPorts.has(port.id)) continue;
       if (
-        own.some(
+        activeOwn.some(
           (ship) =>
             (ship.x - port.anchorage.x) ** 2 + (ship.y - port.anchorage.y) ** 2 <= sightSq,
         )
@@ -960,10 +1304,12 @@ export function visibleStateFor(
   // A fleet owner sees every one of its own ships plus foreign ships inside
   // the sight circle of any of them. The client uses the same path for one
   // ship; this only exists for the temporary load test.
-  const allShips: Ship[] = [...world.players.values()];
+  const allShips: Ship[] = [];
+  for (const fleet of world.fleets.values()) allShips.push(...fleet);
   for (const fleet of world.botFleets.values()) allShips.push(...fleet);
 
   for (const ship of allShips) {
+    if (ship.deliveryPortId) continue;
     if (!ownIds.has(ship.id) && !isVisible(ship)) continue;
 
     visibleIds.add(ship.id);
@@ -980,7 +1326,7 @@ export function visibleStateFor(
     ]);
   }
 
-  const near = own[0] ? { x: own[0].x, y: own[0].y } : undefined;
+  const near = activeOwn[0] ? { x: activeOwn[0].x, y: activeOwn[0].y } : undefined;
 
   // Remember foreign ships while they are visible; when they leave the circle
   // their last position becomes a faded marker with an age in game time.
@@ -1027,6 +1373,23 @@ export function visibleStateFor(
     ports.push(snapshot);
   }
 
+  const owner = world.owners.get(playerId);
+  const fleet: OwnShipSnapshot[] = own.map((ship) => ({
+    id: ship.id,
+    name: ship.name,
+    classId: ship.classId,
+    navy: ship.navy,
+    crew: ship.crew,
+    fullCrew: ship.fullCrew,
+    status: shipStatus(ship),
+    portId: ship.deliveryPortId ?? ship.dockedPortId ?? ship.waitingPortId,
+    deliveryLeftMs: ship.deliveryPortId
+      ? Math.max(0, Math.round(ship.deliveryReadyGameMs - world.gameMs))
+      : 0,
+    x: Number(ship.x.toFixed(2)),
+    y: Number(ship.y.toFixed(2)),
+  }));
+
   return {
     t: "s",
     tick: world.tick,
@@ -1038,5 +1401,8 @@ export function visibleStateFor(
     l: lastSeen,
     chart: takeChartUpdate(chart, blockLookup, maxBlocks, near),
     ports,
+    m: owner?.money ?? 0,
+    sel: owner?.selectedShipId ?? null,
+    fleet,
   };
 }

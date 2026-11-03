@@ -36,6 +36,14 @@ export interface Ship {
   readonly id: string;
   readonly classId: ShipClassId;
   readonly navy: NavyId;
+  /** Permanent name chosen for this ship. */
+  readonly name: string;
+  /** Sailors aboard, and the full complement from the ship table. */
+  crew: number;
+  readonly fullCrew: number;
+  /** A ship under construction has a port and a game-time delivery moment. */
+  deliveryPortId: string | null;
+  deliveryReadyGameMs: number;
   x: number;
   y: number;
   /** Radians, 0 = north, clockwise. */
@@ -122,11 +130,19 @@ export function createShip(
   y: number,
   headingRad = 0,
   navy: NavyId = "British",
+  name?: string,
+  crew?: number,
 ): Ship {
+  const type = shipTypeFor(navy, classId);
   return {
     id,
     classId,
     navy,
+    name: name ?? type.name,
+    crew: crew ?? type.crew,
+    fullCrew: type.crew,
+    deliveryPortId: null,
+    deliveryReadyGameMs: 0,
     x,
     y,
     headingRad,

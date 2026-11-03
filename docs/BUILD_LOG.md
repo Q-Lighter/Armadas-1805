@@ -1213,3 +1213,39 @@ and short docking notices.
 
 - No buying, fleets or crew panels yet; those are Parts B and C.
 - The catalogue's combat fields are stored but not used, as requested.
+
+## Session 2C-b: money, buying, delivery, crews
+
+**Date:** 2026-11-03
+**Branch:** main
+
+### What was built
+
+- Players now have money, a ship list and a selected ship. The old first-ship
+  map remains as a compatibility alias, while every sailing path uses the fleet.
+- Orders carry an optional ship id and are refused when the ship belongs to
+  someone else. A ship below 10% crew gives the notice `Needs crew.`
+- Normal starts use the navy's flagship, fully crewed and with no money. Test
+  rooms default to the navy's frigate and accept `ship=` and `cash=`; delivery
+  runs at one tenth of normal time there.
+- Shipyards exist only at found, usable, non-NPC ports. Normal rooms have no
+  port ownership, so buying there says `You must own a port to buy ships here.`
+  The empty `portOwners` map is the future ownership hook.
+- Buying checks port stock, money and the 30-ship cap, takes the money at once
+  and delivers an empty ship after game time. It docks or waits at the port.
+- Crew is hired at docked ships, including NPC ports, from one shared pool per
+  port. Pools refill continuously over 25 real minutes.
+- Own fleet detail is private in the state message. Other players only receive
+  the existing class/navy ship tuple, never names, crews or money.
+
+### Checks
+
+- `npm test`: **97/97 passing**, including all Part B purchase, delivery, cap,
+  crew, refill and privacy tests.
+- `npm run build`: passing.
+- `npm run test:server`: passing (`SIMULATION PASSED`, 118 ticks, 63 updates).
+
+### Broken or unfinished
+
+- No screen work yet: the client does not yet show money, the fleet, shipyard,
+  naming step or crew panel, and its orders do not yet send a ship id.

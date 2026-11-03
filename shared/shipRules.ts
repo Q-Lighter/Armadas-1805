@@ -6,6 +6,7 @@
 import { settings } from "./settings.js";
 import {
   BUYABLE_SHIP_CLASS_IDS,
+  SHIP_CLASS_IDS,
   SHIP_NAMES,
   SHIP_SIZE_BY_CLASS,
   shipTypeFor,
@@ -17,16 +18,28 @@ import type { RoomKind } from "./fog.js";
 import type { NavyId } from "./navies.js";
 
 /** Ports sell their own size class and anything smaller. */
-export function portSellsShip(portSize: ShipSize, classId: ShipClassId): boolean {
+export function portSellsShip(
+  portSize: ShipSize | "S" | "M" | "L",
+  classId: ShipClassId,
+): boolean {
   if (!isBuyableShipClass(classId)) return false;
   const shipSize = SHIP_SIZE_BY_CLASS[classId];
-  if (portSize === "small") return shipSize === "small";
-  if (portSize === "mid") return shipSize !== "large";
+  if (portSize === "small" || portSize === "S") return shipSize === "small";
+  if (portSize === "mid" || portSize === "M") return shipSize !== "large";
   return true;
 }
 
+/** Clearer alias used by callers that read rule names. */
+export const canPortSellShip = portSellsShip;
+
 export function isBuyableShipClass(classId: ShipClassId): classId is BuyableShipClassId {
   return (BUYABLE_SHIP_CLASS_IDS as readonly string[]).includes(classId);
+}
+
+/** Parse a lower-case `&ship=` value. */
+export function parseShipClass(value: string): ShipClassId | null {
+  const wanted = value.trim().toLowerCase();
+  return SHIP_CLASS_IDS.find((classId) => classId === wanted) ?? null;
 }
 
 /** Price in pieces of eight. Flagships cannot be bought. */

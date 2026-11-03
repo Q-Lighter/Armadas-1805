@@ -5,6 +5,7 @@
 // clockwise (east is +x, north is +y). Wind direction is where it blows FROM.
 
 import { settings } from "./settings.js";
+import type { NavyId } from "./navies.js";
 
 /** One knot is 1.852 km/h. A definition, not a tuning value. */
 export const KM_PER_HOUR_PER_KNOT = 1.852;
@@ -13,7 +14,15 @@ const DEG = Math.PI / 180;
 const RAD = 180 / Math.PI;
 
 export type ShipClassId = keyof typeof settings.ships.types;
-export type ShipSpec = (typeof settings.ships.types)[ShipClassId];
+
+/** The sailing numbers used by the code, with room for a navy's cruise speed. */
+export interface ShipSpec {
+  name: string;
+  cruiseKnots: number;
+  topKnots: number;
+  closestAngleDeg: number;
+  turn90GameMinutes: number;
+}
 
 /** Which side of the wind the ship is tacking on. */
 export type TackSide = 1 | -1;
@@ -27,6 +36,7 @@ export interface SailToOrder {
 export interface Ship {
   readonly id: string;
   readonly classId: ShipClassId;
+  readonly navy: NavyId;
   x: number;
   y: number;
   /** Radians, 0 = north, clockwise. */
@@ -41,6 +51,14 @@ export interface Ship {
   coastEscapeHeadingRad?: number | null;
   /** True once the last order was completed. */
   arrived: boolean;
+  /** The port this ship is docked at, or null when at sea. */
+  dockedPortId: string | null;
+  /** The full port this ship is waiting outside, or null. */
+  waitingPortId: string | null;
+  /** The port this ship was ordered to, until it arrives or the order ends. */
+  portOrderId: string | null;
+  /** Game time when this ship joined a port's waiting queue. */
+  waitingSinceGameMs: number;
 }
 
 /** Normalise an angle in degrees to 0..360. */
@@ -104,10 +122,12 @@ export function createShip(
   x: number,
   y: number,
   headingRad = 0,
+  navy: NavyId = "British",
 ): Ship {
   return {
     id,
     classId,
+    navy,
     x,
     y,
     headingRad,
@@ -115,6 +135,23 @@ export function createShip(
     order: null,
     tackSide: 1,
     arrived: false,
+    dockedPortId: null,
+    waitingPortId: null,
+    portOrderId: null,
+    waitingSinceGameMs: 0,
+  };
+}
+
+/**
+ * The sailing numbers for one ship. A flagship uses the common British hull
+ * table with its navy's cruise speed; other classes keep their own table.
+ */
+export function shipSpecFor(ship: Pick<Ship, "classId" | "navy">): ShipSpec {
+  const spec = settings.ships.types[ship.classId];
+  if (ship.classId !== "flagship") return spec;
+  return {
+    ...spec,
+    cruiseKnots: settings.navies[ship.navy].flagshipCruiseKnots,
   };
 }
 
@@ -209,7 +246,7 @@ export function stepShip(
 ): void {
   if (!(dtGameSeconds > 0) || !Number.isFinite(dtGameSeconds)) return;
 
-  const spec = settings.ships.types[ship.classId];
+  const spec = shipSpecFor(ship);
   const order = ship.order;
 
   if (!order) {

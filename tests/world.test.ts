@@ -17,12 +17,14 @@ import {
 test("new players get a flagship inside the start area", () => {
   const world = createWorld();
   const ship = addPlayer(world, "alpha");
-  const area = settings.world.startArea;
-  const centre = lonLatToMap(area.lonDeg, area.latDeg);
+  const area = settings.world;
+  const start = settings.navies.British.start;
+  const centre = lonLatToMap(start.lonDeg, start.latDeg);
 
   assert.equal(ship.classId, "flagship");
+  assert.equal(ship.navy, "British");
   assert.equal(world.players.size, 1);
-  assert.ok(Math.hypot(ship.x - centre.x, ship.y - centre.y) <= area.radiusKm);
+  assert.ok(Math.hypot(ship.x - centre.x, ship.y - centre.y) <= area.startRadiusKm);
   assert.equal(isSeaAt(ship.x, ship.y), true, "the British start is water");
 });
 
@@ -53,13 +55,14 @@ test("the state for one player is compact and public", () => {
   const bytes = Buffer.byteLength(JSON.stringify(state), "utf8");
 
   assert.deepEqual(Object.keys(state).sort(), [
-    "chart", "g", "k", "l", "ships", "t", "tick", "w", "you",
+    "chart", "g", "k", "l", "ports", "ships", "t", "tick", "w", "you",
   ]);
   assert.equal(state.g, 0);
   assert.equal(state.you, "alpha");
   assert.equal(state.k, "normal");
   assert.equal(state.ships.length, 2);
-  assert.equal(state.ships[0]?.length, 6);
+  assert.equal(state.ships[0]?.length, 9);
+  assert.equal(state.ships[0]?.[6], "British");
   assert.ok(Array.isArray(state.l));
   assert.ok(Array.isArray(state.chart.cells));
 

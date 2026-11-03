@@ -58,6 +58,8 @@ export interface ChartState {
   all: boolean;
   /** Foreign ships this player has seen, including ones now out of sight. */
   seen: Map<string, SeenShip>;
+  /** Ports this player has found. Never sent anywhere before discovery. */
+  foundPorts: Set<string>;
 }
 
 export interface ChartUpdate {
@@ -86,6 +88,7 @@ export function createChart(kind: RoomKind): ChartState {
     sentBlocks: new Set(),
     all: kind === "dev",
     seen: new Map(),
+    foundPorts: new Set(),
   };
 
   if (kind === "dev") {

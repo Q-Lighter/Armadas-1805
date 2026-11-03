@@ -1091,3 +1091,49 @@ pending, and extend test/dev ghost cleanup to 1,800 seconds.
 - No browser is available, so port locations and coastlines were checked against
   the land lookup, not viewed on screen.
 - River ports remain data-only until rivers exist on the map.
+
+## Session 2B-b: ports, navy starts and docking
+
+**Date:** 2026-11-03
+**Branch:** main
+
+### What was asked
+
+Add Navy selection for test/dev rooms, real navy starts and hull colours, private
+port discovery, sail-to-port, docking capacity, waiting at anchor and undocking.
+
+### What was built
+
+- Added four navies in settings with their real start positions, flagship cruise
+  speeds, draft hull colours and first NPC port. Normal rooms remain British.
+- Test rooms accept `?navy=british|dutch|spanish|french` and start about 40 km
+  from that navy's first NPC port. Test and dev rooms accept `&start=PORT NAME`
+  for any placed port. Both must spawn in open sea.
+- Every ship stores and sends its navy. Flagships use the British table with the
+  selected navy's cruise speed; test/dev frigates keep the frigate table.
+- Ports are world objects with no owner. A port is found when its anchorage is
+  inside any of the player's 25 km sight circles. Found ports are private and
+  persist in memory; dev rooms know all 89.
+- Added `sailToPort` and `undock` messages. A port order uses the normal sailing
+  path. Arrival fills a size-based berth or joins that port's waiting queue with
+  "Port is full: waiting at anchor." Waiting ships retry oldest-first and dock
+  when a place frees.
+- Docked ships sit at the anchorage, cannot receive sail orders and report their
+  docked port in state. The free-place count is sent only to a player whose ship
+  is docked there.
+- Added short paper notices for docking, waiting and undocking.
+
+### Checks
+
+- `npm test`: **78/78 passing**, including navy starts/speeds, hidden ports,
+  edge-of-sight discovery, capacity 4 with 5 ships, waiting, undocking and
+  unfound-port rejection.
+- `npm run build`: passing.
+- `npm run test:server`: passing (`SIMULATION PASSED`, 118 ticks, 63 updates,
+  265-byte typical update).
+
+### Broken or unfinished
+
+- No browser or socket-level browser test is available. The port panel and
+  `&start` URL wiring were not exercised through a real page; the shared rules
+  and state shape were tested.

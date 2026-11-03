@@ -21,7 +21,11 @@ import {
   type StorageLike,
 } from "@naval/shared/player-identity";
 import { TAKEN_OVER_CLOSE_CODE } from "@naval/shared/player-sessions";
-import type { LastSeenSnapshot, StateMessage } from "@naval/shared/world";
+import type {
+  LastSeenSnapshot,
+  ShipSnapshot,
+  StateMessage,
+} from "@naval/shared/world";
 import { orderedChartBlocks } from "@naval/shared/chart-draw";
 import { fogDebugLine, type FogDebugInfo } from "@naval/shared/fog-view";
 import { GRAPHICS_RESET_NOTICE, GraphicsRecovery } from "@naval/shared/graphics-safety";
@@ -190,6 +194,8 @@ async function start(): Promise<void> {
   const query = new URLSearchParams(location.search);
   const room = query.get("room") ?? "test";
   const requestedBots = query.get("bots");
+  const requestedNavy = query.get("navy");
+  const requestedStart = query.get("start");
   const identity: PlayerIdentity = resolvePlayerIdentity(
     browserStorage("localStorage"),
     browserStorage("sessionStorage"),
@@ -289,8 +295,8 @@ async function start(): Promise<void> {
   );
 
   const startPoint = lonLatToMap(
-    settings.world.startArea.lonDeg,
-    settings.world.startArea.latDeg,
+    settings.navies.British.start.lonDeg,
+    settings.navies.British.start.latDeg,
   );
   const view: Camera = {
     x: startPoint.x,
@@ -913,7 +919,7 @@ async function start(): Promise<void> {
     return hull;
   }
 
-  function updateHud(own: [string, string, number, number, number, number] | undefined): void {
+  function updateHud(own: ShipSnapshot | undefined): void {
     if (own) {
       const heading = own[4];
       speedOut.textContent = `${own[5].toFixed(1)} kn`;
@@ -1142,7 +1148,7 @@ async function start(): Promise<void> {
     if (dataChanged) chartRevision += 1;
 
     const seen = new Set<string>();
-    let own: [string, string, number, number, number, number] | undefined;
+    let own: ShipSnapshot | undefined;
 
     for (const snapshot of state.ships) {
       const [id, classId, x, y, headingDeg, knots] = snapshot;
@@ -1222,7 +1228,11 @@ async function start(): Promise<void> {
     const botsQuery = requestedBots === null
       ? ""
       : `&bots=${encodeURIComponent(requestedBots)}`;
-    const url = `${scheme}://${location.host}/ws?room=${encodeURIComponent(room)}&player=${encodeURIComponent(identity.id)}${botsQuery}`;
+    const fleetQuery = roomKindForCode(room) === "normal"
+      ? ""
+      : `${requestedNavy === null ? "" : `&navy=${encodeURIComponent(requestedNavy)}`}` +
+        `${requestedStart === null ? "" : `&start=${encodeURIComponent(requestedStart)}`}`;
+    const url = `${scheme}://${location.host}/ws?room=${encodeURIComponent(room)}&player=${encodeURIComponent(identity.id)}${botsQuery}${fleetQuery}`;
     const next = new WebSocket(url);
     socket = next;
 

@@ -150,10 +150,10 @@ test("a new second player starts a few kilometres away", () => {
 
   const separation = distanceTo(alpha, beta);
   assert.ok(
-    separation >= settings.world.startArea.minimumSeparationKm,
+    separation >= settings.world.minimumSeparationKm,
     `starts only ${separation.toFixed(2)} km apart`,
   );
-  assert.ok(separation <= settings.world.startArea.radiusKm * 2 + 0.01);
+  assert.ok(separation <= settings.world.startRadiusKm * 2 + 0.01);
 });
 
 test("test and dev rooms get a frigate; other rooms keep the flagship", () => {

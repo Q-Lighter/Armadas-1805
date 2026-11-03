@@ -10,10 +10,12 @@ import { LoadMetrics } from "@naval/shared/load-metrics";
 import {
   addPlayer,
   applyOrder,
+  applyPortOrder,
   createWorld,
   removePlayer,
   stepWorld,
   takeNotice,
+  undock,
   visibleStateFor,
   type NoticeMessage,
   type World,
@@ -21,6 +23,9 @@ import {
 import { RoomLoop } from "@naval/shared/room-loop";
 import { GhostCleanup, PlayerSessions } from "@naval/shared/player-sessions";
 import { BlockSendBudget } from "@naval/shared/block-batch";
+import { findPortByName, type PlacedPort } from "@naval/shared/ports";
+import { parseNavy, type NavyId } from "@naval/shared/navies";
+import { roomKindForCode } from "@naval/shared/fog";
 import { CHART_BLOCKS } from "./chartBlocks.js";
 
 const playerIdPattern = /^[A-Za-z0-9_-]{1,40}$/;
@@ -61,9 +66,34 @@ export class GameRoom {
 
     const url = new URL(request.url);
     const room = url.searchParams.get("room") ?? this.world.roomCode;
+    const kind = roomKindForCode(room);
+
+    let navy: NavyId = "British";
+    let startPort: PlacedPort | null = null;
+    if (kind !== "normal") {
+      const rawNavy = url.searchParams.get("navy");
+      if (rawNavy !== null) {
+        const parsed = parseNavy(rawNavy);
+        if (!parsed) {
+          return new Response("Navy must be british, dutch, spanish or french.", {
+            status: 400,
+          });
+        }
+        navy = parsed;
+      }
+
+      const rawStart = url.searchParams.get("start");
+      if (rawStart !== null) {
+        startPort = findPortByName(rawStart);
+        if (!startPort) {
+          return new Response("Start must name a placed port.", { status: 400 });
+        }
+      }
+    }
+
     if (room !== this.world.roomCode) {
       this.ghosts.clear();
-      this.world = createWorld(room);
+      this.world = createWorld(room, { navy, startPort });
     }
 
     const playerId = url.searchParams.get("player") ?? "";
@@ -204,9 +234,19 @@ export class GameRoom {
 
     if (!message || typeof message !== "object") return;
 
-    const order = message as { t?: unknown; x?: unknown; y?: unknown };
-    if (order.t !== "o") return;
+    const order = message as {
+      t?: unknown;
+      x?: unknown;
+      y?: unknown;
+      port?: unknown;
+    };
 
-    applyOrder(this.world, playerId, order.x, order.y);
+    if (order.t === "o") {
+      applyOrder(this.world, playerId, order.x, order.y);
+    } else if (order.t === "sailToPort") {
+      applyPortOrder(this.world, playerId, order.port);
+    } else if (order.t === "undock") {
+      undock(this.world, playerId);
+    }
   }
 }

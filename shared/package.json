@@ -89,6 +89,10 @@
     "./ports": {
       "types": "./dist/data/ports.d.ts",
       "default": "./dist/data/ports.js"
+    },
+    "./navies": {
+      "types": "./dist/navies.d.ts",
+      "default": "./dist/navies.js"
     }
   },
   "files": [

@@ -191,16 +191,40 @@ export const settings = {
     },
   },
 
+  /** The four navies, their real starts and their draft hull colours. */
+  navies: {
+    British: {
+      start: { lonDeg: -79.5, latDeg: 13 },
+      flagshipCruiseKnots: 6,
+      hullColor: "#9b2d2d",
+      firstNpcPort: "Montego Bay",
+    },
+    Dutch: {
+      start: { lonDeg: -45, latDeg: 3 },
+      flagshipCruiseKnots: 5.5,
+      hullColor: "#d9822b",
+      firstNpcPort: "Belem",
+    },
+    Spanish: {
+      start: { lonDeg: -50, latDeg: -37.5 },
+      flagshipCruiseKnots: 5.5,
+      hullColor: "#c9a227",
+      firstNpcPort: "Maldonado",
+    },
+    French: {
+      start: { lonDeg: -84, latDeg: -10 },
+      flagshipCruiseKnots: 6.5,
+      hullColor: "#2f4f8f",
+      firstNpcPort: "Paita",
+    },
+  },
+
   /** The placeholder starting area for new players. */
   world: {
-    /** The British start, west of Jamaica. */
-    startArea: {
-      lonDeg: -79.5,
-      latDeg: 13,
-      radiusKm: 6,
-      /** New ships are never placed closer than this to each other. */
-      minimumSeparationKm: 1.5,
-    },
+    /** New ships spawn this far from the start centre. */
+    startRadiusKm: 6,
+    /** New ships are never placed closer than this to each other. */
+    minimumSeparationKm: 1.5,
   },
 
   /** What happens when a ship meets land or the chart edge. */
@@ -269,8 +293,6 @@ export const settings = {
     maxBlocksPerMessage: 8,
     /** Dev rooms send no more than this many blocks in any one second. */
     blockBatchPerSecond: 40,
-    /** How far offshore a test room starts from the nearest coast, in km. */
-    testStartCoastDistanceKm: 30,
   },
 
   /** Camera limits and chart drawing for the client. */

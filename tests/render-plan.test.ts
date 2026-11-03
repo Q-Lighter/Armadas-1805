@@ -34,7 +34,7 @@ function testRoomPlan(): ReturnType<typeof buildShipRenderPlan> {
   return buildShipRenderPlan({
     width: 900,
     height: 1_200,
-    view: { x: ship.x, y: ship.y, kmAcross: 60 },
+    view: { x: ship.x, y: ship.y, kmAcross: 120 },
     blocks,
     all,
     discovered,

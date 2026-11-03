@@ -10,6 +10,7 @@ import {
   angleOffWindDeg,
   createShip,
   sailTo,
+  shipSpecFor,
   speedForHeading,
   stepShip,
   type Ship,
@@ -34,6 +35,14 @@ import {
 } from "./fog.js";
 import { addBots, refreshBotOrders } from "./bots.js";
 import type { DebugStats } from "./loadMetrics.js";
+import type { NavyId } from "./navies.js";
+import {
+  findPortByName,
+  PORT_BY_ID,
+  PLACED_PORTS,
+  type PlacedPort,
+  type PortSize,
+} from "./data/ports.js";
 
 const DEG = Math.PI / 180;
 const RAD = 180 / Math.PI;
@@ -41,6 +50,7 @@ const RAD = 180 / Math.PI;
 /** The short messages sent to a player when the sea refuses an order. */
 export const COAST_NOTICE = "Your ship stopped at the coast.";
 export const EDGE_NOTICE = "Edge of the charted world.";
+export const PORT_FULL_NOTICE = "Port is full: waiting at anchor.";
 
 export interface World {
   /** Number of world steps taken. */
@@ -52,6 +62,12 @@ export interface World {
   /** The room code and its kind (normal, test or debug). */
   roomCode: string;
   kind: RoomKind;
+  /** The navy every player in this room starts with. */
+  navy: NavyId;
+  /** Test/dev port start, or null for the navy's real start. */
+  startPort: PlacedPort | null;
+  /** All placed ports. They have no owner yet. */
+  ports: ReadonlyMap<string, PlacedPort>;
   /** Human ships, by player id. */
   players: Map<string, Ship>;
   /** TEMP-DEBUG: fake load-test owners and their fleets. */
@@ -62,7 +78,10 @@ export interface World {
   notices: Map<string, string[]>;
 }
 
-/** One ship in a state message: [id, class, x, y, heading in degrees, knots]. */
+/**
+ * One ship in a state message: [id, class, x, y, heading, knots, navy,
+ * docked port id, waiting port id]. The two port fields are null at sea.
+ */
 export type ShipSnapshot = [
   id: string,
   classId: string,
@@ -70,6 +89,20 @@ export type ShipSnapshot = [
   y: number,
   headingDeg: number,
   speedKnots: number,
+  navy: NavyId,
+  dockedPortId: string | null,
+  waitingPortId: string | null,
+];
+
+/** A found port: [id, name, size, npc 0/1, x, y, free places if docked]. */
+export type PortSnapshot = [
+  id: string,
+  name: string,
+  size: PortSize,
+  npc: 0 | 1,
+  x: number,
+  y: number,
+  freePlaces?: number,
 ];
 
 /** A short event message, separate from world state. */
@@ -104,17 +137,37 @@ export interface StateMessage {
   l: LastSeenSnapshot[];
   /** Newly discovered cells and private map blocks. */
   chart: ChartUpdate;
+  /** Only ports this player has found. */
+  ports: PortSnapshot[];
   /** TEMP-DEBUG: dev-room load-test counters. */
   d?: DebugStats;
 }
 
-export function createWorld(roomCode = "main"): World {
+export interface WorldOptions {
+  navy?: NavyId;
+  startPort?: PlacedPort | null;
+}
+
+export function createWorld(roomCode = "main", options: WorldOptions = {}): World {
+  const kind = roomKindForCode(roomCode);
+  const navy = kind === "normal" ? "British" : options.navy ?? "British";
+  const firstPort = findPortByName(settings.navies[navy].firstNpcPort);
+  const startPort =
+    kind === "test"
+      ? options.startPort ?? firstPort
+      : kind === "dev"
+        ? options.startPort ?? null
+        : null;
+
   return {
     tick: 0,
     gameSeconds: 0,
     gameMs: 0,
     roomCode,
-    kind: roomKindForCode(roomCode),
+    kind,
+    navy,
+    startPort,
+    ports: PORT_BY_ID,
     players: new Map(),
     botFleets: new Map(),
     charts: new Map(),
@@ -132,76 +185,50 @@ function hashPlayerId(playerId: string): number {
   return hash >>> 0;
 }
 
-function startCentre(): { x: number; y: number } {
-  return lonLatToMap(settings.world.startArea.lonDeg, settings.world.startArea.latDeg);
+const navyStartCentres = new Map<string, { x: number; y: number }>();
+const portStartCentres = new Map<string, { x: number; y: number }>();
+
+function navyStartCentre(world: World): { x: number; y: number } {
+  const cached = navyStartCentres.get(world.navy);
+  if (cached) return cached;
+  const start = settings.navies[world.navy].start;
+  const centre = lonLatToMap(start.lonDeg, start.latDeg);
+  navyStartCentres.set(world.navy, centre);
+  return centre;
 }
 
-let cachedTestCentre: { x: number; y: number } | null | undefined;
+/** A sea point exactly the port-start distance from a port's anchorage. */
+function portStartCentre(port: PlacedPort): { x: number; y: number } {
+  const cached = portStartCentres.get(port.id);
+  if (cached) return cached;
 
-/**
- * Find a test-room start about 30 km offshore from the nearest coast to the
- * normal British start. The search is done once and reused.
- */
-function testCentre(): { x: number; y: number } {
-  if (cachedTestCentre !== undefined) return cachedTestCentre ?? startCentre();
-
-  const origin = startCentre();
-  let coast: { x: number; y: number } | null = null;
-  for (let radius = 2; radius <= 300 && !coast; radius += 2) {
-    for (let ray = 0; ray < 36; ray += 1) {
-      const angle = (ray / 36) * Math.PI * 2;
-      const x = origin.x + Math.sin(angle) * radius;
-      const y = origin.y - Math.cos(angle) * radius;
-      if (isLandAt(x, y)) {
-        coast = { x, y };
-        break;
-      }
+  const distance = settings.ports.startDistanceKm;
+  let fallback: { x: number; y: number } | null = null;
+  for (let ray = 0; ray < 72; ray += 1) {
+    const angle = (ray / 72) * Math.PI * 2;
+    const candidate = {
+      x: port.anchorage.x + Math.sin(angle) * distance,
+      y: port.anchorage.y - Math.cos(angle) * distance,
+    };
+    if (!isInsideMapFrame(candidate.x, candidate.y) || isLandAt(candidate.x, candidate.y)) {
+      continue;
+    }
+    fallback ??= candidate;
+    if (hasOffshoreClearance(candidate.x, candidate.y, settings.world.startRadiusKm + 2)) {
+      portStartCentres.set(port.id, candidate);
+      return candidate;
     }
   }
 
-  if (!coast) {
-    cachedTestCentre = null;
-    return origin;
-  }
-
-  const awayX = origin.x - coast.x;
-  const awayY = origin.y - coast.y;
-  const length = Math.hypot(awayX, awayY);
-  if (length < 1e-9) {
-    cachedTestCentre = null;
-    return origin;
-  }
-
-  const distance = settings.fog.testStartCoastDistanceKm;
-  let candidate = {
-    x: coast.x + (awayX / length) * distance,
-    y: coast.y + (awayY / length) * distance,
-  };
-
-  // If the chosen direction lands in a bay or on an islet, try nearby
-  // seaward directions at the same distance.
-  if (isLandAt(candidate.x, candidate.y)) {
-    for (let turn = 1; turn <= 8; turn += 1) {
-      const angle = (turn / 8) * Math.PI * 2;
-      const cos = Math.cos(angle);
-      const sin = Math.sin(angle);
-      const rotated = {
-        x: coast.x + ((awayX / length) * cos - (awayY / length) * sin) * distance,
-        y: coast.y + ((awayX / length) * sin + (awayY / length) * cos) * distance,
-      };
-      if (!isLandAt(rotated.x, rotated.y)) {
-        candidate = rotated;
-        break;
-      }
-    }
-  }
-
-  cachedTestCentre = candidate;
-  return candidate;
+  const centre = fallback ?? port.anchorage;
+  portStartCentres.set(port.id, centre);
+  return centre;
 }
 
 function startCentreFor(world: World): { x: number; y: number } {
-  return world.kind === "test" ? testCentre() : startCentre();
+  return world.startPort && world.kind !== "normal"
+    ? portStartCentre(world.startPort)
+    : navyStartCentre(world);
 }
 
 /** A stable spot in the start area, different for each player id. */
@@ -209,12 +236,11 @@ function startSpot(
   playerId: string,
   centre: { x: number; y: number },
 ): { x: number; y: number; headingRad: number } {
-  const area = settings.world.startArea;
   const hash = hashPlayerId(playerId);
 
   const bearingRad = (hash % 360) * DEG;
   const share = 0.55 + (((hash >>> 8) % 1000) / 1000) * 0.45;
-  const distanceKm = area.radiusKm * share;
+  const distanceKm = settings.world.startRadiusKm * share;
 
   // The chart's y grows south, so a compass bearing points along
   // (sin bearing, -cos bearing).
@@ -236,8 +262,7 @@ function distanceKm(a: { x: number; y: number }, b: { x: number; y: number }): n
 
 /**
  * Pick a berth for a new player. If the deterministic berth is too close to an
- * existing ship, walk around the start circle until there is room, so the
- * second player always starts a few kilometres away.
+ * existing ship, or on land, walk around the start circle until there is room.
  */
 function newPlayerSpot(world: World, playerId: string): { x: number; y: number; headingRad: number } {
   const centre = startCentreFor(world);
@@ -248,15 +273,18 @@ function newPlayerSpot(world: World, playerId: string): { x: number; y: number; 
   let bearing = Math.atan2(offsetX, offsetY);
 
   let spot = initial;
-  for (let attempt = 0; attempt < 12; attempt += 1) {
+  for (let attempt = 0; attempt < 72; attempt += 1) {
     const candidate = {
       x: centre.x + Math.sin(bearing) * radius,
       y: centre.y - Math.cos(bearing) * radius,
     };
 
-    const clear = [...world.players.values()].every(
-      (ship) => distanceKm(ship, candidate) >= settings.world.startArea.minimumSeparationKm,
-    );
+    const clear =
+      isInsideMapFrame(candidate.x, candidate.y) &&
+      !isLandAt(candidate.x, candidate.y) &&
+      [...world.players.values()].every(
+        (ship) => distanceKm(ship, candidate) >= settings.world.minimumSeparationKm,
+      );
     if (clear) {
       spot = {
         ...candidate,
@@ -300,7 +328,14 @@ export function addPlayer(
   }
 
   const spot = newPlayerSpot(world, playerId);
-  const ship = createShip(playerId, classId, spot.x, spot.y, spot.headingRad);
+  const ship = createShip(
+    playerId,
+    classId,
+    spot.x,
+    spot.y,
+    spot.headingRad,
+    world.navy,
+  );
   world.players.set(playerId, ship);
 
   const chart = createChart(world.kind);
@@ -339,9 +374,12 @@ export function applyOrder(world: World, playerId: string, x: unknown, y: unknow
   if (typeof x !== "number" || typeof y !== "number") return false;
 
   const ship = world.players.get(playerId);
-  if (!ship) return false;
+  if (!ship || ship.dockedPortId) return false;
+  if (!sailTo(ship, x, y)) return false;
 
-  return sailTo(ship, x, y);
+  ship.waitingPortId = null;
+  ship.portOrderId = null;
+  return true;
 }
 
 /** Remember one short message for a player. Older messages are dropped. */
@@ -363,6 +401,154 @@ export function takeNotice(world: World, playerId: string): string | null {
   const notice = queue.shift() ?? null;
   if (queue.length === 0) world.notices.delete(playerId);
   return notice;
+}
+
+function allShips(world: World): Array<{ ownerId: string; ship: Ship }> {
+  const ships: Array<{ ownerId: string; ship: Ship }> = [];
+  for (const [ownerId, ship] of world.players) ships.push({ ownerId, ship });
+  for (const [ownerId, fleet] of world.botFleets) {
+    for (const ship of fleet) ships.push({ ownerId, ship });
+  }
+  return ships;
+}
+
+/** Docking places at a port size. */
+export function portCapacity(port: Pick<PlacedPort, "size">): number {
+  return settings.ports.sizes[port.size].dockingCapacity;
+}
+
+/** Docked ships of every owner, including temporary bot ships. */
+function dockedCount(world: World, portId: string): number {
+  let count = 0;
+  for (const { ship } of allShips(world)) {
+    if (ship.dockedPortId === portId) count += 1;
+  }
+  return count;
+}
+
+function dockAt(
+  world: World,
+  ownerId: string,
+  ship: Ship,
+  port: PlacedPort,
+): void {
+  ship.x = port.anchorage.x;
+  ship.y = port.anchorage.y;
+  ship.order = null;
+  ship.speedKnots = 0;
+  ship.dockedPortId = port.id;
+  ship.waitingPortId = null;
+  ship.portOrderId = null;
+  ship.arrived = true;
+  if (world.players.has(ownerId)) pushNotice(world, ownerId, `Docked at ${port.name}.`);
+}
+
+function arriveAtPort(
+  world: World,
+  ownerId: string,
+  ship: Ship,
+  port: PlacedPort,
+): void {
+  if (dockedCount(world, port.id) < portCapacity(port)) {
+    dockAt(world, ownerId, ship, port);
+    return;
+  }
+
+  ship.order = null;
+  ship.speedKnots = 0;
+  ship.portOrderId = null;
+  ship.dockedPortId = null;
+  ship.waitingPortId = port.id;
+  ship.waitingSinceGameMs = world.gameMs;
+  ship.arrived = true;
+  if (world.players.has(ownerId)) pushNotice(world, ownerId, PORT_FULL_NOTICE);
+}
+
+/** Order a found port. Unfound or non-placed ports are refused. */
+export function applyPortOrder(
+  world: World,
+  playerId: string,
+  portId: unknown,
+): boolean {
+  if (typeof portId !== "string") return false;
+  const ship = world.players.get(playerId);
+  const port = world.ports.get(portId);
+  if (!ship || !port || ship.dockedPortId) return false;
+  if (!world.charts.get(playerId)?.foundPorts.has(portId)) return false;
+
+  ship.waitingPortId = null;
+  ship.waitingSinceGameMs = 0;
+  ship.portOrderId = port.id;
+
+  if (distanceKm(ship, port.anchorage) <= settings.sailing.arrivalRadiusKm) {
+    ship.order = null;
+    arriveAtPort(world, playerId, ship, port);
+    return true;
+  }
+
+  if (!sailTo(ship, port.anchorage.x, port.anchorage.y)) {
+    ship.portOrderId = null;
+    return false;
+  }
+  return true;
+}
+
+/** Free a docking place. The ship stays at the anchorage and may sail again. */
+export function undock(world: World, playerId: string): boolean {
+  const ship = world.players.get(playerId);
+  const portId = ship?.dockedPortId;
+  if (!ship || !portId) return false;
+  const port = world.ports.get(portId);
+
+  ship.dockedPortId = null;
+  ship.speedKnots = 0;
+  ship.order = null;
+  ship.portOrderId = null;
+  ship.waitingPortId = null;
+  ship.arrived = true;
+  pushNotice(world, playerId, port ? `Undocked from ${port.name}.` : "Undocked.");
+  return true;
+}
+
+/** Dock an arriving port order, or clear the order if it ended at a coast. */
+function finishPortOrder(world: World, ownerId: string, ship: Ship): void {
+  if (!ship.portOrderId || ship.order) return;
+  const port = world.ports.get(ship.portOrderId);
+  ship.portOrderId = null;
+  if (!port || !ship.arrived) return;
+  if (distanceKm(ship, port.anchorage) > settings.sailing.arrivalRadiusKm + 0.1) return;
+  arriveAtPort(world, ownerId, ship, port);
+}
+
+/** Retry waiting ships oldest first, once per configured retry interval. */
+function tryWaitingShips(world: World): void {
+  const waitingPortIds = new Set<string>();
+  for (const { ship } of allShips(world)) {
+    if (ship.waitingPortId) waitingPortIds.add(ship.waitingPortId);
+  }
+
+  for (const portId of waitingPortIds) {
+    const port = world.ports.get(portId);
+    if (!port) continue;
+    let free = portCapacity(port) - dockedCount(world, portId);
+    if (free <= 0) continue;
+
+    const waiting = allShips(world)
+      .filter(({ ship }) => ship.waitingPortId === portId)
+      .sort((a, b) =>
+        a.ship.waitingSinceGameMs - b.ship.waitingSinceGameMs ||
+        (a.ship.id < b.ship.id ? -1 : a.ship.id > b.ship.id ? 1 : 0),
+      );
+
+    for (const { ownerId, ship } of waiting) {
+      if (world.gameMs - ship.waitingSinceGameMs < settings.ports.dockingRetrySeconds * 1_000) {
+        continue;
+      }
+      if (free <= 0) break;
+      dockAt(world, ownerId, ship, port);
+      free -= 1;
+    }
+  }
 }
 
 /** Where this tick's segment first leaves the chart, as a 0..1 fraction. */
@@ -613,7 +799,7 @@ function openWaterDistance(ship: Ship, headingRad: number): number {
  * of headings and prefer the one that gets furthest from this coast.
  */
 function chooseCoastEscapeHeading(ship: Ship, windFromDeg: number): number | null {
-  const spec = settings.ships.types[ship.classId];
+  const spec = shipSpecFor(ship);
   const order = ship.order;
   const targetBearing = order
     ? Math.atan2(order.x - ship.x, -(order.y - ship.y))
@@ -660,6 +846,12 @@ function stepOwnerShip(
   dtGameSeconds: number,
   windFromDeg: number,
 ): void {
+  if (ship.dockedPortId) {
+    ship.speedKnots = 0;
+    ship.order = null;
+    return;
+  }
+
   // A ship close to a coast first turns and sails for open water. This gives
   // a new seaward order a way out even when the wind is blowing onshore.
   if (
@@ -682,6 +874,7 @@ function stepOwnerShip(
     ship.coastEscapeHeadingRad ?? undefined,
   );
   resolveMovement(world, ownerId, ship, fromX, fromY);
+  finishPortOrder(world, ownerId, ship);
 }
 
 export function stepWorld(
@@ -710,6 +903,7 @@ export function stepWorld(
   world.gameMs += elapsedMs;
   world.gameSeconds = world.gameMs / 1000;
   updateFog(world);
+  tryWaitingShips(world);
 }
 
 /** Normalise a heading in radians to whole compass degrees. */
@@ -736,6 +930,26 @@ export function visibleStateFor(
   const isVisible = (ship: Ship): boolean =>
     own.some((mine) => (ship.x - mine.x) ** 2 + (ship.y - mine.y) ** 2 <= sightSq);
 
+  const chart = world.charts.get(playerId) ?? createChart(world.kind);
+  world.charts.set(playerId, chart);
+
+  // A port is found by its anchorage, not its coast. Dev rooms know them all.
+  if (chart.all) {
+    for (const port of PLACED_PORTS) chart.foundPorts.add(port.id);
+  } else {
+    for (const port of PLACED_PORTS) {
+      if (chart.foundPorts.has(port.id)) continue;
+      if (
+        own.some(
+          (ship) =>
+            (ship.x - port.anchorage.x) ** 2 + (ship.y - port.anchorage.y) ** 2 <= sightSq,
+        )
+      ) {
+        chart.foundPorts.add(port.id);
+      }
+    }
+  }
+
   const ships: ShipSnapshot[] = [];
   const visibleIds = new Set<string>();
 
@@ -756,11 +970,12 @@ export function visibleStateFor(
       Number(ship.y.toFixed(2)),
       headingDegrees(ship.headingRad),
       Number(ship.speedKnots.toFixed(1)),
+      ship.navy,
+      ship.dockedPortId,
+      ship.waitingPortId,
     ]);
   }
 
-  const chart = world.charts.get(playerId) ?? createChart(world.kind);
-  world.charts.set(playerId, chart);
   const near = own[0] ? { x: own[0].x, y: own[0].y } : undefined;
 
   // Remember foreign ships while they are visible; when they leave the circle
@@ -769,7 +984,7 @@ export function visibleStateFor(
     if (ownIds.has(ship.id) || !visibleIds.has(ship.id)) continue;
     chart.seen.set(ship.id, {
       classId: ship.classId,
-      navy: "British",
+      navy: ship.navy,
       x: Number(ship.x.toFixed(2)),
       y: Number(ship.y.toFixed(2)),
       atGameSeconds: world.gameSeconds,
@@ -788,6 +1003,24 @@ export function visibleStateFor(
     ]);
   }
 
+  // Free places are only for a port where this player already has a berth.
+  const ports: PortSnapshot[] = [];
+  for (const port of PLACED_PORTS) {
+    if (!chart.foundPorts.has(port.id)) continue;
+    const snapshot: PortSnapshot = [
+      port.id,
+      port.name,
+      port.size,
+      port.npc ? 1 : 0,
+      Number(port.anchorage.x.toFixed(2)),
+      Number(port.anchorage.y.toFixed(2)),
+    ];
+    if (own.some((ship) => ship.dockedPortId === port.id)) {
+      snapshot.push(Math.max(0, portCapacity(port) - dockedCount(world, port.id)));
+    }
+    ports.push(snapshot);
+  }
+
   return {
     t: "s",
     tick: world.tick,
@@ -798,5 +1031,6 @@ export function visibleStateFor(
     ships,
     l: lastSeen,
     chart: takeChartUpdate(chart, blockLookup, maxBlocks, near),
+    ports,
   };
 }

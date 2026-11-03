@@ -94,6 +94,14 @@
       "types": "./dist/navies.d.ts",
       "default": "./dist/navies.js"
     },
+    "./ships": {
+      "types": "./dist/data/ships.d.ts",
+      "default": "./dist/data/ships.js"
+    },
+    "./ship-rules": {
+      "types": "./dist/shipRules.d.ts",
+      "default": "./dist/shipRules.js"
+    },
     "./port-view": {
       "types": "./dist/portView.d.ts",
       "default": "./dist/portView.js"

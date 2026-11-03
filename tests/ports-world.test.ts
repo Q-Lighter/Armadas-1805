@@ -9,6 +9,7 @@ import { isSeaAt } from "@naval/shared/land";
 import { shipSpecFor } from "@naval/shared/sailing";
 import { NAVY_IDS, parseNavy, type NavyId } from "@naval/shared/navies";
 import { findPortByName } from "@naval/shared/ports";
+import { shipTypeFor } from "@naval/shared/ships";
 import {
   PORT_FULL_NOTICE,
   addPlayer,
@@ -72,7 +73,11 @@ test("the four navies have their real starts, colours and flagship speeds", () =
     assert.equal(testWorld.navy, navy);
     assert.equal(testShip.navy, navy);
     assert.equal(testShip.classId, "frigate");
-    assert.equal(shipSpecFor(testShip).cruiseKnots, 9, "frigates keep their own table");
+    assert.equal(
+      shipSpecFor(testShip).cruiseKnots,
+      shipTypeFor(navy, "frigate").cruiseKnots,
+      "frigates use their navy's table",
+    );
 
     const flagship = { classId: "flagship" as const, navy };
     assert.equal(shipSpecFor(flagship).cruiseKnots, config.flagshipCruiseKnots);

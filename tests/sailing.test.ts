@@ -7,6 +7,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import { settings } from "@naval/shared/settings";
+import { shipTypeFor } from "@naval/shared/ships";
 import {
   angleOffWindDeg,
   createShip,
@@ -45,7 +46,7 @@ function sailUntilArrived(ship: Ship, target: Point, dt: number, maxSteps = 200_
 
 test("a ship cannot sail inside its no-sail angle", () => {
   for (const classId of CLASSES) {
-    const spec = settings.ships.types[classId];
+    const spec = shipTypeFor("British", classId);
     const justInside = spec.closestAngleDeg - 0.5;
     const justOutside = spec.closestAngleDeg + 0.5;
 
@@ -58,7 +59,7 @@ test("a ship cannot sail inside its no-sail angle", () => {
 
 test("turning takes the time in the settings for every ship", () => {
   for (const classId of CLASSES) {
-    const spec = settings.ships.types[classId];
+    const spec = shipTypeFor("British", classId);
     const expectedRate = 90 / (spec.turn90GameMinutes * 60);
 
     assert.equal(turnRateDegPerSecond(spec), expectedRate);

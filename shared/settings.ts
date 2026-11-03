@@ -82,31 +82,40 @@ export const settings = {
     maxLookupCompressedBytes: 1_000_000,
   },
 
-  /** Ship classes and their sailing values. All speeds are in knots. */
+  /** Ship buying, delivery and crew numbers. Draft values. */
   ships: {
-    types: {
-      flagship: {
-        name: "British flagship (first rate 100)",
-        cruiseKnots: 6,
-        topKnots: 9,
-        closestAngleDeg: 70,
-        turn90GameMinutes: 8,
-      },
-      frigate: {
-        name: "British frigate (38 gun)",
-        cruiseKnots: 9,
-        topKnots: 13,
-        closestAngleDeg: 62,
-        turn90GameMinutes: 4,
-      },
-      raider: {
-        name: "British raider (schooner)",
-        cruiseKnots: 8.5,
-        topKnots: 12,
-        closestAngleDeg: 55,
-        turn90GameMinutes: 2,
-      },
+    /** Pieces of eight for each buyable role, the same for every navy. */
+    prices: {
+      raider: 1_000,
+      escort: 2_500,
+      trade: 3_000,
+      frigate: 6_000,
+      line: 14_000,
     },
+    /** Game days from purchase to delivery, by ship size. */
+    deliveryGameDays: {
+      small: 1,
+      mid: 2,
+      large: 3,
+    },
+    /** Test and dev rooms speed delivery up by this factor. */
+    testDeliveryMultiplier: 0.1,
+    /** A player may own no more than this, counting ships in delivery. */
+    maxShipsPerPlayer: 30,
+    /** Crew needed to sail, as a share of the full complement. */
+    minimumCrewShare: 0.1,
+    /** Pieces of eight paid to the port for each sailor hired. */
+    crewHireFee: 5,
+    /** A port crew pool refills from empty to full in this many real minutes. */
+    crewRefillRealMinutes: 25,
+    /** Starting money by room kind. */
+    startMoney: {
+      normal: 0,
+      test: 50_000,
+      dev: 50_000,
+    },
+    /** The longest permanent ship name the server accepts. */
+    maxNameLength: 40,
   },
 
   /** Placeholder weather: one constant wind until the weather phase. */

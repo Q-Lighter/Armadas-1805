@@ -6,6 +6,11 @@
 
 import { settings } from "./settings.js";
 import type { NavyId } from "./navies.js";
+import {
+  shipTypeFor,
+  type ShipClassId,
+  type ShipType,
+} from "./data/ships.js";
 
 /** One knot is 1.852 km/h. A definition, not a tuning value. */
 export const KM_PER_HOUR_PER_KNOT = 1.852;
@@ -13,16 +18,10 @@ export const KM_PER_HOUR_PER_KNOT = 1.852;
 const DEG = Math.PI / 180;
 const RAD = 180 / Math.PI;
 
-export type ShipClassId = keyof typeof settings.ships.types;
+export type { ShipClassId };
 
-/** The sailing numbers used by the code, with room for a navy's cruise speed. */
-export interface ShipSpec {
-  name: string;
-  cruiseKnots: number;
-  topKnots: number;
-  closestAngleDeg: number;
-  turn90GameMinutes: number;
-}
+/** The sailing numbers used by the code, from the real ship table. */
+export type ShipSpec = ShipType;
 
 /** Which side of the wind the ship is tacking on. */
 export type TackSide = 1 | -1;
@@ -142,17 +141,9 @@ export function createShip(
   };
 }
 
-/**
- * The sailing numbers for one ship. A flagship uses the common British hull
- * table with its navy's cruise speed; other classes keep their own table.
- */
+/** The sailing numbers for one ship, looked up by its navy and role. */
 export function shipSpecFor(ship: Pick<Ship, "classId" | "navy">): ShipSpec {
-  const spec = settings.ships.types[ship.classId];
-  if (ship.classId !== "flagship") return spec;
-  return {
-    ...spec,
-    cruiseKnots: settings.navies[ship.navy].flagshipCruiseKnots,
-  };
+  return shipTypeFor(ship.navy, ship.classId);
 }
 
 /** Give a sail-to order. Returns false for an order the server should refuse. */

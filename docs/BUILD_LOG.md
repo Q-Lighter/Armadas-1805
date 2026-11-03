@@ -1185,3 +1185,31 @@ and short docking notices.
   shared render/layout tests.
 - Marker labels use an approximate text width for collision avoidance; the
   period font's real rasterised width may shift a label by a few pixels.
+
+## Session 2C-a: ship data and rules
+
+**Date:** 2026-11-03
+**Branch:** main
+
+### What was built
+
+- Added `shared/data/ships.ts`: 24 period ships, six per navy, with guns, crew,
+  speed, cargo, hull, wind, turn and draught values. Sailing now reads the
+  selected navy's own ship record.
+- Added the draft economy to settings: five buyable prices, one/two/three game
+  day delivery by size, the test/dev delivery multiplier, the 30-ship cap,
+  10% minimum crew, 5 per sailor, 25-minute pool refill and room start money.
+- Added pure shipyard rules for port stock, price, delivery, sailing crew,
+  hiring cost, pool refill, ship cap and permanent name checks.
+- Added twenty suggested names for each navy.
+
+### Checks
+
+- `npm test`: **89/89 passing**, including all 24 records, gun totals, port
+  stock, prices, delivery, crew rules, refill, cap and names.
+- `npm run build`: passing.
+
+### Broken or unfinished
+
+- No buying, fleets or crew panels yet; those are Parts B and C.
+- The catalogue's combat fields are stored but not used, as requested.

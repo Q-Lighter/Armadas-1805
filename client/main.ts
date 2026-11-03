@@ -899,13 +899,13 @@ async function start(): Promise<void> {
       }
     }
 
-    if (state.k === "dev" && Array.isArray(state.d) && state.d.length >= 6) {
-      const [ships, worldHz, gapAvgMs, gapMaxMs, bytesAvg, bytesMax] = state.d;
+    if (state.k === "dev" && Array.isArray(state.d) && state.d.length >= 7) {
+      const [ships, bots, worldHz, gapAvgMs, gapMaxMs, bytesAvg, bytesMax] = state.d;
       if (
-        [ships, worldHz, gapAvgMs, gapMaxMs, bytesAvg, bytesMax]
+        [ships, bots, worldHz, gapAvgMs, gapMaxMs, bytesAvg, bytesMax]
           .every((value) => typeof value === "number" && Number.isFinite(value))
       ) {
-        debugInfo = { ships, worldHz, gapAvgMs, gapMaxMs, bytesAvg, bytesMax };
+        debugInfo = { ships, bots, worldHz, gapAvgMs, gapMaxMs, bytesAvg, bytesMax };
       }
     }
 

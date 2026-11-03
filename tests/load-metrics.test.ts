@@ -21,10 +21,11 @@ test("load metrics report timer gaps and per-player bytes", () => {
     }
   }
 
-  const [ships, hz, averageGap, worstGap, bytesAverage, bytesWorst] =
-    metrics.snapshot(50, 11_000);
+  const [ships, bots, hz, averageGap, worstGap, bytesAverage, bytesWorst] =
+    metrics.snapshot(50, 30, 11_000);
 
   assert.equal(ships, 50);
+  assert.equal(bots, 30);
   assert.ok(hz >= 9 && hz <= 10.1, `expected about 10 updates/s, got ${hz}`);
   assert.ok(averageGap >= 99 && averageGap <= 101);
   assert.equal(worstGap, 100);
@@ -41,7 +42,7 @@ test("resetting metrics does not carry an idle gap into a new session", () => {
   metrics.noteTick(120_000);
   metrics.noteTick(120_100);
 
-  const [, hz, averageGap, worstGap] = metrics.snapshot(1, 120_100);
+  const [, , hz, averageGap, worstGap] = metrics.snapshot(1, 0, 120_100);
   assert.ok(hz > 9);
   assert.equal(averageGap, 100);
   assert.equal(worstGap, 100);

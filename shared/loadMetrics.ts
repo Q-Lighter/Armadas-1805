@@ -7,10 +7,11 @@
 export const DEBUG_WINDOW_MS = 10_000;
 
 /**
- * [ships, world updates per second, average gap ms, worst gap ms,
- *  average bytes/second per fake player, worst bytes in one second for a player]
+ * [total ships, bot ships, world updates per second, average gap ms,
+ *  worst gap ms, average bytes/second per fake player, worst bytes in one
+ *  second for a player]
  */
-export type DebugStats = [number, number, number, number, number, number];
+export type DebugStats = [number, number, number, number, number, number, number];
 
 interface Gap {
   at: number;
@@ -52,7 +53,7 @@ export class LoadMetrics {
     this.trim(at);
   }
 
-  snapshot(ships: number, at: number): DebugStats {
+  snapshot(ships: number, bots: number, at: number): DebugStats {
     this.trim(at);
     const elapsedSeconds = Math.max(0.001, (at - Math.max(this.startedAt, at - DEBUG_WINDOW_MS)) / 1000);
     const gaps = this.gaps;
@@ -92,6 +93,7 @@ export class LoadMetrics {
 
     return [
       ships,
+      bots,
       Math.round(updatesPerSecond * 10) / 10,
       Math.round(averageGap * 10) / 10,
       Math.round(worstGap),

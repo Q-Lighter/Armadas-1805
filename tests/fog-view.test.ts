@@ -29,6 +29,7 @@ test("test and dev rooms show the fog debug line; normal rooms do not", () => {
   const devLine = fogDebugLine("dev", true, cells, 8, {
     buildCommit: "abc123def4567890",
     ships: 100,
+    bots: 50,
     worldHz: 9.9,
     gapAvgMs: 101,
     gapMaxMs: 140,
@@ -38,7 +39,8 @@ test("test and dev rooms show the fog debug line; normal rooms do not", () => {
     receivedGapMaxMs: 250,
   });
   assert.match(devLine ?? "", new RegExp(`${chartColumns * chartRows} discovered cells`));
-  assert.match(devLine ?? "", /100 ships/);
+  assert.match(devLine ?? "", /50 bots/);
+  assert.match(devLine ?? "", /100 ships total/);
   assert.match(devLine ?? "", /9\.9 world\/s/);
   assert.match(devLine ?? "", /gap avg 101 ms/);
   assert.match(devLine ?? "", /worst 140 ms/);

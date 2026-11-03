@@ -181,7 +181,7 @@ export const settings = {
 
   /** TEMP-DEBUG: built-in dev-room load test. Remove with the bot code. */
   loadTest: {
-    minBots: 1,
+    minBots: 0,
     maxBots: 300,
     fakePlayers: 8,
     /** Share of bots that start near the first human, within these distances. */

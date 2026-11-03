@@ -5,10 +5,9 @@
 // object except through visibleStateFor().
 
 import { settings } from "@naval/shared/settings";
-import { botCountForRoom, botShipCount } from "@naval/shared/bots";
+import { botCountForRoom, botShipCount, setBotCount } from "@naval/shared/bots";
 import { LoadMetrics } from "@naval/shared/load-metrics";
 import {
-  addBotFleets,
   addPlayer,
   applyOrder,
   createWorld,
@@ -69,10 +68,12 @@ export class GameRoom {
       });
     }
 
-    // TEMP-DEBUG: only a dev room accepts bots, and the range is strict.
-    const botCount = botCountForRoom(room, url.searchParams.get("bots"));
-    if (botCount === null) {
-      return new Response("Bot count must be a whole number from 1 to 300.", {
+    // TEMP-DEBUG: a dev room accepts bots=0..300 on every join. An absent
+    // value leaves the room's current bot count alone.
+    const rawBots = url.searchParams.get("bots");
+    const botCount = rawBots === null ? null : botCountForRoom(room, rawBots);
+    if (rawBots !== null && botCount === null) {
+      return new Response("Bot count must be a whole number from 0 to 300.", {
         status: 400,
       });
     }
@@ -86,9 +87,10 @@ export class GameRoom {
     this.ghosts.reconnected(playerId);
     addPlayer(this.world, playerId);
 
-    // TEMP-DEBUG: create the fake fleets once, after the first human exists.
-    if (botCount > 0 && this.world.botFleets.size === 0) {
-      addBotFleets(this.world, botCount, playerId);
+    // TEMP-DEBUG: every join with bots=N sets the target count. This is what
+    // lets a second tab change 25 bots to 50, or 100 bots down to 10.
+    if (botCount !== null) {
+      setBotCount(this.world, botCount, playerId);
     }
 
     server.addEventListener("message", (event) => this.onMessage(playerId, event.data));
@@ -162,6 +164,7 @@ export class GameRoom {
       if (this.world.kind === "dev") {
         state.d = this.metrics.snapshot(
           this.world.players.size + botShipCount(this.world),
+          botShipCount(this.world),
           Date.now(),
         );
       }

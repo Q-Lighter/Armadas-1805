@@ -9,6 +9,7 @@ import {
   addBots,
   botCountForRoom,
   botShipCount,
+  setBotCount,
 } from "@naval/shared/bots";
 import {
   addPlayer,
@@ -40,10 +41,11 @@ function devWorldWithBots(count: number) {
 
 test("bot counts are strictly limited and ignored outside dev rooms", () => {
   assert.equal(botCountForRoom("dev-load", null), 0);
+  assert.equal(botCountForRoom("dev-load", "0"), 0);
   assert.equal(botCountForRoom("dev-load", "1"), 1);
   assert.equal(botCountForRoom("dev-load", "300"), 300);
-  assert.equal(botCountForRoom("dev-load", "0"), null);
-  assert.equal(botCountForRoom("dev-load", "301"), null);
+  assert.equal(botCountForRoom("dev-load", "301"), 300);
+  assert.equal(botCountForRoom("dev-load", "999"), 300);
   assert.equal(botCountForRoom("dev-load", "12.5"), null);
   assert.equal(botCountForRoom("dev-load", "many"), null);
   assert.equal(botCountForRoom("test-load", "100"), 0);
@@ -63,6 +65,30 @@ test("bots exist only in dev rooms and are split across eight fake players", () 
   const fleets = [...world.botFleets.values()];
   assert.ok(fleets.every((fleet) => fleet.length >= 12));
   assert.ok(fleets.every((fleet) => fleet.every((ship) => ship.classId === "frigate")));
+});
+
+test("a later dev-room join changes the target bot count", () => {
+  const world = createWorld("dev-load");
+  addPlayer(world, "alpha");
+  addBots(world, 25, "alpha", seededRandom(1805));
+  assert.equal(setBotCount(world, 50, "alpha", seededRandom(1805)), 50);
+  assert.equal(botShipCount(world), 50);
+  assert.equal(world.botFleets.size, settings.loadTest.fakePlayers);
+
+  assert.equal(setBotCount(world, 10, "alpha", seededRandom(1805)), 10);
+  assert.equal(botShipCount(world), 10);
+  assert.equal(world.botFleets.size, settings.loadTest.fakePlayers);
+
+  assert.equal(setBotCount(world, 0, "alpha", seededRandom(1805)), 0);
+  assert.equal(botShipCount(world), 0);
+
+  assert.equal(setBotCount(world, 300, "alpha", seededRandom(1805)), 300);
+  assert.equal(botShipCount(world), 300);
+
+  const normal = createWorld("main");
+  addPlayer(normal, "alpha");
+  assert.equal(setBotCount(normal, 50, "alpha"), 0);
+  assert.equal(botShipCount(normal), 0);
 });
 
 test("bots spawn at sea and choose sea destinations", () => {

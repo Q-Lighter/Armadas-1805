@@ -851,3 +851,34 @@ code has no other path that changes an id on reload.
 - A Durable Object can be evicted before the 120-second timer fires; in that
   case its in-memory room is gone anyway. No persistent storage is used.
 - Saving is still absent.
+
+## Session 1E-b: bot count
+
+**Date:** 2026-11-03
+**Branch:** main
+
+### What was asked
+
+Make `bots=N` set the dev room's bot count on every join, not only when the
+room was first created; add or remove ships, clamp 0–300, keep eight fake
+owners and all previous load-test behaviour, and show bot and total ship
+counts separately.
+
+### What was built
+
+- `server/src/gameRoom.ts` reads `bots=` on every connection. When present it
+  calls `setBotCount`; when absent it leaves the count unchanged.
+- `shared/bots.ts` now has `setBotCount`: it removes excess ships from the
+  largest fake fleets, adds new ships to the smallest owners, and keeps ids
+  unique. Zero empties the fleets. The count is clamped to 0–300; invalid text
+  is still rejected.
+- `LoadMetrics.snapshot` and the TEMP-DEBUG tuple carry bot ships as well as
+  total ships. The line reads, for example, `50 bots · 76 ships total`.
+- Tests: 58 pass, including 25→50→10→0→300 on later joins, the clamp and the
+  dev-room guard.
+
+### Broken or unfinished
+
+- The bot-increase path runs inside the join request. Adding 300 ships at once
+  was not timed separately from the earlier local benchmark.
+- No browser load test was run here, by instruction.

@@ -29,21 +29,25 @@ Open the game with a dev room and a bot count, for example:
 
 `/?room=dev-load&bots=100`
 
-The server accepts **1 to 300** bots and only when the room code starts `dev-`.
-It creates eight fake owners holding roughly equal frigate fleets (100 bots is
-12–13 ships per fake owner). About 10% of the bots start within 40 km of the
-first human; the rest are placed in the Caribbean and the northern part of
-South America. Every ship starts on sea and receives a sea destination. Bots
-use the normal shared sailing, coast and discovery rules and choose a new sea
-destination on arrival or after a coast stop.
+The server accepts **0 to 300** bots and only when the room code starts `dev-`.
+Values above 300 are clamped to 300. Every join that includes `bots=N` sets the
+room's target count, adding or removing ships; a later tab can change 25 to 50,
+or 100 down to 10. An absent `bots` value leaves the current count alone. Bots
+are split across eight fake owners holding roughly equal frigate fleets (100
+bots is 12–13 ships per fake owner). About 10% of newly added bots start within
+40 km of the first human; the rest are placed in the Caribbean and the northern
+part of South America. Every ship starts on sea and receives a sea destination.
+Bots use the normal shared sailing, coast and discovery rules and choose a new
+sea destination on arrival or after a coast stop.
 
 Every fake owner has a real chart and discovers cells from all of its ships'
 sight circles. Five times a second the server calls `visibleStateFor` for each
 of the eight fake owners, measures the resulting JSON and throws it away. It is
 never sent to a socket.
 
-The dev-room TEMP-DEBUG line shows the total ship count, real world updates per
-second, average and worst gap between timer callbacks over the last 10 seconds,
+The dev-room TEMP-DEBUG line shows the bot count and the total ship count
+separately, real world updates per second, average and worst gap between timer
+callbacks over the last 10 seconds,
 average and worst bytes per second per fake player, and the browser's received
 updates per second and worst receive gap. CPU time is deliberately not measured
 inside the code because Workers coarsens its clocks.

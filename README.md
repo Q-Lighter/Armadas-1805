@@ -64,8 +64,9 @@ chart-edge order ends with a short paper notice that fades after a few seconds.
 The clock starts at **Day 1, 08:00**; one game day lasts 10 real minutes. Dawn
 and dusk tint the ship view, while the paper panels and chart stay clear.
 Test and dev rooms also show a small TEMP-DEBUG fog readout. A dev room can
-run a temporary load test, for example `/?room=dev-load&bots=100`; see
-[docs/STRESS.md](docs/STRESS.md).
+run a temporary load test, for example `/?room=dev-load&bots=100`; a later join
+with a different `bots=` value changes the count, and values are clamped to
+0–300. See [docs/STRESS.md](docs/STRESS.md).
 
 A player id is made on first visit and kept in the browser, so refreshing keeps
 the same ship and chart. A second tab takes over the same ship; the older tab

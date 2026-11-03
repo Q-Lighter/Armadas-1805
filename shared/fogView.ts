@@ -19,6 +19,7 @@ export interface FogDebugInfo {
   playerId?: string;
   buildCommit?: string;
   ships?: number;
+  bots?: number;
   worldHz?: number;
   gapAvgMs?: number;
   gapMaxMs?: number;
@@ -58,7 +59,8 @@ export function fogDebugLine(
 
   // The load-test counters are only meaningful in a dev room.
   if (kind === "dev") {
-    if (info.ships !== undefined) parts.push(`${info.ships} ships`);
+    if (info.bots !== undefined) parts.push(`${info.bots} bots`);
+    if (info.ships !== undefined) parts.push(`${info.ships} ships total`);
     if (info.worldHz !== undefined) parts.push(`${info.worldHz.toFixed(1)} world/s`);
     if (info.gapAvgMs !== undefined) parts.push(`gap avg ${Math.round(info.gapAvgMs)} ms`);
     if (info.gapMaxMs !== undefined) parts.push(`worst ${Math.round(info.gapMaxMs)} ms`);

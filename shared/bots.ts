@@ -23,8 +23,8 @@ export function botCountForRoom(roomCode: string, raw: string | null): number | 
 
   const count = Number(raw);
   const { minBots, maxBots } = settings.loadTest;
-  if (!Number.isInteger(count) || count < minBots || count > maxBots) return null;
-  return count;
+  if (!Number.isInteger(count) || count < 0) return null;
+  return Math.max(minBots, Math.min(maxBots, count));
 }
 
 /** The internal owner id used by a fake player. */
@@ -84,6 +84,53 @@ function sendBotToSea(ship: Ship, random: Random): void {
  * Add computer ships to a dev room. The caller supplies the first human so
  * about a tenth of the bots begin within visual range of that player.
  */
+/** The next unused bot number, so adding fleets never reuses an id. */
+function nextBotIndex(world: World): number {
+  let next = 0;
+  for (const fleet of world.botFleets.values()) {
+    for (const ship of fleet) {
+      const match = /-ship-(\d+)$/.exec(ship.id);
+      if (match) next = Math.max(next, Number(match[1]) + 1);
+    }
+  }
+  return next;
+}
+
+function removeBotShips(world: World, count: number): void {
+  let remaining = Math.max(0, Math.floor(count));
+  while (remaining > 0) {
+    let largestOwner: string | null = null;
+    let largestSize = 0;
+    for (const [owner, fleet] of world.botFleets) {
+      // Take from a fleet with more than one ship first, so eight owners are
+      // kept as long as there are at least eight bots.
+      const size = fleet.length > 1 ? fleet.length : 0;
+      if (size > largestSize) {
+        largestSize = size;
+        largestOwner = owner;
+      }
+    }
+    if (largestOwner === null) {
+      for (const [owner, fleet] of world.botFleets) {
+        if (fleet.length > 0) {
+          largestOwner = owner;
+          break;
+        }
+      }
+    }
+    if (largestOwner === null) break;
+
+    const fleet = world.botFleets.get(largestOwner);
+    fleet?.pop();
+    if (fleet && fleet.length === 0) world.botFleets.delete(largestOwner);
+    remaining -= 1;
+  }
+}
+
+/**
+ * Add bots, keeping the work spread across the eight fake owners. The caller
+ * asks for a number to add; `setBotCount` handles a target instead.
+ */
 export function addBots(
   world: World,
   count: number,
@@ -93,8 +140,9 @@ export function addBots(
   if (world.kind !== "dev") return 0;
 
   const max = settings.loadTest.maxBots;
-  const total = Math.max(0, Math.min(max, Math.floor(count)));
-  if (total === 0) return 0;
+  const current = botShipCount(world);
+  const total = Math.max(0, Math.min(max - current, Math.floor(count)));
+  if (total === 0) return current;
 
   const human = world.players.get(firstHumanId);
   const humanPoint = human ?? [...world.players.values()][0];
@@ -104,7 +152,17 @@ export function addBots(
   const ownerCount = settings.loadTest.fakePlayers;
 
   for (let index = 0; index < total; index += 1) {
-    const owner = botOwnerId(index % ownerCount);
+    let owner = botOwnerId(0);
+    let smallest = Infinity;
+    for (let ownerIndex = 0; ownerIndex < ownerCount; ownerIndex += 1) {
+      const candidate = botOwnerId(ownerIndex);
+      const size = world.botFleets.get(candidate)?.length ?? 0;
+      if (size < smallest) {
+        smallest = size;
+        owner = candidate;
+      }
+    }
+    const shipNumber = nextBotIndex(world) + index;
     let spawn: { x: number; y: number } | null = null;
 
     if (index < nearCount && humanPoint) {
@@ -139,7 +197,7 @@ export function addBots(
     if (!spawn) continue;
 
     const ship = createShip(
-      `${owner}-ship-${index}`,
+      `${owner}-ship-${shipNumber}`,
       "frigate",
       spawn.x,
       spawn.y,
@@ -161,7 +219,29 @@ export function addBots(
     revealCircle(chart, ship.x, ship.y);
   }
 
-  return [...world.botFleets.values()].reduce((sum, fleet) => sum + fleet.length, 0);
+  return botShipCount(world);
+}
+
+/**
+ * Set the room's bot total. This is called for every dev-room join that has a
+ * `bots=` value, so a later tab can change 25 to 50 or 100 to 10.
+ */
+export function setBotCount(
+  world: World,
+  count: number,
+  firstHumanId: string,
+  random: Random = Math.random,
+): number {
+  if (world.kind !== "dev") return 0;
+
+  const target = Math.max(
+    settings.loadTest.minBots,
+    Math.min(settings.loadTest.maxBots, Math.floor(count)),
+  );
+  const current = botShipCount(world);
+  if (target < current) removeBotShips(world, current - target);
+  else if (target > current) addBots(world, target - current, firstHumanId, random);
+  return botShipCount(world);
 }
 
 /** Replace a missing/arrived/coast-stopped order with a new sea destination. */

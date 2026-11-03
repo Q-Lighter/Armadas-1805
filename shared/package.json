@@ -53,6 +53,14 @@
     "./bots": {
       "types": "./dist/bots.d.ts",
       "default": "./dist/bots.js"
+    },
+    "./player-identity": {
+      "types": "./dist/playerIdentity.d.ts",
+      "default": "./dist/playerIdentity.js"
+    },
+    "./player-sessions": {
+      "types": "./dist/playerSessions.d.ts",
+      "default": "./dist/playerSessions.js"
     }
   },
   "files": [

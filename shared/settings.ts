@@ -144,6 +144,13 @@ export const settings = {
     maxOrderDistanceKm: 400,
   },
 
+  /** Player identity and rooms. */
+  players: {
+    /** In test and dev rooms only, remove a disconnected player after this
+     *  many seconds. Normal rooms never remove one. Draft: 120 seconds. */
+    ghostRemoveAfterSeconds: 120,
+  },
+
   /** The placeholder starting area for new players. */
   world: {
     /** The British start, west of Jamaica. */

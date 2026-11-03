@@ -288,7 +288,16 @@ export function addPlayer(
   classId: ShipClassId = shipClassForRoom(world.roomCode),
 ): Ship {
   const existing = world.players.get(playerId);
-  if (existing) return existing;
+  if (existing) {
+    // A returning player keeps the same chart. This also repairs an old
+    // room created before charts existed.
+    if (!world.charts.has(playerId)) {
+      const chart = createChart(world.kind);
+      world.charts.set(playerId, chart);
+      revealCircle(chart, existing.x, existing.y);
+    }
+    return existing;
+  }
 
   const spot = newPlayerSpot(world, playerId);
   const ship = createShip(playerId, classId, spot.x, spot.y, spot.headingRad);
@@ -298,6 +307,15 @@ export function addPlayer(
   world.charts.set(playerId, chart);
   revealCircle(chart, ship.x, ship.y);
   return ship;
+}
+
+/** Remove a human player's ship, chart and waiting messages. */
+export function removePlayer(world: World, playerId: string): boolean {
+  const removedShip = world.players.delete(playerId);
+  world.botFleets.delete(playerId);
+  world.charts.delete(playerId);
+  world.notices.delete(playerId);
+  return removedShip;
 }
 
 /** All ships belonging to one human or fake player. */

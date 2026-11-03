@@ -11,9 +11,16 @@ import {
   chartCellKm,
   chartColumns,
   chartRows,
+  roomKindForCode,
   type ChartBlock,
   type RoomKind,
 } from "@naval/shared/fog";
+import {
+  resolvePlayerIdentity,
+  type PlayerIdentity,
+  type StorageLike,
+} from "@naval/shared/player-identity";
+import { TAKEN_OVER_CLOSE_CODE } from "@naval/shared/player-sessions";
 import type { LastSeenSnapshot, StateMessage } from "@naval/shared/world";
 import {
   cellNeedsPaper,
@@ -45,7 +52,6 @@ const CHART_REBUILD_MS = 360;
 type UiSize = "small" | "medium" | "large";
 
 const UI_SIZE_KEY = "armadas.uiSize";
-const PLAYER_KEY = "armadas.playerId";
 
 function readSavedSize(): UiSize {
   try {
@@ -79,23 +85,19 @@ function element<T extends Element>(id: string): T {
   return node as unknown as T;
 }
 
-function playerId(): string {
-  try {
-    const saved = localStorage.getItem(PLAYER_KEY);
-    if (saved && /^[A-Za-z0-9_-]{1,40}$/.test(saved)) return saved;
-  } catch {
-    // Fall through and make a fresh id.
-  }
-
+function makePlayerId(): string {
   const bytes = new Uint8Array(8);
   crypto.getRandomValues(bytes);
-  const id = Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("");
+  return Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+
+/** Accessing the storage property itself can throw, so do that safely too. */
+function browserStorage(name: "localStorage" | "sessionStorage"): StorageLike | null {
   try {
-    localStorage.setItem(PLAYER_KEY, id);
+    return window[name];
   } catch {
-    // The id still works for this visit.
+    return null;
   }
-  return id;
 }
 
 const COMPASS_POINTS = [
@@ -172,6 +174,13 @@ async function start(): Promise<void> {
   const query = new URLSearchParams(location.search);
   const room = query.get("room") ?? "test";
   const requestedBots = query.get("bots");
+  const identity: PlayerIdentity = resolvePlayerIdentity(
+    browserStorage("localStorage"),
+    browserStorage("sessionStorage"),
+    roomKindForCode(room),
+    query.get("as"),
+    makePlayerId,
+  );
   const roomPattern = new RegExp(`^[A-Za-z0-9_-]{1,${settings.server.maxRoomCodeLength}}$`);
   if (!roomPattern.test(room)) {
     status.textContent = "Room code must be letters, numbers, dash or underscore.";
@@ -295,6 +304,7 @@ async function start(): Promise<void> {
   let socket: WebSocket | null = null;
   let target: { x: number; y: number } | null = null;
   let retry: number | null = null;
+  let takenOver = false;
   let noticeTimer = 0;
   let noticeHideTimer = 0;
   let windFrom: number = settings.weather.windFromDeg;
@@ -785,6 +795,7 @@ async function start(): Promise<void> {
       blocks.size,
       {
         ...debugInfo,
+        playerId: identity.id,
         buildCommit,
         receivedHz,
         receivedGapMaxMs: receivedAt.length >= 2 ? receivedGapMaxMs : undefined,
@@ -1005,15 +1016,29 @@ async function start(): Promise<void> {
     const botsQuery = requestedBots === null
       ? ""
       : `&bots=${encodeURIComponent(requestedBots)}`;
-    const url = `${scheme}://${location.host}/ws?room=${encodeURIComponent(room)}&player=${encodeURIComponent(playerId())}${botsQuery}`;
+    const url = `${scheme}://${location.host}/ws?room=${encodeURIComponent(room)}&player=${encodeURIComponent(identity.id)}${botsQuery}`;
     const next = new WebSocket(url);
     socket = next;
 
     next.addEventListener("open", () => setStatus("Connected"));
     next.addEventListener("message", onState);
     next.addEventListener("error", () => setStatus("Could not reach the ship. Retrying…", true));
-    next.addEventListener("close", () => {
+    next.addEventListener("close", (event) => {
       if (socket !== next) return;
+      socket = null;
+
+      if (event.code === TAKEN_OVER_CLOSE_CODE) {
+        takenOver = true;
+        if (retry !== null) {
+          window.clearTimeout(retry);
+          retry = null;
+        }
+        setStatus("This game is open in another tab", true);
+        showNotice("This game is open in another tab");
+        return;
+      }
+
+      if (takenOver) return;
       setStatus("Connection lost. Retrying…", true);
       if (retry === null && !document.hidden) {
         retry = window.setTimeout(() => {
@@ -1297,6 +1322,7 @@ async function start(): Promise<void> {
   }
 
   drawGrain();
+  if (identity.warning) showNotice(identity.warning);
   connect();
   void checkForNewVersion();
   window.setInterval(

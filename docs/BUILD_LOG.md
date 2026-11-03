@@ -802,3 +802,52 @@ moon cycle and night-wash strength. The existing `sailingTimeScale` is reused.
   observed.
 - There is still no saving. The temporary bot mode and TEMP-DEBUG readout
   remain, as requested for this phase.
+
+## Session 1E-a: player identity fix
+
+**Date:** 2026-11-03
+**Branch:** main
+
+### What was asked
+
+Stop a refresh creating a second ship, add a takeover notice for a second tab,
+allow `?as=NAME` in test and dev rooms, remove test/dev ghosts after 120
+seconds, and show the short player id in TEMP-DEBUG.
+
+### Cause of the refresh bug
+
+The client had only one place that made an id: `playerId()`. It read
+`localStorage` and swallowed any read or write error, then generated a fresh
+random id on that page load. The server was already matching an incoming id to
+an existing player. In a browser context where `localStorage` is blocked or
+partitioned, every refresh therefore sent a new id, the server correctly made a
+new ship, and the old ship remained. There was no session-storage fallback, so
+the identity could not survive even one reload in that context. I could not
+reproduce the owner's browser storage policy in this workspace; the identity
+code has no other path that changes an id on reload.
+
+### What was built
+
+- `shared/playerIdentity.ts`: one stable `armadas.playerId`, `localStorage`
+  first and `sessionStorage` second. If both are blocked the id still works for
+  the page and the player gets a paper warning. `?as=NAME` appends the name to
+  the stored id only in test and dev rooms, with a strict length-safe format.
+- `shared/playerSessions.ts`: the newest socket for an id takes over; the old
+  socket is closed with code 4001 and the old page shows "This game is open in
+  another tab" and stops reconnecting. The session map ignores the old socket's
+  later close event, so it cannot remove the new connection.
+- Test and dev rooms schedule removal of a disconnected player's ship, chart
+  and notices after `settings.players.ghostRemoveAfterSeconds` (120). Reconnect
+  cancels it; normal rooms never schedule it. The room loop still stops when
+  the last socket leaves.
+- TEMP-DEBUG now includes the short player id.
+- Tests: 57 pass, including same-id refresh preserving position and chart,
+  storage fallback, `?as=`, takeover, cleanup timing and normal-room retention.
+
+### Broken or unfinished
+
+- No browser is available, so the takeover notice and storage warning were not
+  seen on screen. The server paths are unit-tested, not exercised in a browser.
+- A Durable Object can be evicted before the 120-second timer fires; in that
+  case its in-memory room is gone anyway. No persistent storage is used.
+- Saving is still absent.

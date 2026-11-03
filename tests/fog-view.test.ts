@@ -16,6 +16,7 @@ test("test and dev rooms show the fog debug line; normal rooms do not", () => {
   assert.equal(fogDebugLine("normal", false, cells, 2), null);
 
   const testLine = fogDebugLine("test", false, cells, 2, {
+    playerId: "0123456789abcdef",
     buildCommit: "abc123def4567890",
   });
   assert.ok(testLine?.startsWith("TEMP-DEBUG"));
@@ -23,6 +24,7 @@ test("test and dev rooms show the fog debug line; normal rooms do not", () => {
   assert.match(testLine ?? "", /3 discovered cells/);
   assert.match(testLine ?? "", /2 map blocks received/);
   assert.match(testLine ?? "", /build abc123def456/);
+  assert.match(testLine ?? "", /player 01234567/);
 
   const devLine = fogDebugLine("dev", true, cells, 8, {
     buildCommit: "abc123def4567890",

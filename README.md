@@ -68,8 +68,14 @@ run a temporary load test, for example `/?room=dev-load&bots=100`; see
 [docs/STRESS.md](docs/STRESS.md).
 
 A player id is made on first visit and kept in the browser, so refreshing keeps
-the same ship. Two tabs share that id; use two devices or two browser profiles
-to sail as two players.
+the same ship and chart. A second tab takes over the same ship; the older tab
+stops with a paper notice. In test and dev rooms, add `&as=b` to the address to
+use a separate stored identity in a second tab for solo testing. If browser
+storage is blocked, the page falls back to session storage or warns that the
+ship cannot survive a refresh.
+
+In test and dev rooms, a disconnected player's ship and chart are removed after
+120 seconds. Normal rooms keep their ships in the world.
 
 ## Test
 
@@ -77,10 +83,10 @@ to sail as two players.
 npm test
 ```
 
-This compiles the shared code and runs 50 tests for the map projection and land
+This compiles the shared code and runs the tests for the map projection and land
 lookup, sailing, the world, coast and edge rules, fog, the chart data, the
-fog-view helpers, room timing, the temporary load-test ships and the game clock
-on Node's test runner.
+fog-view helpers, player identity and takeover, room timing, the temporary
+load-test ships and the game clock on Node's test runner.
 
 ```sh
 npm run test:server

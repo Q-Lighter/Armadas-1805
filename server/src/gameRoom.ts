@@ -12,6 +12,7 @@ import {
   addPlayer,
   applyOrder,
   createWorld,
+  removePlayer,
   stepWorld,
   takeNotice,
   visibleStateFor,
@@ -19,15 +20,27 @@ import {
   type World,
 } from "@naval/shared/world";
 import { RoomLoop } from "@naval/shared/room-loop";
+import { GhostCleanup, PlayerSessions } from "@naval/shared/player-sessions";
 import { CHART_BLOCKS } from "./chartBlocks.js";
 
 const playerIdPattern = /^[A-Za-z0-9_-]{1,40}$/;
 
 export class GameRoom {
   private world: World = createWorld();
-  private readonly sockets = new Map<string, WebSocket>();
+  private readonly sockets = new PlayerSessions<WebSocket>();
   private ticks = 0;
   private readonly metrics = new LoadMetrics();
+  private readonly ghosts = new GhostCleanup(
+    () => this.world.kind,
+    () => settings.players.ghostRemoveAfterSeconds * 1000,
+    (playerId) => {
+      removePlayer(this.world, playerId);
+    },
+    {
+      schedule: (callback, milliseconds) => setTimeout(callback, milliseconds),
+      cancel: (handle) => clearTimeout(handle as ReturnType<typeof setTimeout>),
+    },
+  );
   private readonly loop = new RoomLoop(
     () => this.tick(),
     1000 / settings.server.tickHz,
@@ -44,7 +57,10 @@ export class GameRoom {
 
     const url = new URL(request.url);
     const room = url.searchParams.get("room") ?? this.world.roomCode;
-    if (room !== this.world.roomCode) this.world = createWorld(room);
+    if (room !== this.world.roomCode) {
+      this.ghosts.clear();
+      this.world = createWorld(room);
+    }
 
     const playerId = url.searchParams.get("player") ?? "";
     if (!playerIdPattern.test(playerId)) {
@@ -66,7 +82,8 @@ export class GameRoom {
     const server = pair[1];
     server.accept();
 
-    // A new player gets a flagship; a returning id keeps its ship.
+    // A new player gets a flagship; a returning id keeps its ship and chart.
+    this.ghosts.reconnected(playerId);
     addPlayer(this.world, playerId);
 
     // TEMP-DEBUG: create the fake fleets once, after the first human exists.
@@ -74,23 +91,12 @@ export class GameRoom {
       addBotFleets(this.world, botCount, playerId);
     }
 
-    const previous = this.sockets.get(playerId);
-    if (previous) {
-      try {
-        previous.close(4000, "replaced");
-      } catch {
-        // The old socket may already be closed.
-      }
-    }
-
-    this.sockets.set(playerId, server);
     server.addEventListener("message", (event) => this.onMessage(playerId, event.data));
-    server.addEventListener("close", () => {
-      if (this.sockets.get(playerId) === server) {
-        this.sockets.delete(playerId);
-        this.stopWhenEmpty();
-      }
-    });
+    server.addEventListener("close", () => this.dropSocket(playerId, server));
+
+    // The newest connection owns this id. Adding it first means the old
+    // socket's close event cannot remove the new one.
+    this.sockets.add(playerId, server);
 
     if (!this.loop.running) this.metrics.reset(Date.now());
     this.loop.start();
@@ -116,6 +122,13 @@ export class GameRoom {
     }
   }
 
+  /** Drop one socket and, in test/dev rooms, schedule its ship's removal. */
+  private dropSocket(playerId: string, socket: WebSocket): void {
+    if (!this.sockets.remove(playerId, socket)) return;
+    this.ghosts.disconnected(playerId);
+    this.stopWhenEmpty();
+  }
+
   /** Stop the world timer as soon as the room has no players. */
   private stopWhenEmpty(): void {
     if (this.sockets.size === 0) this.loop.stop();
@@ -123,7 +136,7 @@ export class GameRoom {
 
   /** Send the world to every connected player, through visibleStateFor only. */
   private broadcast(): void {
-    for (const [playerId, socket] of this.sockets) {
+    for (const [playerId, socket] of this.sockets.entries()) {
       this.sendState(playerId, socket);
     }
 
@@ -161,10 +174,9 @@ export class GameRoom {
         socket.send(JSON.stringify(message));
       }
     } catch {
-      // A dead socket is dropped; the ship stays in the world. The room pauses
-      // if that was the last player, so it can go to sleep.
-      this.sockets.delete(playerId);
-      this.stopWhenEmpty();
+      // A dead socket is dropped. Test and dev rooms remove its ship after
+      // the disconnect delay; normal rooms keep it in the world.
+      this.dropSocket(playerId, socket);
     }
   }
 

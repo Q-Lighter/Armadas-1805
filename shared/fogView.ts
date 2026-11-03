@@ -16,6 +16,7 @@ export interface SightCentre {
 
 /** Values the temporary readout may show. Missing values are left out. */
 export interface FogDebugInfo {
+  playerId?: string;
   buildCommit?: string;
   ships?: number;
   worldHz?: number;
@@ -53,6 +54,7 @@ export function fogDebugLine(
     `sight ${settings.fog.sightRangeKm} km`,
     `build ${(info.buildCommit ?? "unknown").slice(0, 12)}`,
   ];
+  if (info.playerId) parts.push(`player ${info.playerId.slice(0, 8)}`);
 
   // The load-test counters are only meaningful in a dev room.
   if (kind === "dev") {

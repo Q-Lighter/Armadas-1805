@@ -26,15 +26,22 @@ test("new players get a flagship inside the start area", () => {
   assert.equal(isSeaAt(ship.x, ship.y), true, "the British start is water");
 });
 
-test("a returning player id keeps the same ship", () => {
+test("a returning player id keeps the same ship and chart", () => {
   const world = createWorld();
   const first = addPlayer(world, "alpha");
   first.x = 42;
+  first.headingRad = 1.25;
+  const chart = world.charts.get("alpha");
+  assert.ok(chart);
+  const before = chart.bits.slice();
 
   const again = addPlayer(world, "alpha");
   assert.equal(again, first);
   assert.equal(again.x, 42);
+  assert.equal(again.headingRad, 1.25);
   assert.equal(world.players.size, 1);
+  assert.equal(world.charts.get("alpha"), chart);
+  assert.deepEqual(chart.bits, before);
 });
 
 test("the state for one player is compact and public", () => {

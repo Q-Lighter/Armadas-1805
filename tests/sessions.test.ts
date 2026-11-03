@@ -10,6 +10,7 @@ import {
   type CleanupTimers,
 } from "@naval/shared/player-sessions";
 import type { RoomKind } from "@naval/shared/fog";
+import { settings } from "@naval/shared/settings";
 import { addPlayer, createWorld, removePlayer } from "@naval/shared/world";
 
 class FakeSocket {
@@ -23,12 +24,16 @@ class FakeSocket {
 function fakeTimers() {
   let nextHandle = 1;
   const callbacks = new Map<number, () => void>();
+  const delays: number[] = [];
   const timers: CleanupTimers & {
     fire(): void;
     count(): number;
     cancelled(): number;
+    delays: number[];
   } = {
-    schedule(callback) {
+    delays,
+    schedule(callback, milliseconds) {
+      delays.push(milliseconds);
       callbacks.set(nextHandle, callback);
       return nextHandle++;
     },
@@ -74,12 +79,13 @@ test("ghost cleanup removes the ship and chart, but normal rooms keep both", () 
   const timers = fakeTimers();
   const cleanup = new GhostCleanup(
     () => testWorld.kind,
-    () => 120_000,
+    () => settings.players.ghostRemoveAfterSeconds * 1_000,
     (id) => void removePlayer(testWorld, id),
     timers,
   );
 
   cleanup.disconnected("alpha");
+  assert.deepEqual(timers.delays, [1_800_000]);
   timers.fire();
   assert.equal(testWorld.players.has("alpha"), false);
   assert.equal(testWorld.charts.has("alpha"), false);
@@ -89,7 +95,7 @@ test("ghost cleanup removes the ship and chart, but normal rooms keep both", () 
   const normalTimers = fakeTimers();
   const normalCleanup = new GhostCleanup(
     () => normal.kind,
-    () => 120_000,
+    () => settings.players.ghostRemoveAfterSeconds * 1_000,
     (id) => void removePlayer(normal, id),
     normalTimers,
   );
@@ -99,19 +105,21 @@ test("ghost cleanup removes the ship and chart, but normal rooms keep both", () 
   assert.equal(normal.charts.has("alpha"), true);
 });
 
-test("ghost cleanup removes a disconnected player only after 120 seconds in test and dev", () => {
+test("ghost cleanup removes a disconnected player only after 1,800 seconds in test and dev", () => {
   const timers = fakeTimers();
   let kind: RoomKind = "test";
   const removed: string[] = [];
   const cleanup = new GhostCleanup(
     () => kind,
-    () => 120_000,
+    () => settings.players.ghostRemoveAfterSeconds * 1_000,
     (id) => removed.push(id),
     timers,
   );
 
+  assert.equal(settings.players.ghostRemoveAfterSeconds, 1_800);
   cleanup.disconnected("alpha");
   assert.equal(timers.count(), 1);
+  assert.deepEqual(timers.delays, [1_800_000]);
   timers.fire();
   assert.deepEqual(removed, ["alpha"]);
 

@@ -85,6 +85,10 @@
     "./block-batch": {
       "types": "./dist/blockBatch.d.ts",
       "default": "./dist/blockBatch.js"
+    },
+    "./ports": {
+      "types": "./dist/data/ports.d.ts",
+      "default": "./dist/data/ports.js"
     }
   },
   "files": [

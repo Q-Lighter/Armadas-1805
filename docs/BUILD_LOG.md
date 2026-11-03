@@ -1052,3 +1052,42 @@ extend TEMP-DEBUG with frame rate, live block graphics, reset count and DPR.
 - The loaded-room performance claim is a structural improvement (no new block
   graphics off screen, no chart redraw without new data); it was not measured
   on a phone or Chromebook.
+
+## Session 2B-a: port data
+
+**Date:** 2026-11-03
+**Branch:** main
+
+### What was asked
+
+Load the 97-port table, give each port its draft size values, place the 89
+non-river anchorages in open sea off the real coast, keep the 8 river ports
+pending, and extend test/dev ghost cleanup to 1,800 seconds.
+
+### What was built
+
+- Added `shared/data/ports.ts` with all 97 ports converted from lon/lat to map
+  kilometres. There are 12 large, 24 medium and 61 small ports, 10 NPC ports
+  and 8 river ports.
+- Placed 89 anchorages (12 large, 22 medium, 55 small) in open water about 3 km
+  from the real land lookup. Every anchorage was checked for sea and for a
+  water route to the open ocean.
+- The 8 river ports (`Mompos`, `Angostura`, `Santarem`, `Manaus`, `Santa Fe`,
+  `Asuncion`, `Obidos`, `Paysandu`) keep `riverPending: true` and no anchorage.
+- Added draft port settings for docking capacity, income, storage, crew and
+  lookout range. Only docking capacity is used by this prompt.
+- Raised test/dev disconnected-player cleanup from 120 to 1,800 seconds in
+  `settings.players.ghostRemoveAfterSeconds`; normal rooms still remove nobody.
+
+### Checks
+
+- `npm test`: **72/72 passing**, including port counts, anchorage sea checks,
+  3–6 km land distance, open-ocean connectivity and the 1,800-second cleanup.
+- `npm run build`: passing.
+- No port was moved more than 25 km from its listed position.
+
+### Broken or unfinished
+
+- No browser is available, so port locations and coastlines were checked against
+  the land lookup, not viewed on screen.
+- River ports remain data-only until rivers exist on the map.

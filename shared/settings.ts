@@ -153,8 +153,42 @@ export const settings = {
   /** Player identity and rooms. */
   players: {
     /** In test and dev rooms only, remove a disconnected player after this
-     *  many seconds. Normal rooms never remove one. Draft: 120 seconds. */
-    ghostRemoveAfterSeconds: 120,
+     *  many seconds. Normal rooms never remove one. Draft: 1,800 seconds. */
+    ghostRemoveAfterSeconds: 1_800,
+  },
+
+  /** Port sizes and the port rules shared by the server and the chart. */
+  ports: {
+    /** Open-water distance from the real coast for a port's anchorage. */
+    anchorageOffshoreKm: 3,
+    /** A test or dev room starts this far from its chosen port. */
+    startDistanceKm: 40,
+    /** How often a waiting ship tries again for a free docking place. */
+    dockingRetrySeconds: 5,
+    /** Draft port values, by size. Only docking capacity is used yet. */
+    sizes: {
+      S: {
+        dockingCapacity: 4,
+        incomePer30Minutes: 400,
+        storageTonnes: 1_000,
+        crewPool: 200,
+        lookoutRangeKm: 15,
+      },
+      M: {
+        dockingCapacity: 8,
+        incomePer30Minutes: 800,
+        storageTonnes: 2_000,
+        crewPool: 400,
+        lookoutRangeKm: 20,
+      },
+      L: {
+        dockingCapacity: 16,
+        incomePer30Minutes: 1_200,
+        storageTonnes: 3_000,
+        crewPool: 900,
+        lookoutRangeKm: 30,
+      },
+    },
   },
 
   /** The placeholder starting area for new players. */

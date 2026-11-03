@@ -9,6 +9,11 @@ import {
   type ChartBlock,
 } from "./fog.js";
 import { settings } from "./settings.js";
+import {
+  layoutPortMarkers,
+  type PortInfo,
+  type PortMarkerPlan,
+} from "./portView.js";
 
 export type RenderLayerName =
   | "paper"
@@ -20,6 +25,7 @@ export type RenderLayerName =
   | "liveLand"
   | "liveWater"
   | "liveCoast"
+  | "ports"
   | "ships"
   | "weather";
 
@@ -49,11 +55,15 @@ export interface ShipRenderPlanInput {
   discovered: ReadonlySet<number>;
   sight: readonly { x: number; y: number; radiusKm: number }[];
   ships: readonly { x: number; y: number }[];
+  /** Only found ports; hidden ports must never be passed here. */
+  ports?: readonly PortInfo[];
 }
 
 export interface ShipRenderPlan {
   layers: RenderLayer[];
   activeBlocks: number;
+  /** Visible found-port markers and their shifted labels. */
+  ports: PortMarkerPlan[];
 }
 
 function union(a: RenderBounds | null, b: RenderBounds): RenderBounds {
@@ -236,8 +246,26 @@ export function buildShipRenderPlan(input: ShipRenderPlanInput): ShipRenderPlan 
   }
 
   const liveVisible = sightExtent !== null && sightExtent.width > 0 && sightExtent.height > 0;
+  const portMarkers = layoutPortMarkers({
+    width: input.width,
+    height: input.height,
+    view: input.view,
+    ports: input.ports ?? [],
+    sight: input.sight,
+  });
+  let portBounds: RenderBounds | null = null;
+  for (const marker of portMarkers) {
+    portBounds = union(portBounds, {
+      x: marker.screenX - marker.radiusPx,
+      y: marker.screenY - marker.radiusPx,
+      width: marker.radiusPx * 2,
+      height: marker.radiusPx * 2,
+    });
+  }
+
   return {
     activeBlocks: active.length,
+    ports: portMarkers,
     layers: [
       layer("paper", true, screen, 1),
       layer("dimSea", dimSea !== null, dimSea, dimSeaItems),
@@ -248,6 +276,7 @@ export function buildShipRenderPlan(input: ShipRenderPlanInput): ShipRenderPlan 
       layer("liveLand", liveVisible && liveLand !== null, liveLand, liveLandItems, sightExtent),
       layer("liveWater", liveVisible && liveCoast !== null, liveCoast, liveCoastItems, sightExtent),
       layer("liveCoast", liveVisible && liveCoast !== null, liveCoast, liveCoastItems, sightExtent),
+      layer("ports", portMarkers.length > 0, portBounds, portMarkers.length),
       layer("ships", shipBounds !== null, shipBounds, shipItems),
       layer("weather", true, screen, settings.view.windStreakCount),
     ],

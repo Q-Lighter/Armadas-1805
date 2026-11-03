@@ -93,6 +93,10 @@
     "./navies": {
       "types": "./dist/navies.d.ts",
       "default": "./dist/navies.js"
+    },
+    "./port-view": {
+      "types": "./dist/portView.d.ts",
+      "default": "./dist/portView.js"
     }
   },
   "files": [

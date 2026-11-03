@@ -163,7 +163,7 @@ export const settings = {
     anchorageOffshoreKm: 3,
     /** A test or dev room starts this far from its chosen port. */
     startDistanceKm: 40,
-    /** How often a waiting ship tries again for a free docking place. */
+    /** Real seconds between a waiting ship's attempts for a free place. */
     dockingRetrySeconds: 5,
     /** Draft port values, by size. Only docking capacity is used yet. */
     sizes: {
@@ -336,6 +336,15 @@ export const settings = {
     windStreakAlpha: 0.22,
     windStreakWidthPx: 1.2,
     windStreakSpeedPxPerSec: 18,
+    /** Port markers, label zoom rules and hit padding. */
+    portMarkerRadiusPx: { S: 5, M: 6.5, L: 8 },
+    portMarkerHitPadPx: 10,
+    portLabelFontPx: 12,
+    /** Remembered ports outside a sight circle are faded to this opacity. */
+    portDimAlpha: 0.45,
+    /** Medium labels appear at this zoom or closer, small only much closer. */
+    mediumPortLabelMaxKm: 150,
+    smallPortLabelMaxKm: 40,
     /** Chart scale ruler: a readable bar and the distances it can show. */
     chartRulerMinPx: 64,
     chartRulerMaxPx: 150,

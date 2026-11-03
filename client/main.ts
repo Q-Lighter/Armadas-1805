@@ -30,6 +30,14 @@ import { orderedChartBlocks } from "@naval/shared/chart-draw";
 import { fogDebugLine, type FogDebugInfo } from "@naval/shared/fog-view";
 import { GRAPHICS_RESET_NOTICE, GraphicsRecovery } from "@naval/shared/graphics-safety";
 import { formatGameClock, gameClockAt } from "@naval/shared/time";
+import { navyColorNumber, parseNavy } from "@naval/shared/navies";
+import {
+  buildPortPanelModel,
+  knownPortsNearest,
+  layoutPortMarkers,
+  type PortInfo,
+  type PortMarkerPlan,
+} from "@naval/shared/port-view";
 
 // ---------------------------------------------------------------------------
 // Chart look.
@@ -148,12 +156,15 @@ function validRoomKind(value: unknown): value is RoomKind {
 interface ShipView {
   hull: Graphics;
   classId: string;
+  navy: string;
   x: number;
   y: number;
   heading: number;
   targetX: number;
   targetY: number;
   targetHeading: number;
+  dockedPortId: string | null;
+  waitingPortId: string | null;
 }
 
 interface Camera {
@@ -175,6 +186,23 @@ async function start(): Promise<void> {
   const compassNeedle = element<SVGGElement>("compass-needle");
   const followButton = element<HTMLButtonElement>("follow-btn");
   const chartButton = element<HTMLButtonElement>("chart-btn");
+  const knownPortsButton = element<HTMLButtonElement>("known-ports-btn");
+  const portPanel = element<HTMLElement>("port-panel");
+  const portSize = element<HTMLElement>("port-size");
+  const portTitle = element<HTMLElement>("port-title");
+  const portStatus = element<HTMLElement>("port-status");
+  const portRegion = element<HTMLElement>("port-region");
+  const portGood = element<HTMLElement>("port-good");
+  const portCapacity = element<HTMLElement>("port-capacity");
+  const portFree = element<HTMLElement>("port-free");
+  const portDistance = element<HTMLElement>("port-distance");
+  const portSail = element<HTMLButtonElement>("port-sail");
+  const portUndock = element<HTMLButtonElement>("port-undock");
+  const portClose = element<HTMLButtonElement>("port-close");
+  const knownPortsPanel = element<HTMLElement>("known-ports-panel");
+  const knownPortsList = element<HTMLUListElement>("known-ports-list");
+  const knownPortsEmpty = element<HTMLElement>("known-ports-empty");
+  const knownPortsClose = element<HTMLButtonElement>("known-ports-close");
   const bordersButton = element<HTMLButtonElement>("borders-btn");
   const clockPanel = element<HTMLElement>("game-clock-panel");
   const clockOut = element<HTMLElement>("game-clock");
@@ -255,6 +283,10 @@ async function start(): Promise<void> {
   const liveMask = new Graphics();
   liveMapLayer.mask = liveMask;
 
+  // Port markers and their labels live in screen pixels above the map but
+  // below ships. Only ports already found by this player reach this layer.
+  const portLayer = new Container();
+
   const marker = new Graphics();
   marker.circle(0, 0, 9).stroke({ width: 2, color: INK_COLOR });
   marker.moveTo(-14, 0).lineTo(-7, 0).stroke({ width: 2, color: INK_COLOR });
@@ -285,6 +317,7 @@ async function start(): Promise<void> {
     liveHalo,
     liveMapLayer,
     liveMask,
+    portLayer,
     lastSeenLayer,
     fleetLayer,
     windLayer,
@@ -318,6 +351,16 @@ async function start(): Promise<void> {
   const blocks = new Map<string, ChartBlock>();
   const discovered = new Set<number>();
   const ships = new Map<string, ShipView>();
+  const portData = new Map<string, PortInfo>();
+  const portViews = new Map<string, {
+    container: Container;
+    mark: Graphics;
+    label: Text;
+    radius: number;
+  }>();
+  let laidOutPorts: PortMarkerPlan[] = [];
+  let ownSnapshot: ShipSnapshot | null = null;
+  let selectedPortId: string | null = null;
   let lastSeen: LastSeenSnapshot[] = [];
   let lastSeenViews: Container[] = [];
 
@@ -844,6 +887,220 @@ async function start(): Promise<void> {
     }
   }
 
+  // ---- Port markers and paper panel --------------------------------------
+
+  function portSizeLabel(size: PortInfo["size"]): string {
+    return size === "S" ? "Small port" : size === "M" ? "Medium port" : "Large port";
+  }
+
+  function updateKnownPortsButton(): void {
+    knownPortsButton.hidden = mode !== "chart" || portData.size === 0;
+    if (mode !== "chart") knownPortsPanel.hidden = true;
+  }
+
+  function clearPortViews(): void {
+    for (const view of portViews.values()) view.container.destroy({ children: true });
+    portViews.clear();
+    laidOutPorts = [];
+  }
+
+  /** Draw only the port state the server has already found for this player. */
+  function refreshPorts(): void {
+    if (app.screen.width <= 0 || app.screen.height <= 0) return;
+
+    const own = ships.get(ownId);
+    const markers = layoutPortMarkers({
+      width: app.screen.width,
+      height: app.screen.height,
+      view,
+      ports: [...portData.values()],
+      sight: own
+        ? [{ x: own.x, y: own.y, radiusKm: settings.fog.sightRangeKm }]
+        : [],
+    });
+    laidOutPorts = markers;
+    const active = new Set<string>();
+
+    for (const marker of markers) {
+      active.add(marker.id);
+      let view = portViews.get(marker.id);
+      if (!view) {
+        const container = new Container();
+        const mark = new Graphics();
+        const label = new Text({
+          text: marker.name,
+          style: {
+            fontFamily: "IM Fell English",
+            fontSize: settings.view.portLabelFontPx,
+            fill: INK_COLOR,
+          },
+        });
+        container.addChild(mark, label);
+        portLayer.addChild(container);
+        view = { container, mark, label, radius: -1 };
+        portViews.set(marker.id, view);
+      }
+
+      if (view.radius !== marker.radiusPx) {
+        const radius = marker.radiusPx;
+        view.mark.clear();
+        view.mark
+          .circle(0, 0, radius)
+          .fill({ color: PAPER_COLOR, alpha: 0.9 })
+          .stroke({ width: 1.5, color: INK_COLOR });
+        // A small inked anchor inside the ring.
+        view.mark
+          .circle(0, -radius * 0.28, radius * 0.14)
+          .stroke({ width: 1, color: INK_COLOR })
+          .moveTo(0, -radius * 0.12)
+          .lineTo(0, radius * 0.42)
+          .moveTo(-radius * 0.34, radius * 0.24)
+          .lineTo(0, radius * 0.46)
+          .lineTo(radius * 0.34, radius * 0.24)
+          .stroke({ width: 1, color: INK_COLOR, cap: "round", join: "round" });
+        view.radius = radius;
+      }
+
+      view.container.position.set(marker.screenX, marker.screenY);
+      view.container.alpha = marker.dimmed ? settings.view.portDimAlpha : 1;
+      view.label.text = marker.name;
+      view.label.visible = marker.labelVisible;
+      view.label.position.set(
+        marker.labelX - marker.screenX,
+        marker.labelY - marker.screenY,
+      );
+    }
+
+    for (const [id, view] of portViews) {
+      if (active.has(id)) continue;
+      view.container.destroy({ children: true });
+      portViews.delete(id);
+    }
+    portLayer.visible = markers.length > 0;
+    updateKnownPortsButton();
+  }
+
+  function portAt(screenX: number, screenY: number): PortMarkerPlan | null {
+    let best: PortMarkerPlan | null = null;
+    let bestDistance = Number.POSITIVE_INFINITY;
+    for (const marker of laidOutPorts) {
+      const distance = Math.hypot(marker.screenX - screenX, marker.screenY - screenY);
+      if (distance > marker.hitRadiusPx || distance >= bestDistance) continue;
+      best = marker;
+      bestDistance = distance;
+    }
+    return best;
+  }
+
+  function closePortPanel(): void {
+    selectedPortId = null;
+    portPanel.hidden = true;
+  }
+
+  function refreshPortPanel(): void {
+    if (!selectedPortId) return;
+    const port = portData.get(selectedPortId);
+    if (!port) {
+      closePortPanel();
+      return;
+    }
+
+    const ship = ownSnapshot;
+    const dockedHere = ship?.[7] === port.id;
+    const distanceKm = ship
+      ? Math.hypot(port.x - ship[2], port.y - ship[3])
+      : null;
+    const model = buildPortPanelModel({
+      port,
+      distanceKm,
+      dockedHere,
+      hasShip: ship !== null,
+    });
+
+    portSize.textContent = model.sizeLabel;
+    portTitle.textContent = model.title;
+    portStatus.textContent = model.status;
+    portRegion.textContent = model.region;
+    portGood.textContent = model.good;
+    portCapacity.textContent = model.capacityText;
+    portFree.textContent = model.freeText ?? "";
+    portFree.hidden = model.freeText === null;
+    portDistance.textContent = model.distanceText;
+    portSail.hidden = !model.buttons.includes("sail");
+    portUndock.hidden = !model.buttons.includes("undock");
+    portPanel.hidden = false;
+  }
+
+  function openPortPanel(portId: string): void {
+    if (!portData.has(portId)) return;
+    selectedPortId = portId;
+    knownPortsPanel.hidden = true;
+    refreshPortPanel();
+  }
+
+  function sendPortOrder(portId: string): void {
+    const port = portData.get(portId);
+    if (!port) return;
+    target = { x: port.x, y: port.y };
+    const screen = toScreen(port.x, port.y);
+    marker.position.set(screen.x, screen.y);
+    marker.visible = true;
+
+    if (socket?.readyState === WebSocket.OPEN) {
+      socket.send(JSON.stringify({ t: "sailToPort", port: portId }));
+      closePortPanel();
+    } else {
+      setStatus("Not connected yet; the order was not sent.", true);
+    }
+  }
+
+  function sendUndock(): void {
+    if (socket?.readyState === WebSocket.OPEN) {
+      socket.send(JSON.stringify({ t: "undock" }));
+      closePortPanel();
+    } else {
+      setStatus("Not connected yet; the order was not sent.", true);
+    }
+  }
+
+  function renderKnownPorts(): void {
+    knownPortsList.replaceChildren();
+    const from = ownSnapshot ? { x: ownSnapshot[2], y: ownSnapshot[3] } : null;
+    const ports = knownPortsNearest([...portData.values()], from);
+    knownPortsEmpty.hidden = ports.length > 0;
+
+    for (const port of ports) {
+      const item = document.createElement("li");
+      const button = document.createElement("button");
+      const name = document.createElement("span");
+      const meta = document.createElement("span");
+      const distance = from ? Math.hypot(port.x - from.x, port.y - from.y) : null;
+
+      button.type = "button";
+      button.className = "known-port";
+      name.className = "known-port-name";
+      name.textContent = port.name;
+      meta.className = "known-port-meta";
+      meta.textContent = `${portSizeLabel(port.size)} · ${distance === null ? "–" : `${Math.round(distance)} km`}`;
+      button.append(name, meta);
+      button.addEventListener("click", () => {
+        knownPortsPanel.hidden = true;
+        view.x = port.x;
+        view.y = port.y;
+        view.kmAcross = clamp(
+          settings.view.startKmAcross,
+          minViewKmAcross(),
+          maxViewKmAcross(),
+        );
+        setFollow(false);
+        refreshMap(performance.now(), true);
+        openPortPanel(port.id);
+      });
+      item.appendChild(button);
+      knownPortsList.appendChild(item);
+    }
+  }
+
   /** Recreate the parts Pixi loses when the WebGL context is restored. */
   function rebuildAfterGraphicsReset(): void {
     chartTexture?.destroy(true);
@@ -853,6 +1110,7 @@ async function start(): Promise<void> {
     chartGraphics.clear();
     lastChartBuild = 0;
     destroyBlockPaints();
+    clearPortViews();
     builtScale = 0;
     drawGrain();
     refreshMap(performance.now(), true);
@@ -861,6 +1119,7 @@ async function start(): Promise<void> {
     updateLayerOffset();
     drawLastSeen();
     drawBorders();
+    refreshPorts();
     updateDebugLine();
   }
 
@@ -899,9 +1158,10 @@ async function start(): Promise<void> {
     }
   }
 
-  function makeHull(own: boolean): Graphics {
+  function makeHull(own: boolean, navy: string): Graphics {
     const hull = new Graphics();
     const size = own ? 1 : 0.85;
+    const fleetColor = navyColorNumber(parseNavy(navy) ?? "British");
 
     hull
       .poly([
@@ -912,7 +1172,7 @@ async function start(): Promise<void> {
         -4.5 * size, 7 * size,
         -5 * size, -4 * size,
       ])
-      .fill(own ? 0x244a66 : 0x2c4655)
+      .fill(fleetColor)
       .stroke({ width: 1.4, color: own ? 0xf3e7cb : 0x1b2f3d });
 
     if (own) hull.circle(0, 0, 17).stroke({ width: 1.5, color: 0x8c1d1d });
@@ -1147,11 +1407,54 @@ async function start(): Promise<void> {
 
     if (dataChanged) chartRevision += 1;
 
+    // The server sends only ports this player has found. Keep the display set
+    // in step with that filtered list rather than the full port table.
+    const incomingPorts = new Map<string, PortInfo>();
+    if (Array.isArray(state.ports)) {
+      for (const raw of state.ports) {
+        if (!Array.isArray(raw) || raw.length < 8) continue;
+        const [id, name, size, npc, x, y, region, good] = raw;
+        if (
+          typeof id !== "string" ||
+          typeof name !== "string" ||
+          (size !== "S" && size !== "M" && size !== "L") ||
+          !Number.isFinite(x) ||
+          !Number.isFinite(y) ||
+          typeof region !== "string" ||
+          typeof good !== "string"
+        ) {
+          continue;
+        }
+        const free = raw[8];
+        incomingPorts.set(id, {
+          id,
+          name,
+          size,
+          npc: npc === 1,
+          x,
+          y,
+          region,
+          good,
+          found: true,
+          freePlaces:
+            typeof free === "number" && Number.isFinite(free)
+              ? Math.max(0, Math.floor(free))
+              : undefined,
+        });
+      }
+    }
+    portData.clear();
+    for (const [id, port] of incomingPorts) portData.set(id, port);
+    if (selectedPortId && !portData.has(selectedPortId)) closePortPanel();
+
     const seen = new Set<string>();
     let own: ShipSnapshot | undefined;
 
     for (const snapshot of state.ships) {
       const [id, classId, x, y, headingDeg, knots] = snapshot;
+      const navy = parseNavy(typeof snapshot[6] === "string" ? snapshot[6] : "British") ?? "British";
+      const dockedPortId = typeof snapshot[7] === "string" ? snapshot[7] : null;
+      const waitingPortId = typeof snapshot[8] === "string" ? snapshot[8] : null;
       if (
         typeof id !== "string" ||
         !Number.isFinite(x) ||
@@ -1165,22 +1468,28 @@ async function start(): Promise<void> {
       seen.add(id);
       let ship = ships.get(id);
       if (!ship) {
-        const hull = makeHull(id === state.you);
+        const hull = makeHull(id === state.you, navy);
         fleetLayer.addChild(hull);
         ship = {
           hull,
           classId: String(classId),
+          navy,
           x,
           y,
           heading: headingDeg * (Math.PI / 180),
           targetX: x,
           targetY: y,
           targetHeading: headingDeg * (Math.PI / 180),
+          dockedPortId,
+          waitingPortId,
         };
         ships.set(id, ship);
       }
 
       ship.classId = String(classId);
+      ship.navy = navy;
+      ship.dockedPortId = dockedPortId;
+      ship.waitingPortId = waitingPortId;
       ship.targetX = x;
       ship.targetY = y;
       ship.targetHeading = headingDeg * (Math.PI / 180);
@@ -1194,6 +1503,7 @@ async function start(): Promise<void> {
       }
     }
 
+    ownSnapshot = own ?? null;
     const ownShip = ships.get(ownId);
     if (ownShip && builtRevision < 0) {
       view.x = ownShip.x;
@@ -1213,6 +1523,8 @@ async function start(): Promise<void> {
 
     lastSeen = Array.isArray(state.l) ? state.l : [];
     drawLastSeen();
+    refreshPortPanel();
+    updateKnownPortsButton();
     updateDebugLine();
     setStatus("Connected");
   }
@@ -1310,8 +1622,10 @@ async function start(): Promise<void> {
       rulerLayer.visible = false;
     }
 
+    updateKnownPortsButton();
     refreshMap(now, true);
     refreshFogPaper();
+    refreshPorts();
   }
 
   function updateRuler(): void {
@@ -1407,7 +1721,14 @@ async function start(): Promise<void> {
 
     if (wasSingle && !multiTouch && dragDistance < 10 && performance.now() - downAt < 600) {
       const rect = app.canvas.getBoundingClientRect();
-      const world = toWorld(event.clientX - rect.left, event.clientY - rect.top);
+      const screenX = event.clientX - rect.left;
+      const screenY = event.clientY - rect.top;
+      const port = portAt(screenX, screenY);
+      if (port) {
+        openPortPanel(port.id);
+        return;
+      }
+      const world = toWorld(screenX, screenY);
       sendOrder(world.x, world.y);
     }
   }
@@ -1497,6 +1818,27 @@ async function start(): Promise<void> {
     }
   }
 
+  knownPortsButton.addEventListener("click", () => {
+    if (mode !== "chart") return;
+    closePortPanel();
+    renderKnownPorts();
+    knownPortsPanel.hidden = false;
+  });
+
+  portClose.addEventListener("click", closePortPanel);
+  knownPortsClose.addEventListener("click", () => {
+    knownPortsPanel.hidden = true;
+  });
+  portSail.addEventListener("click", () => {
+    if (selectedPortId) sendPortOrder(selectedPortId);
+  });
+  portUndock.addEventListener("click", sendUndock);
+  document.addEventListener("keydown", (event) => {
+    if (event.key !== "Escape") return;
+    closePortPanel();
+    knownPortsPanel.hidden = true;
+  });
+
   versionNotice.addEventListener("click", () => location.reload());
   notice.addEventListener("click", () => {
     if (notice.dataset.reload === "true") location.reload();
@@ -1571,6 +1913,7 @@ async function start(): Promise<void> {
     refreshFogPaper();
     updateLiveCircles();
     updateLayerOffset();
+    refreshPorts();
 
     for (let index = 0; index < lastSeenViews.length; index += 1) {
       const markerView = lastSeenViews[index];

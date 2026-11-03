@@ -94,7 +94,7 @@ export type ShipSnapshot = [
   waitingPortId: string | null,
 ];
 
-/** A found port: [id, name, size, npc 0/1, x, y, free places if docked]. */
+/** A found port: [id, name, size, npc 0/1, x, y, region, good, free places]. */
 export type PortSnapshot = [
   id: string,
   name: string,
@@ -102,6 +102,8 @@ export type PortSnapshot = [
   npc: 0 | 1,
   x: number,
   y: number,
+  region: string,
+  good: string,
   freePlaces?: number,
 ];
 
@@ -541,7 +543,9 @@ function tryWaitingShips(world: World): void {
       );
 
     for (const { ownerId, ship } of waiting) {
-      if (world.gameMs - ship.waitingSinceGameMs < settings.ports.dockingRetrySeconds * 1_000) {
+      const retryAfterMs =
+        settings.ports.dockingRetrySeconds * settings.time.sailingTimeScale * 1_000;
+      if (world.gameMs - ship.waitingSinceGameMs < retryAfterMs) {
         continue;
       }
       if (free <= 0) break;
@@ -1014,6 +1018,8 @@ export function visibleStateFor(
       port.npc ? 1 : 0,
       Number(port.anchorage.x.toFixed(2)),
       Number(port.anchorage.y.toFixed(2)),
+      port.region,
+      port.good,
     ];
     if (own.some((ship) => ship.dockedPortId === port.id)) {
       snapshot.push(Math.max(0, portCapacity(port) - dockedCount(world, port.id)));

@@ -25,6 +25,10 @@
         Chart
       </button>
 
+      <button class="btn" id="known-ports-btn" type="button" hidden>
+        Known ports
+      </button>
+
       <!-- TEMP-DEBUG: test and dev rooms only. -->
       <button class="btn" id="borders-btn" type="button" aria-pressed="false" hidden>
         Show borders
@@ -110,6 +114,56 @@
     </section>
 
     <p class="chart-notice" id="notice" role="status" aria-live="polite" hidden></p>
+
+    <!-- A found port's paper folio. It is filled from the current port state. -->
+    <section
+      class="port-panel paper"
+      id="port-panel"
+      role="dialog"
+      aria-labelledby="port-title"
+      hidden
+    >
+      <div class="panel-head">
+        <div>
+          <p class="kicker" id="port-size">Port</p>
+          <h2 id="port-title">Port</h2>
+        </div>
+        <button class="btn panel-close" id="port-close" type="button">Close</button>
+      </div>
+      <p class="port-status" id="port-status"></p>
+      <dl class="port-facts">
+        <dt>Region</dt>
+        <dd id="port-region">–</dd>
+        <dt>Regional good</dt>
+        <dd id="port-good">–</dd>
+        <dt>Docking</dt>
+        <dd id="port-capacity">–</dd>
+      </dl>
+      <p class="port-free" id="port-free" hidden></p>
+      <p class="port-distance" id="port-distance"></p>
+      <div class="port-actions">
+        <button class="btn" id="port-sail" type="button" hidden>Sail to port</button>
+        <button class="btn" id="port-undock" type="button" hidden>Undock</button>
+      </div>
+    </section>
+
+    <!-- The chart's nearest-first list of ports this player has found. -->
+    <section
+      class="known-ports-panel paper"
+      id="known-ports-panel"
+      role="dialog"
+      aria-labelledby="known-ports-title"
+      hidden
+    >
+      <div class="panel-head">
+        <h2 id="known-ports-title">Known ports</h2>
+        <button class="btn panel-close" id="known-ports-close" type="button">Close</button>
+      </div>
+      <ul class="known-ports-list" id="known-ports-list"></ul>
+      <p class="known-ports-empty" id="known-ports-empty" hidden>
+        No ports found yet.
+      </p>
+    </section>
 
     <!-- Shown when a newer build is live. It never reloads by itself. -->
     <button class="version-notice paper" id="version-notice" type="button" hidden>

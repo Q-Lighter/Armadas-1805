@@ -167,8 +167,10 @@ test("a sail-to-port order is refused until that port has been found", () => {
   const snapshot = state.ports.find(([id]) => id === port.id)!;
   assert.equal(snapshot[2], port.size);
   assert.equal(snapshot[3], port.npc ? 1 : 0);
+  assert.equal(snapshot[6], port.region);
+  assert.equal(snapshot[7], port.good);
   assert.equal(
-    snapshot[6],
+    snapshot[8],
     settings.ports.sizes.L.dockingCapacity - 1,
     "a large port reports its free places after my ship docks",
   );
@@ -211,7 +213,11 @@ test("docking fills a small port, queues the next ship and undocking frees a pla
   assert.equal(takeNotice(world, "one"), `Undocked from ${port.name}.`);
   assert.equal(first.dockedPortId, null);
 
-  stepWorld(world, settings.time.sailingTimeScale / settings.server.tickHz);
+  // The retry is measured in real seconds, so run at least that much game time.
+  for (let tick = 0; tick < 60; tick += 1) {
+    stepWorld(world, settings.time.sailingTimeScale / settings.server.tickHz);
+    if (waitingShip.dockedPortId) break;
+  }
   assert.equal(waitingShip.dockedPortId, port.id);
   assert.equal(waitingShip.waitingPortId, null);
   assert.equal(takeNotice(world, waiting), `Docked at ${port.name}.`);
@@ -219,7 +225,7 @@ test("docking fills a small port, queues the next ship and undocking frees a pla
   // With a berth free, a docked ship's state carries the free-place count.
   const state = visibleStateFor(world, "two");
   const snapshot = state.ports.find(([id]) => id === port.id)!;
-  assert.equal(snapshot[6], 0);
+  assert.equal(snapshot[8], 0);
 
   // The undocked ship can sail again.
   assert.equal(applyOrder(world, "one", first.x + 10, first.y), true);

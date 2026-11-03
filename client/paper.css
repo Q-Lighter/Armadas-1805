@@ -410,6 +410,157 @@ h2 {
   display: none;
 }
 
+/* --- Port folio and Known ports drawer -------------------------------- */
+
+.port-panel,
+.known-ports-panel {
+  position: fixed;
+  z-index: 20;
+  padding: calc(0.9rem * var(--ui-scale));
+  max-height: calc(100% - 1.5rem);
+  overflow: auto;
+}
+
+.port-panel {
+  left: 50%;
+  bottom: max(0.75rem, env(safe-area-inset-bottom));
+  transform: translateX(-50%);
+  width: min(28rem, calc(100% - 1rem));
+}
+
+.known-ports-panel {
+  top: max(5.4rem, calc(env(safe-area-inset-top) + 5rem));
+  right: max(0.75rem, env(safe-area-inset-right));
+  width: min(24rem, calc(100% - 1.5rem));
+}
+
+.port-panel[hidden],
+.known-ports-panel[hidden],
+#known-ports-btn[hidden] {
+  display: none;
+}
+
+.panel-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.75rem;
+  margin-bottom: 0.5rem;
+}
+
+.panel-head h2 {
+  margin: 0;
+  font-size: calc(1.55rem * var(--ui-scale));
+}
+
+.panel-head .kicker {
+  margin-bottom: 0.1rem;
+}
+
+.panel-close {
+  flex: 0 0 auto;
+  min-height: 36px;
+  padding: 0.3rem 0.65rem;
+}
+
+.port-status {
+  margin: 0.4rem 0;
+  padding: 0.35rem 0.55rem;
+  border-left: 2px solid var(--rule);
+  color: var(--ink);
+  font-weight: 600;
+}
+
+.port-facts {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 0.2rem 0.8rem;
+  margin: 0.6rem 0;
+  font-size: calc(0.95rem * var(--ui-scale));
+}
+
+.port-facts dt {
+  color: var(--ink-faded);
+}
+
+.port-facts dd {
+  margin: 0;
+  font-weight: 600;
+}
+
+.port-free {
+  margin: 0.45rem 0;
+  color: var(--ink);
+  font-weight: 600;
+}
+
+.port-free[hidden],
+.port-actions .btn[hidden] {
+  display: none;
+}
+
+.port-distance {
+  margin: 0.5rem 0 0.7rem;
+  color: var(--ink-faded);
+  font-size: calc(0.9rem * var(--ui-scale));
+}
+
+.port-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.55rem;
+}
+
+.port-actions .btn {
+  flex: 1 1 10rem;
+}
+
+.known-ports-list {
+  display: grid;
+  gap: 0.15rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.known-port {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.75rem;
+  width: 100%;
+  min-height: var(--tap);
+  padding: 0.5rem 0.35rem;
+  border: 0;
+  border-bottom: 1px solid var(--rule);
+  background: transparent;
+  color: var(--ink);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.known-port:hover,
+.known-port:focus-visible {
+  background: rgba(42, 28, 16, 0.08);
+}
+
+.known-port-name {
+  font-family: "IM Fell English", Georgia, serif;
+  font-size: calc(1.08rem * var(--ui-scale));
+}
+
+.known-port-meta {
+  color: var(--ink-faded);
+  font-size: calc(0.84rem * var(--ui-scale));
+  white-space: nowrap;
+}
+
+.known-ports-empty {
+  margin: 0.5rem 0 0;
+  color: var(--ink-faded);
+}
+
 /* TEMP-DEBUG: a small readout in test and dev rooms only. */
 .fog-debug {
   z-index: 4;

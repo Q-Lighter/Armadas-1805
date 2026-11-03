@@ -1137,3 +1137,51 @@ port discovery, sail-to-port, docking capacity, waiting at anchor and undocking.
 - No browser or socket-level browser test is available. The port panel and
   `&start` URL wiring were not exercised through a real page; the shared rules
   and state shape were tested.
+
+## Session 2B-c: ports on screen
+
+**Date:** 2026-11-03
+**Branch:** main
+
+### What was asked
+
+Draw found ports on the ship view and chart, with size-aware markers and labels,
+a phone-friendly port panel, a nearest-first Known ports list, navy hull colours
+and short docking notices.
+
+### What was built
+
+- Found ports now draw as inked rings with small anchors. Small, medium and large
+  ports use different marker sizes. Ports inside a sight circle are full opacity;
+  remembered ports outside it are dimmed.
+- Labels use the period title font. Large ports label at every zoom, medium ports
+  from `150 km` across, and small ports from `40 km`. A greedy layout shifts labels
+  around the marker and hides one rather than allowing overlapping text.
+- Tapping a port marker opens a paper panel with its name, size, NPC/unclaimed
+  status, region, regional good, docking capacity, distance and free places when
+  one of the player's ships is docked. The Sail and Undock buttons send the new
+  server orders.
+- The chart has a Known ports button. Its list is nearest first, and choosing an
+  entry centres the chart on that port and opens the same panel.
+- Hulls now use the navy colour from settings, while the player's own ship keeps
+  its red ring. Docking, waiting and undocking notices use the existing paper
+  notice element.
+- The server now sends region and regional good with each found port so hidden
+  port data never needs to be bundled into the browser.
+
+### Checks
+
+- `npm test`: **83/83 passing**, including found-only markers, sight dimming,
+  zoom label rules, non-overlapping labels, panel buttons/free places, nearest
+  port ordering and all earlier tests.
+- `npm run build`: passing.
+- `npm run test:server`: passing (`SIMULATION PASSED`, 118 ticks, 63 updates).
+
+### Broken or unfinished
+
+- No browser is available, so the actual Pixi port markers, label collisions,
+  panel layout on a phone, chart centring, hull colours and notices were not
+  visually checked. Their screen coordinates and decisions are covered by the
+  shared render/layout tests.
+- Marker labels use an approximate text width for collision avoidance; the
+  period font's real rasterised width may shift a label by a few pixels.

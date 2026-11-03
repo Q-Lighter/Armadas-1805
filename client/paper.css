@@ -323,6 +323,50 @@ h2 {
   margin-right: auto;
 }
 
+.money {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  min-height: var(--tap);
+  padding: 0.15rem 0.55rem;
+  border: 1px solid var(--rule);
+  background: rgba(42, 28, 16, 0.05);
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.coin-icon {
+  width: 1.25rem;
+  height: 1.25rem;
+  flex: 0 0 auto;
+  color: var(--wax);
+}
+
+.money-value {
+  font-size: calc(1rem * var(--ui-scale));
+}
+
+.money-label {
+  color: var(--ink-faded);
+  font-size: calc(0.72rem * var(--ui-scale));
+  font-weight: 400;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.fleet-count {
+  display: inline-grid;
+  place-items: center;
+  min-width: 1.35rem;
+  min-height: 1.35rem;
+  padding: 0 0.25rem;
+  border: 1px solid var(--rule);
+  border-radius: 50%;
+  font-size: calc(0.75rem * var(--ui-scale));
+  font-variant-numeric: tabular-nums;
+}
+
 .room {
   margin: 0;
   color: var(--ink-faded);
@@ -561,6 +605,338 @@ h2 {
   color: var(--ink-faded);
 }
 
+/* --- Fleet, shipyard and crew panels ---------------------------------- */
+
+.fleet-panel {
+  position: fixed;
+  z-index: 21;
+  top: max(5.4rem, calc(env(safe-area-inset-top) + 5rem));
+  right: max(0.75rem, env(safe-area-inset-right));
+  width: min(28rem, calc(100% - 1.5rem));
+  max-height: calc(100% - 6.5rem);
+  overflow: auto;
+  padding: calc(0.9rem * var(--ui-scale));
+}
+
+.fleet-panel[hidden],
+.wide-panel[hidden] {
+  display: none;
+}
+
+.fleet-summary,
+.yard-summary,
+.hire-pool {
+  margin: 0.35rem 0 0.65rem;
+  color: var(--ink-faded);
+  font-size: calc(0.92rem * var(--ui-scale));
+}
+
+.fleet-list {
+  display: grid;
+  gap: 0.2rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.fleet-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 0.15rem 0.75rem;
+  width: 100%;
+  min-height: var(--tap);
+  padding: 0.55rem 0.45rem;
+  border: 1px solid transparent;
+  border-bottom-color: var(--rule);
+  background: transparent;
+  color: var(--ink);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.fleet-row:hover,
+.fleet-row:focus-visible {
+  background: rgba(42, 28, 16, 0.07);
+}
+
+.fleet-row[aria-current="true"] {
+  border-color: var(--ink);
+  background: rgba(42, 28, 16, 0.08);
+}
+
+.fleet-row:disabled {
+  cursor: default;
+  opacity: 0.72;
+}
+
+.fleet-name {
+  font-family: "IM Fell English", Georgia, serif;
+  font-size: calc(1.08rem * var(--ui-scale));
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.fleet-type,
+.fleet-state,
+.fleet-crew {
+  color: var(--ink-faded);
+  font-size: calc(0.82rem * var(--ui-scale));
+}
+
+.fleet-state {
+  grid-column: 1 / -1;
+}
+
+.fleet-crew {
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.fleet-needs {
+  color: var(--urgent);
+  font-weight: 600;
+}
+
+.crew-track {
+  grid-column: 1 / -1;
+  height: 4px;
+  border: 1px solid var(--rule);
+  background: transparent;
+}
+
+.crew-fill {
+  display: block;
+  height: 100%;
+  background: var(--ink-faded);
+}
+
+.fleet-empty,
+.hire-empty,
+.naming-error {
+  margin: 0.5rem 0 0;
+  color: var(--ink-faded);
+}
+
+.fleet-empty[hidden],
+.hire-empty[hidden],
+.naming-error[hidden],
+.naming-step[hidden],
+.yard-delivery[hidden] {
+  display: none;
+}
+
+.wide-panel {
+  position: fixed;
+  z-index: 22;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  width: min(62rem, calc(100% - 1rem));
+  max-height: calc(100% - 1.5rem);
+  overflow: auto;
+  padding: calc(1rem * var(--ui-scale));
+}
+
+.shipyard-cards {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.7rem;
+}
+
+.yard-card {
+  display: flex;
+  flex-direction: column;
+  gap: 0.55rem;
+  padding: 0.75rem;
+  border: 1px solid var(--rule);
+  background: rgba(42, 28, 16, 0.035);
+}
+
+.yard-card h3,
+.naming-step h3,
+.yard-delivery h3 {
+  margin: 0;
+  font-family: "IM Fell English", Georgia, serif;
+  font-size: calc(1.15rem * var(--ui-scale));
+  font-weight: 400;
+}
+
+.yard-price {
+  margin: 0;
+  color: var(--ink);
+  font-size: calc(0.9rem * var(--ui-scale));
+  font-weight: 600;
+}
+
+.yard-stats {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 0.08rem 0.6rem;
+  margin: 0;
+  font-size: calc(0.8rem * var(--ui-scale));
+}
+
+.yard-stats dt {
+  color: var(--ink-faded);
+}
+
+.yard-stats dd {
+  margin: 0;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.yard-card .btn {
+  margin-top: auto;
+}
+
+.yard-sep {
+  padding: 0 0.3rem;
+  color: var(--ink-faded);
+}
+
+.coin-inline {
+  color: var(--wax);
+  font-size: 0.8em;
+}
+
+.naming-step {
+  margin-top: 1rem;
+  padding: 0.8rem;
+  border: 1.5px solid var(--ink);
+  background: rgba(232, 219, 189, 0.75);
+}
+
+.naming-type,
+.naming-cost {
+  margin: 0.25rem 0 0.55rem;
+  color: var(--ink-faded);
+  font-size: calc(0.9rem * var(--ui-scale));
+}
+
+.naming-step label {
+  display: block;
+  margin-bottom: 0.2rem;
+  color: var(--ink-faded);
+  font-size: calc(0.82rem * var(--ui-scale));
+  font-weight: 600;
+}
+
+.naming-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+}
+
+.naming-row input {
+  flex: 1 1 12rem;
+  min-height: var(--tap);
+  padding: 0.45rem 0.6rem;
+  border: 1.5px solid var(--ink);
+  border-radius: 2px;
+  background: var(--paper);
+  color: var(--ink);
+  font: inherit;
+}
+
+.naming-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.55rem;
+  margin-top: 0.75rem;
+}
+
+.naming-actions .btn {
+  flex: 1 1 9rem;
+}
+
+.yard-delivery {
+  margin-top: 1rem;
+  padding-top: 0.65rem;
+  border-top: 1px solid var(--rule);
+}
+
+.yard-delivery ul,
+.hire-list {
+  display: grid;
+  gap: 0.6rem;
+  margin: 0.5rem 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.yard-delivery li {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 0.35rem;
+  padding: 0.4rem 0;
+  border-bottom: 1px solid var(--rule);
+  font-size: calc(0.9rem * var(--ui-scale));
+}
+
+.hire-card {
+  padding: 0.7rem;
+  border: 1px solid var(--rule);
+  background: rgba(42, 28, 16, 0.035);
+}
+
+.hire-head {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 0.4rem;
+  align-items: baseline;
+}
+
+.hire-head h3 {
+  margin: 0;
+  font-family: "IM Fell English", Georgia, serif;
+  font-size: calc(1.1rem * var(--ui-scale));
+  font-weight: 400;
+}
+
+.hire-count,
+.hire-cost,
+.hire-hint {
+  color: var(--ink-faded);
+  font-size: calc(0.84rem * var(--ui-scale));
+  font-variant-numeric: tabular-nums;
+}
+
+.hire-slider {
+  display: block;
+  width: 100%;
+  margin: 0.55rem 0 0.25rem;
+  accent-color: var(--wax);
+  min-height: var(--tap);
+}
+
+.hire-quick {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  margin: 0.2rem 0 0.55rem;
+}
+
+.hire-quick .btn {
+  min-height: 36px;
+  padding: 0.25rem 0.55rem;
+  font-size: calc(0.82rem * var(--ui-scale));
+}
+
+.hire-confirm {
+  width: 100%;
+}
+
+.hire-confirm:disabled,
+.yard-card .btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
 /* TEMP-DEBUG: a small readout in test and dev rooms only. */
 .fog-debug {
   z-index: 4;
@@ -590,8 +966,20 @@ h2 {
 }
 
 .hud-ship h2 {
-  margin-bottom: 0.25rem;
+  margin-bottom: 0.1rem;
   font-size: calc(1.2rem * var(--ui-scale));
+}
+
+.ship-type {
+  margin: 0 0 0.2rem;
+  color: var(--ink-faded);
+  font-size: calc(0.8rem * var(--ui-scale));
+}
+
+.readout dd.needs-crew,
+.ship-state-needs-crew {
+  color: var(--urgent);
+  font-weight: 600;
 }
 
 .game-clock {
@@ -711,6 +1099,34 @@ h2 {
 
   .chart-notice {
     bottom: calc(env(safe-area-inset-bottom) + 11rem);
+  }
+
+  .money-label {
+    display: none;
+  }
+
+  .fleet-panel {
+    top: auto;
+    left: max(0.5rem, env(safe-area-inset-left));
+    right: max(0.5rem, env(safe-area-inset-right));
+    bottom: max(0.5rem, env(safe-area-inset-bottom));
+    width: auto;
+    max-height: calc(100% - 1rem);
+  }
+
+  .wide-panel {
+    top: max(0.5rem, env(safe-area-inset-top));
+    bottom: max(0.5rem, env(safe-area-inset-bottom));
+    transform: translateX(-50%);
+    max-height: none;
+  }
+
+  .shipyard-cards {
+    grid-template-columns: 1fr;
+  }
+
+  .yard-stats {
+    font-size: calc(0.86rem * var(--ui-scale));
   }
 
   /* TEMP-DEBUG: keep the readout clear of the taller phone HUD. */

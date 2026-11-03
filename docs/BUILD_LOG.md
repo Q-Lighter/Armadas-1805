@@ -1249,3 +1249,43 @@ and short docking notices.
 
 - No screen work yet: the client does not yet show money, the fleet, shipyard,
   naming step or crew panel, and its orders do not yet send a ship id.
+
+## Session 2C-c: fleet, shipyard, crews
+
+**Date:** 2026-11-03
+**Branch:** main
+
+### What was built
+
+- Added the top-bar coin and money count, a Fleet button, and a selected-ship
+  readout for name, type, crew and state.
+- Added fleet selection on the sea and in the Fleet panel. The selected ship
+  gets a thick red ring, other owned ships a thin one. Orders and Follow now use
+  the selected ship. Tapping a fleet row centres it; delivery ships are disabled.
+- Live sight and remembered-port dimming now use every owned ship's circle. The
+  server already discovers fog from the whole fleet.
+- The port panel gains Shipyard at a usable port and Hire crew whenever one of
+  the player's ships is docked there.
+- Added shipyard cards with every requested stat and the naming step: suggested
+  name, random name, permanent-name warning, wax-seal confirmation, money and
+  fleet count, plus the current port's delivery list.
+- Added the crew panel with a slider, 10% / half / full shortcuts, sailor cost,
+  shared pool remaining and per-ship confirmation.
+- Port state now carries whether its shipyard is open to this player and its
+  shared crew count. TEMP-DEBUG adds money and own-fleet count.
+- Test/dev `ship=` and `cash=` values are passed through the page URL.
+
+### Checks
+
+- `npm test`: **102/102 passing**, including new fleet, shipyard and crew
+  presentation tests and all earlier tests.
+- `npm run build`: passing.
+- `npm run test:server`: passing (`SIMULATION PASSED`, 118 ticks, 63 updates).
+
+### Broken or unfinished
+
+- No browser or WebGL is available in this environment. The actual Pixi rings,
+  marker selection, panel layout on a phone, naming controls, sliders, and the
+  wax-seal flow were not visually or interactively checked.
+- Starting ships in test and dev rooms are fully crewed, not only flagships;
+  this keeps those rooms playable without first reaching a port.

@@ -17,6 +17,10 @@ export interface PortInfo {
   found?: boolean;
   /** Present only when one of this player's ships is docked there. */
   freePlaces?: number;
+  /** True when this player may open the shipyard here. */
+  buyable?: boolean;
+  /** Sailors currently in the shared pool. */
+  crewAvailable?: number;
 }
 
 export interface PortViewport {
@@ -187,7 +191,7 @@ export function knownPortsNearest(
     .map((entry) => entry.port);
 }
 
-export type PortPanelButton = "sail" | "undock";
+export type PortPanelButton = "sail" | "undock" | "shipyard" | "hire";
 
 export interface PortPanelModel {
   title: string;
@@ -207,12 +211,16 @@ export function buildPortPanelModel(input: {
   distanceKm: number | null;
   dockedHere: boolean;
   hasShip: boolean;
+  canBuy?: boolean;
+  hasDockedShip?: boolean;
 }): PortPanelModel {
   const { port } = input;
   const capacity = settings.ports.sizes[port.size].dockingCapacity;
   const sizeLabel = port.size === "S" ? "Small port" : port.size === "M" ? "Medium port" : "Large port";
   const buttons: PortPanelButton[] = [];
   if (input.hasShip) buttons.push(input.dockedHere ? "undock" : "sail");
+  if (input.canBuy ?? port.buyable) buttons.push("shipyard");
+  if (input.hasDockedShip) buttons.push("hire");
 
   let freeText: string | null = null;
   if (input.dockedHere && port.freePlaces !== undefined) {

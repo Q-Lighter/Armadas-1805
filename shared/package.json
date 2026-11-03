@@ -105,6 +105,10 @@
     "./port-view": {
       "types": "./dist/portView.d.ts",
       "default": "./dist/portView.js"
+    },
+    "./fleet-view": {
+      "types": "./dist/fleetView.d.ts",
+      "default": "./dist/fleetView.js"
     }
   },
   "files": [

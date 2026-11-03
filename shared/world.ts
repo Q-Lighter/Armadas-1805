@@ -131,7 +131,10 @@ export type ShipSnapshot = [
   waitingPortId: string | null,
 ];
 
-/** A found port: [id, name, size, npc 0/1, x, y, region, good, free places]. */
+/**
+ * A found port: [id, name, size, npc 0/1, x, y, region, good,
+ * free places or null, shipyard open 0/1, crew pool].
+ */
 export type PortSnapshot = [
   id: string,
   name: string,
@@ -141,7 +144,9 @@ export type PortSnapshot = [
   y: number,
   region: string,
   good: string,
-  freePlaces?: number,
+  freePlaces: number | null,
+  buyable: 0 | 1,
+  crewAvailable: number,
 ];
 
 /** A short event message, separate from world state. */
@@ -1357,6 +1362,8 @@ export function visibleStateFor(
   const ports: PortSnapshot[] = [];
   for (const port of PLACED_PORTS) {
     if (!chart.foundPorts.has(port.id)) continue;
+    const dockedHere = own.some((ship) => ship.dockedPortId === port.id);
+    const pool = portCrewPool(world, port);
     const snapshot: PortSnapshot = [
       port.id,
       port.name,
@@ -1366,10 +1373,10 @@ export function visibleStateFor(
       Number(port.anchorage.y.toFixed(2)),
       port.region,
       port.good,
+      dockedHere ? Math.max(0, portCapacity(port) - dockedCount(world, port.id)) : null,
+      portUsableForBuying(world, port, playerId) ? 1 : 0,
+      Math.floor(pool.crew),
     ];
-    if (own.some((ship) => ship.dockedPortId === port.id)) {
-      snapshot.push(Math.max(0, portCapacity(port) - dockedCount(world, port.id)));
-    }
     ports.push(snapshot);
   }
 

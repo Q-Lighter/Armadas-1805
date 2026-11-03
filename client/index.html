@@ -17,6 +17,20 @@
         <p class="room">Room <strong id="room-code">test</strong></p>
       </div>
 
+      <div class="money" id="money-panel" title="Pieces of eight">
+        <svg class="coin-icon" viewBox="0 0 24 24" aria-hidden="true">
+          <circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="1.6" />
+          <circle cx="12" cy="12" r="6.5" fill="none" stroke="currentColor" stroke-width="0.8" />
+          <path d="M12 7.5v9M9.5 9.5h4a1.6 1.6 0 0 1 0 3.2h-3a1.6 1.6 0 0 0 0 3.2h4" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" />
+        </svg>
+        <span class="money-value" id="money">0</span>
+        <span class="money-label">pieces</span>
+      </div>
+
+      <button class="btn" id="fleet-btn" type="button">
+        Fleet <span class="fleet-count" id="fleet-count">1</span>
+      </button>
+
       <button class="btn" id="follow-btn" type="button" aria-pressed="true">
         Follow my ship
       </button>
@@ -50,7 +64,9 @@
     </header>
 
     <section class="hud hud-ship paper" aria-label="Your ship">
-      <h2>Your ship</h2>
+      <p class="kicker">Selected ship</p>
+      <h2 id="ship-name">Your ship</h2>
+      <p class="ship-type" id="ship-type">–</p>
       <div class="game-clock" id="game-clock-panel" data-night="false">
         <svg class="clock-icon" viewBox="0 0 24 24" aria-hidden="true">
           <g class="clock-sun">
@@ -72,6 +88,10 @@
         <span id="game-clock">Day 1, 08:00</span>
       </div>
       <dl class="readout">
+        <dt>Crew</dt>
+        <dd id="ship-crew">–</dd>
+        <dt>State</dt>
+        <dd id="ship-state">–</dd>
         <dt>Speed</dt>
         <dd id="speed">–</dd>
         <dt>Heading</dt>
@@ -144,7 +164,95 @@
       <div class="port-actions">
         <button class="btn" id="port-sail" type="button" hidden>Sail to port</button>
         <button class="btn" id="port-undock" type="button" hidden>Undock</button>
+        <button class="btn" id="port-shipyard" type="button" hidden>Shipyard</button>
+        <button class="btn" id="port-hire" type="button" hidden>Hire crew</button>
       </div>
+    </section>
+
+    <!-- The selected player's fleet. Rows select, except ships in delivery. -->
+    <section
+      class="fleet-panel paper"
+      id="fleet-panel"
+      role="dialog"
+      aria-labelledby="fleet-title"
+      hidden
+    >
+      <div class="panel-head">
+        <div>
+          <p class="kicker">Your command</p>
+          <h2 id="fleet-title">Fleet</h2>
+        </div>
+        <button class="btn panel-close" id="fleet-close" type="button">Close</button>
+      </div>
+      <p class="fleet-summary" id="fleet-summary">1 of 30 ships</p>
+      <ul class="fleet-list" id="fleet-list"></ul>
+      <p class="fleet-empty" id="fleet-empty" hidden>No ships yet.</p>
+    </section>
+
+    <!-- Shipyard cards and the permanent-name step. -->
+    <section
+      class="wide-panel shipyard-panel paper"
+      id="shipyard-panel"
+      role="dialog"
+      aria-labelledby="shipyard-title"
+      hidden
+    >
+      <div class="panel-head">
+        <div>
+          <p class="kicker" id="shipyard-port">Port</p>
+          <h2 id="shipyard-title">Shipyard</h2>
+        </div>
+        <button class="btn panel-close" id="shipyard-close" type="button">Close</button>
+      </div>
+      <p class="yard-summary">
+        <span class="coin-inline" aria-hidden="true">◉</span>
+        <strong id="shipyard-money">0</strong> pieces
+        <span class="yard-sep">·</span>
+        <strong id="shipyard-count">1 of 30</strong> ships
+      </p>
+      <div class="shipyard-cards" id="shipyard-cards"></div>
+
+      <div class="naming-step" id="naming-step" hidden>
+        <h3>Name your ship</h3>
+        <p class="naming-type" id="naming-type"></p>
+        <label for="naming-name">Permanent name</label>
+        <div class="naming-row">
+          <input id="naming-name" type="text" maxlength="40" autocomplete="off" spellcheck="false" />
+          <button class="btn" id="naming-random" type="button">Random</button>
+        </div>
+        <p class="alert-urgent">This name is permanent and can never be changed.</p>
+        <p class="naming-error" id="naming-error" hidden></p>
+        <p class="naming-cost" id="naming-cost"></p>
+        <div class="naming-actions">
+          <button class="btn" id="naming-cancel" type="button">Cancel</button>
+          <button class="btn btn-seal" id="naming-confirm" type="button">Confirm purchase</button>
+        </div>
+      </div>
+
+      <section class="yard-delivery" id="shipyard-delivery" hidden>
+        <h3>Ships in delivery</h3>
+        <ul id="shipyard-delivery-list"></ul>
+      </section>
+    </section>
+
+    <!-- Crew hiring for every ship docked at one port. -->
+    <section
+      class="wide-panel hire-panel paper"
+      id="hire-panel"
+      role="dialog"
+      aria-labelledby="hire-title"
+      hidden
+    >
+      <div class="panel-head">
+        <div>
+          <p class="kicker" id="hire-port">Port</p>
+          <h2 id="hire-title">Hire crew</h2>
+        </div>
+        <button class="btn panel-close" id="hire-close" type="button">Close</button>
+      </div>
+      <p class="hire-pool" id="hire-pool">Crew pool: –</p>
+      <div class="hire-list" id="hire-list"></div>
+      <p class="hire-empty" id="hire-empty" hidden>No ship of yours is docked here.</p>
     </section>
 
     <!-- The chart's nearest-first list of ports this player has found. -->

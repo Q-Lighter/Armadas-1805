@@ -23,6 +23,7 @@ import {
 import { TAKEN_OVER_CLOSE_CODE } from "@naval/shared/player-sessions";
 import type {
   LastSeenSnapshot,
+  OwnShipSnapshot,
   ShipSnapshot,
   StateMessage,
 } from "@naval/shared/world";
@@ -30,7 +31,21 @@ import { orderedChartBlocks } from "@naval/shared/chart-draw";
 import { fogDebugLine, type FogDebugInfo } from "@naval/shared/fog-view";
 import { GRAPHICS_RESET_NOTICE, GraphicsRecovery } from "@naval/shared/graphics-safety";
 import { formatGameClock, gameClockAt } from "@naval/shared/time";
-import { navyColorNumber, parseNavy } from "@naval/shared/navies";
+import { navyColorNumber, parseNavy, type NavyId } from "@naval/shared/navies";
+import {
+  shipTypeFor,
+  type BuyableShipClassId,
+} from "@naval/shared/ships";
+import { cleanShipName, suggestShipName } from "@naval/shared/ship-rules";
+import {
+  buildFleetRow,
+  crewQuickTargets,
+  crewQuote,
+  fleetCountText,
+  formatDuration,
+  formatMoney,
+  shipyardCards,
+} from "@naval/shared/fleet-view";
 import {
   buildPortPanelModel,
   knownPortsNearest,
@@ -154,7 +169,10 @@ function validRoomKind(value: unknown): value is RoomKind {
 // ---------------------------------------------------------------------------
 
 interface ShipView {
+  id: string;
   hull: Graphics;
+  ring: Graphics;
+  own: boolean;
   classId: string;
   navy: string;
   x: number;
@@ -198,7 +216,43 @@ async function start(): Promise<void> {
   const portDistance = element<HTMLElement>("port-distance");
   const portSail = element<HTMLButtonElement>("port-sail");
   const portUndock = element<HTMLButtonElement>("port-undock");
+  const portShipyard = element<HTMLButtonElement>("port-shipyard");
+  const portHire = element<HTMLButtonElement>("port-hire");
   const portClose = element<HTMLButtonElement>("port-close");
+  const moneyOut = element<HTMLElement>("money");
+  const fleetCountOut = element<HTMLElement>("fleet-count");
+  const fleetButton = element<HTMLButtonElement>("fleet-btn");
+  const fleetPanel = element<HTMLElement>("fleet-panel");
+  const fleetSummary = element<HTMLElement>("fleet-summary");
+  const fleetList = element<HTMLUListElement>("fleet-list");
+  const fleetEmpty = element<HTMLElement>("fleet-empty");
+  const fleetClose = element<HTMLButtonElement>("fleet-close");
+  const shipNameOut = element<HTMLElement>("ship-name");
+  const shipTypeOut = element<HTMLElement>("ship-type");
+  const shipCrewOut = element<HTMLElement>("ship-crew");
+  const shipStateOut = element<HTMLElement>("ship-state");
+  const shipyardPanel = element<HTMLElement>("shipyard-panel");
+  const shipyardPortOut = element<HTMLElement>("shipyard-port");
+  const shipyardMoney = element<HTMLElement>("shipyard-money");
+  const shipyardCount = element<HTMLElement>("shipyard-count");
+  const shipyardCardsOut = element<HTMLElement>("shipyard-cards");
+  const shipyardDelivery = element<HTMLElement>("shipyard-delivery");
+  const shipyardDeliveryList = element<HTMLUListElement>("shipyard-delivery-list");
+  const shipyardClose = element<HTMLButtonElement>("shipyard-close");
+  const namingStep = element<HTMLElement>("naming-step");
+  const namingType = element<HTMLElement>("naming-type");
+  const namingName = element<HTMLInputElement>("naming-name");
+  const namingRandom = element<HTMLButtonElement>("naming-random");
+  const namingError = element<HTMLElement>("naming-error");
+  const namingCost = element<HTMLElement>("naming-cost");
+  const namingCancel = element<HTMLButtonElement>("naming-cancel");
+  const namingConfirm = element<HTMLButtonElement>("naming-confirm");
+  const hirePanel = element<HTMLElement>("hire-panel");
+  const hirePortOut = element<HTMLElement>("hire-port");
+  const hirePoolOut = element<HTMLElement>("hire-pool");
+  const hireList = element<HTMLElement>("hire-list");
+  const hireEmpty = element<HTMLElement>("hire-empty");
+  const hireClose = element<HTMLButtonElement>("hire-close");
   const knownPortsPanel = element<HTMLElement>("known-ports-panel");
   const knownPortsList = element<HTMLUListElement>("known-ports-list");
   const knownPortsEmpty = element<HTMLElement>("known-ports-empty");
@@ -224,6 +278,8 @@ async function start(): Promise<void> {
   const requestedBots = query.get("bots");
   const requestedNavy = query.get("navy");
   const requestedStart = query.get("start");
+  const requestedShip = query.get("ship");
+  const requestedCash = query.get("cash");
   const identity: PlayerIdentity = resolvePlayerIdentity(
     browserStorage("localStorage"),
     browserStorage("sessionStorage"),
@@ -360,7 +416,14 @@ async function start(): Promise<void> {
   }>();
   let laidOutPorts: PortMarkerPlan[] = [];
   let ownSnapshot: ShipSnapshot | null = null;
+  let fleetShips: OwnShipSnapshot[] = [];
+  let selectedShipId = "";
+  let money = 0;
+  let playerNavy: NavyId = "British";
   let selectedPortId: string | null = null;
+  let shipyardPortId: string | null = null;
+  let namingClass: BuyableShipClassId | null = null;
+  let hirePortId: string | null = null;
   let lastSeen: LastSeenSnapshot[] = [];
   let lastSeenViews: Container[] = [];
 
@@ -854,8 +917,8 @@ async function start(): Promise<void> {
       return;
     }
 
-    const own = ships.get(ownId);
-    if (!own) {
+    const own = activeOwnViews();
+    if (own.length === 0) {
       liveMapLayer.visible = false;
       liveHalo.clear();
       return;
@@ -865,25 +928,27 @@ async function start(): Promise<void> {
     liveBlockLayer.visible = true;
     const radiusPx = settings.fog.sightRangeKm * builtScale;
     const featherPx = settings.fog.sightFeatherKm * builtScale;
-    const centre = builtScreen(own.x, own.y);
-    const screenCentre = toScreen(own.x, own.y);
-
-    liveSea.circle(centre.x, centre.y, radiusPx).fill(SEA_COLOR);
-    liveMask.circle(centre.x, centre.y, radiusPx).fill(0xffffff);
-
-    // A ring per step, each wider and fainter, softens the sight edge without
-    // a texture or a filter.
     liveHalo.clear();
     const rings = settings.view.sightFeatherRings;
-    for (let ring = 1; ring <= rings; ring += 1) {
-      const share = ring / rings;
-      liveHalo
-        .circle(screenCentre.x, screenCentre.y, radiusPx + featherPx * share)
-        .stroke({
-          width: Math.max(1, featherPx / rings),
-          color: SEA_COLOR,
-          alpha: settings.view.sightFeatherAlpha * (1 - share * settings.view.sightFeatherFade),
-        });
+
+    for (const ship of own) {
+      const centre = builtScreen(ship.x, ship.y);
+      const screenCentre = toScreen(ship.x, ship.y);
+      liveSea.circle(centre.x, centre.y, radiusPx).fill(SEA_COLOR);
+      liveMask.circle(centre.x, centre.y, radiusPx).fill(0xffffff);
+
+      // A ring per step, each wider and fainter, softens the sight edge without
+      // a texture or a filter.
+      for (let ring = 1; ring <= rings; ring += 1) {
+        const share = ring / rings;
+        liveHalo
+          .circle(screenCentre.x, screenCentre.y, radiusPx + featherPx * share)
+          .stroke({
+            width: Math.max(1, featherPx / rings),
+            color: SEA_COLOR,
+            alpha: settings.view.sightFeatherAlpha * (1 - share * settings.view.sightFeatherFade),
+          });
+      }
     }
   }
 
@@ -908,15 +973,17 @@ async function start(): Promise<void> {
   function refreshPorts(): void {
     if (app.screen.width <= 0 || app.screen.height <= 0) return;
 
-    const own = ships.get(ownId);
+    const own = activeOwnViews();
     const markers = layoutPortMarkers({
       width: app.screen.width,
       height: app.screen.height,
       view,
       ports: [...portData.values()],
-      sight: own
-        ? [{ x: own.x, y: own.y, radiusKm: settings.fog.sightRangeKm }]
-        : [],
+      sight: own.map((ship) => ({
+        x: ship.x,
+        y: ship.y,
+        radiusKm: settings.fog.sightRangeKm,
+      })),
     });
     laidOutPorts = markers;
     const active = new Set<string>();
@@ -992,6 +1059,423 @@ async function start(): Promise<void> {
     return best;
   }
 
+  function selectedFleetShip(): OwnShipSnapshot | null {
+    return fleetShips.find((ship) => ship.id === selectedShipId) ?? fleetShips[0] ?? null;
+  }
+
+  function portName(portId: string | null): string | null {
+    return portId ? portData.get(portId)?.name ?? null : null;
+  }
+
+  function activeOwnViews(): ShipView[] {
+    const ids = new Set(
+      fleetShips.filter((ship) => ship.status !== "delivery").map((ship) => ship.id),
+    );
+    const found: ShipView[] = [];
+    for (const id of ids) {
+      const view = ships.get(id);
+      if (view) found.push(view);
+    }
+    return found;
+  }
+
+  function selectedShipView(): ShipView | null {
+    return ships.get(selectedShipId) ?? activeOwnViews()[0] ?? null;
+  }
+
+  function shipAt(screenX: number, screenY: number): ShipView | null {
+    let best: ShipView | null = null;
+    let bestDistance = Number.POSITIVE_INFINITY;
+    const ownIds = new Set(fleetShips.map((ship) => ship.id));
+    for (const [id, view] of ships) {
+      if (!ownIds.has(id)) continue;
+      const screen = toScreen(view.x, view.y);
+      const distance = Math.hypot(screen.x - screenX, screen.y - screenY);
+      if (distance > 22 || distance >= bestDistance) continue;
+      best = view;
+      bestDistance = distance;
+    }
+    return best;
+  }
+
+  function sendCommand(message: Record<string, unknown>): boolean {
+    if (socket?.readyState === WebSocket.OPEN) {
+      socket.send(JSON.stringify(message));
+      return true;
+    }
+    setStatus("Not connected yet; the order was not sent.", true);
+    return false;
+  }
+
+  function updateShipRings(): void {
+    const ownIds = new Set(fleetShips.map((ship) => ship.id));
+    for (const [id, ship] of ships) {
+      const own = ownIds.has(id);
+      ship.own = own;
+      ship.ring.clear();
+      ship.ring.visible = own;
+      if (!own) continue;
+      const selected = id === selectedShipId;
+      ship.ring.circle(0, 0, selected ? 19 : 17).stroke({
+        width: selected ? 3.5 : 1.25,
+        color: 0x8c1d1d,
+      });
+    }
+  }
+
+  function updateSelectedShip(id: string, centre: boolean): boolean {
+    const row = fleetShips.find((ship) => ship.id === id);
+    if (!row || row.status === "delivery") return false;
+    selectedShipId = id;
+    target = null;
+    marker.visible = false;
+    sendCommand({ t: "select", ship: id });
+
+    if (centre) {
+      if (mode === "chart") setMode("ship");
+      const viewShip = ships.get(id);
+      if (viewShip) {
+        view.x = viewShip.x;
+        view.y = viewShip.y;
+        setFollow(true);
+        refreshMap(performance.now(), true);
+      }
+    }
+    updateShipRings();
+    updateHud(ownSnapshot ?? undefined);
+    return true;
+  }
+
+  function closeFleetPanel(): void {
+    fleetPanel.hidden = true;
+  }
+
+  function renderFleetPanel(): void {
+    fleetCountOut.textContent = String(fleetShips.length);
+    fleetSummary.textContent = `${fleetCountText(fleetShips.length)} ships · ${formatMoney(money)} pieces`;
+    fleetList.replaceChildren();
+    fleetEmpty.hidden = fleetShips.length > 0;
+
+    for (const ship of fleetShips) {
+      const row = buildFleetRow(ship, portName(ship.portId));
+      const item = document.createElement("li");
+      const button = document.createElement("button");
+      const name = document.createElement("span");
+      const type = document.createElement("span");
+      const crew = document.createElement("span");
+      const state = document.createElement("span");
+      const track = document.createElement("span");
+      const fill = document.createElement("span");
+
+      button.type = "button";
+      button.className = "fleet-row";
+      button.disabled = !row.selectable;
+      button.setAttribute("aria-current", String(ship.id === selectedShipId));
+      name.className = "fleet-name";
+      name.textContent = row.name;
+      type.className = "fleet-type";
+      type.textContent = row.typeName;
+      crew.className = "fleet-crew";
+      crew.textContent = row.crewText;
+      state.className = "fleet-state";
+      state.textContent = row.stateText;
+      if (row.needsCrew) {
+        const warning = document.createElement("span");
+        warning.className = "fleet-needs";
+        warning.textContent = " · Needs crew";
+        state.append(warning);
+      }
+      track.className = "crew-track";
+      fill.className = "crew-fill";
+      fill.style.width = `${row.crewPercent}%`;
+      track.append(fill);
+      button.append(name, crew, type, state, track);
+      button.addEventListener("click", () => {
+        if (!row.selectable) return;
+        updateSelectedShip(ship.id, true);
+        closeFleetPanel();
+      });
+      item.append(button);
+      fleetList.append(item);
+    }
+  }
+
+  function openFleetPanel(): void {
+    closePortPanel();
+    closeShipyardPanel();
+    closeHirePanel();
+    knownPortsPanel.hidden = true;
+    fleetPanel.hidden = false;
+    renderFleetPanel();
+  }
+
+  function stockSize(port: PortInfo): "small" | "mid" | "large" {
+    return port.size === "S" ? "small" : port.size === "M" ? "mid" : "large";
+  }
+
+  function closeShipyardPanel(): void {
+    shipyardPortId = null;
+    namingClass = null;
+    namingStep.hidden = true;
+    shipyardPanel.hidden = true;
+  }
+
+  function refreshShipyardSummary(): void {
+    const port = shipyardPortId ? portData.get(shipyardPortId) : null;
+    if (!port) {
+      closeShipyardPanel();
+      return;
+    }
+    shipyardPortOut.textContent = port.name;
+    shipyardMoney.textContent = formatMoney(money);
+    shipyardCount.textContent = fleetCountText(fleetShips.length);
+
+    const deliveries = fleetShips.filter(
+      (ship) => ship.status === "delivery" && ship.portId === port.id,
+    );
+    shipyardDelivery.hidden = deliveries.length === 0;
+    shipyardDeliveryList.replaceChildren();
+    for (const ship of deliveries) {
+      const item = document.createElement("li");
+      const name = document.createElement("span");
+      const time = document.createElement("span");
+      name.textContent = `${ship.name} · ${shipTypeFor(ship.navy, ship.classId).name}`;
+      time.textContent = formatDuration(ship.deliveryLeftMs);
+      item.append(name, time);
+      shipyardDeliveryList.append(item);
+    }
+
+    for (const button of shipyardCardsOut.querySelectorAll<HTMLButtonElement>(
+      "[data-yard-buy]",
+    )) {
+      button.disabled = fleetShips.length >= settings.ships.maxShipsPerPlayer;
+      button.textContent = button.disabled ? "Fleet full" : "Buy";
+    }
+  }
+
+  function beginNaming(classId: BuyableShipClassId): void {
+    if (!shipyardPortId || !namingClassAllowed(classId)) return;
+    const port = portData.get(shipyardPortId);
+    if (!port) return;
+    const card = shipyardCards(roomKind, stockSize(port), playerNavy).find(
+      (candidate) => candidate.classId === classId,
+    );
+    if (!card) return;
+    namingClass = classId;
+    namingName.maxLength = settings.ships.maxNameLength;
+    namingName.value = suggestShipName(playerNavy);
+    namingType.textContent = `${card.name} · ${formatMoney(card.price)} pieces · ${card.deliveryText}`;
+    namingCost.textContent = `${formatMoney(money)} pieces available · ${fleetCountText(fleetShips.length)} ships`;
+    namingError.hidden = true;
+    namingStep.hidden = false;
+    namingName.focus();
+    namingStep.scrollIntoView({ block: "nearest" });
+  }
+
+  function namingClassAllowed(classId: BuyableShipClassId): boolean {
+    if (!shipyardPortId) return false;
+    const port = portData.get(shipyardPortId);
+    return !!port && shipyardCards(roomKind, stockSize(port), playerNavy).some(
+      (card) => card.classId === classId,
+    );
+  }
+
+  function renderShipyard(): void {
+    const port = shipyardPortId ? portData.get(shipyardPortId) : null;
+    if (!port || !port.buyable) {
+      closeShipyardPanel();
+      return;
+    }
+
+    shipyardCardsOut.replaceChildren();
+    const cards = shipyardCards(roomKind, stockSize(port), playerNavy);
+    for (const card of cards) {
+      const article = document.createElement("article");
+      const title = document.createElement("h3");
+      const price = document.createElement("p");
+      const stats = document.createElement("dl");
+      const buy = document.createElement("button");
+
+      article.className = "yard-card";
+      title.textContent = card.name;
+      price.className = "yard-price";
+      price.textContent = `${formatMoney(card.price)} pieces · ${card.deliveryText}`;
+
+      const addStat = (label: string, value: string): void => {
+        const dt = document.createElement("dt");
+        const dd = document.createElement("dd");
+        dt.textContent = label;
+        dd.textContent = value;
+        stats.append(dt, dd);
+      };
+      addStat("Crew", String(card.crew));
+      addStat("Guns", card.guns);
+      addStat("Speed", card.speed);
+      addStat("Cargo", `${card.cargoTonnes} t`);
+      addStat("Hull", formatMoney(card.hull));
+      addStat("Closest wind", `${card.closestAngleDeg}°`);
+      addStat("Turn 90°", `${card.turn90GameMinutes} game min`);
+      addStat("Draught", `${card.draughtM} m`);
+      stats.className = "yard-stats";
+
+      buy.type = "button";
+      buy.className = "btn";
+      buy.dataset.yardBuy = "true";
+      buy.textContent = "Buy";
+      buy.disabled = fleetShips.length >= settings.ships.maxShipsPerPlayer;
+      if (buy.disabled) buy.textContent = "Fleet full";
+      buy.addEventListener("click", () => beginNaming(card.classId));
+
+      article.append(title, price, stats, buy);
+      shipyardCardsOut.append(article);
+    }
+
+    refreshShipyardSummary();
+  }
+
+  function openShipyard(portId: string): void {
+    const port = portData.get(portId);
+    if (!port || !port.buyable) {
+      showNotice("You must own a port to buy ships here.");
+      return;
+    }
+    closePortPanel();
+    closeFleetPanel();
+    closeHirePanel();
+    knownPortsPanel.hidden = true;
+    shipyardPortId = portId;
+    namingClass = null;
+    namingStep.hidden = true;
+    shipyardPanel.hidden = false;
+    renderShipyard();
+  }
+
+  function confirmPurchase(): void {
+    if (!shipyardPortId || !namingClass) return;
+    const name = cleanShipName(namingName.value);
+    if (!name) {
+      namingError.textContent = `Use 1–${settings.ships.maxNameLength} letters, numbers, spaces or simple punctuation.`;
+      namingError.hidden = false;
+      namingName.focus();
+      return;
+    }
+    if (!sendCommand({
+      t: "buy",
+      port: shipyardPortId,
+      type: namingClass,
+      name,
+    })) return;
+    namingStep.hidden = true;
+    namingClass = null;
+    showNotice(`Order sent: ${name}.`);
+    refreshShipyardSummary();
+  }
+
+  function closeHirePanel(): void {
+    hirePortId = null;
+    hirePanel.hidden = true;
+  }
+
+  function renderHirePanel(): void {
+    const port = hirePortId ? portData.get(hirePortId) : null;
+    if (!port) {
+      closeHirePanel();
+      return;
+    }
+    const docked = fleetShips.filter(
+      (ship) => ship.status === "docked" && ship.portId === port.id,
+    );
+    hirePortOut.textContent = port.name;
+    hirePoolOut.textContent = `Crew pool: ${formatMoney(port.crewAvailable ?? 0)} sailors`;
+    hireList.replaceChildren();
+    hireEmpty.hidden = docked.length > 0;
+
+    for (const ship of docked) {
+      const quoteBase = port.crewAvailable ?? 0;
+      const card = document.createElement("article");
+      const head = document.createElement("div");
+      const title = document.createElement("h3");
+      const count = document.createElement("span");
+      const slider = document.createElement("input");
+      const quick = document.createElement("div");
+      const cost = document.createElement("p");
+      const confirm = document.createElement("button");
+      const targets = crewQuickTargets(ship);
+
+      card.className = "hire-card";
+      head.className = "hire-head";
+      title.textContent = ship.name;
+      count.className = "hire-count";
+      count.textContent = `${ship.crew} / ${ship.fullCrew} crew`;
+      head.append(title, count);
+
+      slider.type = "range";
+      slider.className = "hire-slider";
+      slider.min = String(ship.crew);
+      slider.max = String(ship.fullCrew);
+      slider.step = "1";
+      slider.value = String(ship.crew);
+      slider.setAttribute("aria-label", `Crew for ${ship.name}`);
+
+      const updateQuote = (): void => {
+        const quote = crewQuote(ship, Number(slider.value), quoteBase, money);
+        count.textContent = `${quote.target} / ${ship.fullCrew} crew`;
+        cost.className = "hire-cost";
+        cost.textContent = quote.count <= 0
+          ? `Move the slider to hire · pool ${formatMoney(quote.poolLeft)} left`
+          : `${quote.count} sailors · ${formatMoney(quote.cost)} pieces · pool ${formatMoney(quote.poolLeft)} left`;
+        confirm.disabled = !quote.canHire;
+        if (!quote.canHire && quote.reason) cost.textContent += ` · ${quote.reason}`;
+        confirm.dataset.count = String(quote.count);
+      };
+      slider.addEventListener("input", updateQuote);
+
+      quick.className = "hire-quick";
+      const quickButton = (label: string, target: number): HTMLButtonElement => {
+        const button = document.createElement("button");
+        button.type = "button";
+        button.className = "btn";
+        button.textContent = label;
+        button.addEventListener("click", () => {
+          slider.value = String(Math.max(ship.crew, Math.min(ship.fullCrew, target)));
+          updateQuote();
+        });
+        return button;
+      };
+      quick.append(
+        quickButton("Minimum (10%)", targets.minimum),
+        quickButton("Half", targets.half),
+        quickButton("Full", targets.full),
+      );
+
+      confirm.type = "button";
+      confirm.className = "btn btn-seal hire-confirm";
+      confirm.textContent = "Confirm hire";
+      confirm.disabled = true;
+      confirm.addEventListener("click", () => {
+        const amount = Number(confirm.dataset.count ?? 0);
+        if (!(amount > 0) || !hirePortId) return;
+        if (!sendCommand({ t: "hire", ship: ship.id, port: hirePortId, count: amount })) return;
+        closeHirePanel();
+      });
+
+      updateQuote();
+      card.append(head, slider, quick, cost, confirm);
+      hireList.append(card);
+    }
+  }
+
+  function openHirePanel(portId: string): void {
+    if (!portData.has(portId)) return;
+    closePortPanel();
+    closeFleetPanel();
+    closeShipyardPanel();
+    knownPortsPanel.hidden = true;
+    hirePortId = portId;
+    hirePanel.hidden = false;
+    renderHirePanel();
+  }
+
   function closePortPanel(): void {
     selectedPortId = null;
     portPanel.hidden = true;
@@ -1007,6 +1491,9 @@ async function start(): Promise<void> {
 
     const ship = ownSnapshot;
     const dockedHere = ship?.[7] === port.id;
+    const hasDockedShip = fleetShips.some(
+      (mine) => mine.status === "docked" && mine.portId === port.id,
+    );
     const distanceKm = ship
       ? Math.hypot(port.x - ship[2], port.y - ship[3])
       : null;
@@ -1015,6 +1502,8 @@ async function start(): Promise<void> {
       distanceKm,
       dockedHere,
       hasShip: ship !== null,
+      canBuy: port.buyable === true,
+      hasDockedShip,
     });
 
     portSize.textContent = model.sizeLabel;
@@ -1028,11 +1517,16 @@ async function start(): Promise<void> {
     portDistance.textContent = model.distanceText;
     portSail.hidden = !model.buttons.includes("sail");
     portUndock.hidden = !model.buttons.includes("undock");
+    portShipyard.hidden = !model.buttons.includes("shipyard");
+    portHire.hidden = !model.buttons.includes("hire");
     portPanel.hidden = false;
   }
 
   function openPortPanel(portId: string): void {
     if (!portData.has(portId)) return;
+    closeFleetPanel();
+    closeShipyardPanel();
+    closeHirePanel();
     selectedPortId = portId;
     knownPortsPanel.hidden = true;
     refreshPortPanel();
@@ -1040,26 +1534,21 @@ async function start(): Promise<void> {
 
   function sendPortOrder(portId: string): void {
     const port = portData.get(portId);
-    if (!port) return;
+    if (!port || !selectedShipId) return;
     target = { x: port.x, y: port.y };
     const screen = toScreen(port.x, port.y);
     marker.position.set(screen.x, screen.y);
     marker.visible = true;
 
-    if (socket?.readyState === WebSocket.OPEN) {
-      socket.send(JSON.stringify({ t: "sailToPort", port: portId }));
+    if (sendCommand({ t: "sailToPort", port: portId, ship: selectedShipId })) {
       closePortPanel();
-    } else {
-      setStatus("Not connected yet; the order was not sent.", true);
     }
   }
 
   function sendUndock(): void {
-    if (socket?.readyState === WebSocket.OPEN) {
-      socket.send(JSON.stringify({ t: "undock" }));
+    if (!selectedShipId) return;
+    if (sendCommand({ t: "undock", ship: selectedShipId })) {
       closePortPanel();
-    } else {
-      setStatus("Not connected yet; the order was not sent.", true);
     }
   }
 
@@ -1175,11 +1664,27 @@ async function start(): Promise<void> {
       .fill(fleetColor)
       .stroke({ width: 1.4, color: own ? 0xf3e7cb : 0x1b2f3d });
 
-    if (own) hull.circle(0, 0, 17).stroke({ width: 1.5, color: 0x8c1d1d });
     return hull;
   }
 
   function updateHud(own: ShipSnapshot | undefined): void {
+    const row = selectedFleetShip();
+    const viewRow = row ? buildFleetRow(row, portName(row.portId)) : null;
+    moneyOut.textContent = formatMoney(money);
+    fleetCountOut.textContent = String(fleetShips.length);
+    fleetSummary.textContent = `${fleetCountText(fleetShips.length)} ships · ${formatMoney(money)} pieces`;
+    shipNameOut.textContent = row?.name ?? "No ship selected";
+    shipTypeOut.textContent = viewRow?.typeName ?? "–";
+    shipCrewOut.textContent = viewRow?.crewText ?? "–";
+    shipCrewOut.classList.toggle("needs-crew", viewRow?.needsCrew === true);
+    shipStateOut.textContent = viewRow
+      ? `${viewRow.stateText}${viewRow.needsCrew ? " · Needs crew" : ""}`
+      : "–";
+    shipStateOut.classList.toggle(
+      "ship-state-needs-crew",
+      viewRow?.needsCrew === true,
+    );
+
     if (own) {
       const heading = own[4];
       speedOut.textContent = `${own[5].toFixed(1)} kn`;
@@ -1265,6 +1770,8 @@ async function start(): Promise<void> {
         liveBlocks: liveBlockGraphics,
         graphicsResets,
         devicePixelRatio: app.renderer.resolution,
+        money,
+        fleetShips: fleetShips.length,
       },
     );
     fogDebugOut.textContent = line ?? "";
@@ -1376,6 +1883,44 @@ async function start(): Promise<void> {
     }
 
     ownId = state.you;
+
+    const incomingFleet: OwnShipSnapshot[] = [];
+    if (Array.isArray(state.fleet)) {
+      for (const raw of state.fleet) {
+        if (
+          !raw ||
+          typeof raw.id !== "string" ||
+          typeof raw.name !== "string" ||
+          typeof raw.classId !== "string" ||
+          !Number.isFinite(raw.crew) ||
+          !Number.isFinite(raw.fullCrew) ||
+          !Number.isFinite(raw.deliveryLeftMs) ||
+          !Number.isFinite(raw.x) ||
+          !Number.isFinite(raw.y) ||
+          (raw.status !== "sailing" &&
+            raw.status !== "docked" &&
+            raw.status !== "waiting" &&
+            raw.status !== "delivery")
+        ) {
+          continue;
+        }
+        incomingFleet.push({
+          ...raw,
+          navy: parseNavy(raw.navy) ?? "British",
+        });
+      }
+    }
+    fleetShips = incomingFleet;
+    money = Number.isFinite(state.m) ? Math.max(0, Math.floor(state.m)) : 0;
+    playerNavy = fleetShips[0]?.navy ?? playerNavy;
+    const serverSelection = typeof state.sel === "string" ? state.sel : "";
+    if (fleetShips.some((ship) => ship.id === serverSelection && ship.status !== "delivery")) {
+      selectedShipId = serverSelection;
+    } else if (!fleetShips.some((ship) => ship.id === selectedShipId)) {
+      selectedShipId = fleetShips.find((ship) => ship.status !== "delivery")?.id ?? "";
+    }
+    const ownIds = new Set(fleetShips.map((ship) => ship.id));
+
     windFrom = Number.isFinite(state.w) ? state.w : settings.weather.windFromDeg;
     roomKind = validRoomKind(state.k) ? state.k : "normal";
     bordersButton.hidden = roomKind === "normal";
@@ -1426,6 +1971,8 @@ async function start(): Promise<void> {
           continue;
         }
         const free = raw[8];
+        const buyable = raw[9];
+        const crewAvailable = raw[10];
         incomingPorts.set(id, {
           id,
           name,
@@ -1440,12 +1987,19 @@ async function start(): Promise<void> {
             typeof free === "number" && Number.isFinite(free)
               ? Math.max(0, Math.floor(free))
               : undefined,
+          buyable: buyable === 1,
+          crewAvailable:
+            typeof crewAvailable === "number" && Number.isFinite(crewAvailable)
+              ? Math.max(0, Math.floor(crewAvailable))
+              : undefined,
         });
       }
     }
     portData.clear();
     for (const [id, port] of incomingPorts) portData.set(id, port);
     if (selectedPortId && !portData.has(selectedPortId)) closePortPanel();
+    if (shipyardPortId && !portData.has(shipyardPortId)) closeShipyardPanel();
+    if (hirePortId && !portData.has(hirePortId)) closeHirePanel();
 
     const seen = new Set<string>();
     let own: ShipSnapshot | undefined;
@@ -1468,10 +2022,16 @@ async function start(): Promise<void> {
       seen.add(id);
       let ship = ships.get(id);
       if (!ship) {
-        const hull = makeHull(id === state.you, navy);
-        fleetLayer.addChild(hull);
+        const ownHere = ownIds.has(id);
+        const hull = makeHull(ownHere, navy);
+        const ring = new Graphics();
+        ring.visible = false;
+        fleetLayer.addChild(hull, ring);
         ship = {
+          id,
           hull,
+          ring,
+          own: ownHere,
           classId: String(classId),
           navy,
           x,
@@ -1493,32 +2053,38 @@ async function start(): Promise<void> {
       ship.targetX = x;
       ship.targetY = y;
       ship.targetHeading = headingDeg * (Math.PI / 180);
-      if (id === state.you) own = snapshot;
+      if (id === selectedShipId) own = snapshot;
     }
 
     for (const [id, ship] of ships) {
       if (!seen.has(id)) {
         ship.hull.destroy();
+        ship.ring.destroy();
         ships.delete(id);
       }
     }
 
     ownSnapshot = own ?? null;
-    const ownShip = ships.get(ownId);
-    if (ownShip && builtRevision < 0) {
-      view.x = ownShip.x;
-      view.y = ownShip.y;
+    updateShipRings();
+    const selectedView = selectedShipView();
+    if (selectedView && builtRevision < 0) {
+      view.x = selectedView.x;
+      view.y = selectedView.y;
     }
 
-    if (own) {
-      updateHud(own);
-      if (target) {
-        const distance = Math.hypot(own[2] - target.x, own[3] - target.y);
-        if (distance <= settings.sailing.arrivalRadiusKm) {
-          target = null;
-          marker.visible = false;
-        }
+    updateHud(own);
+    if (own && target) {
+      const distance = Math.hypot(own[2] - target.x, own[3] - target.y);
+      if (distance <= settings.sailing.arrivalRadiusKm) {
+        target = null;
+        marker.visible = false;
       }
+    }
+
+    if (!fleetPanel.hidden) renderFleetPanel();
+    if (!shipyardPanel.hidden) refreshShipyardSummary();
+    if (!hirePanel.hidden && !hirePanel.contains(document.activeElement)) {
+      renderHirePanel();
     }
 
     lastSeen = Array.isArray(state.l) ? state.l : [];
@@ -1543,7 +2109,9 @@ async function start(): Promise<void> {
     const fleetQuery = roomKindForCode(room) === "normal"
       ? ""
       : `${requestedNavy === null ? "" : `&navy=${encodeURIComponent(requestedNavy)}`}` +
-        `${requestedStart === null ? "" : `&start=${encodeURIComponent(requestedStart)}`}`;
+        `${requestedStart === null ? "" : `&start=${encodeURIComponent(requestedStart)}`}` +
+        `${requestedShip === null ? "" : `&ship=${encodeURIComponent(requestedShip)}`}` +
+        `${requestedCash === null ? "" : `&cash=${encodeURIComponent(requestedCash)}`}`;
     const url = `${scheme}://${location.host}/ws?room=${encodeURIComponent(room)}&player=${encodeURIComponent(identity.id)}${botsQuery}${fleetQuery}`;
     const next = new WebSocket(url);
     socket = next;
@@ -1578,16 +2146,18 @@ async function start(): Promise<void> {
   }
 
   function sendOrder(x: number, y: number): void {
+    if (!selectedShipId) return;
     target = { x, y };
     const screen = toScreen(x, y);
     marker.position.set(screen.x, screen.y);
     marker.visible = true;
 
-    if (socket?.readyState === WebSocket.OPEN) {
-      socket.send(JSON.stringify({ t: "o", x: Number(x.toFixed(2)), y: Number(y.toFixed(2)) }));
-    } else {
-      setStatus("Not connected yet; the order was not sent.", true);
-    }
+    sendCommand({
+      t: "o",
+      x: Number(x.toFixed(2)),
+      y: Number(y.toFixed(2)),
+      ship: selectedShipId,
+    });
   }
 
   // ---- Chart mode and scale ----------------------------------------------
@@ -1723,6 +2293,11 @@ async function start(): Promise<void> {
       const rect = app.canvas.getBoundingClientRect();
       const screenX = event.clientX - rect.left;
       const screenY = event.clientY - rect.top;
+      const ownShip = shipAt(screenX, screenY);
+      if (ownShip) {
+        updateSelectedShip(ownShip.id, false);
+        return;
+      }
       const port = portAt(screenX, screenY);
       if (port) {
         openPortPanel(port.id);
@@ -1821,10 +2396,18 @@ async function start(): Promise<void> {
   knownPortsButton.addEventListener("click", () => {
     if (mode !== "chart") return;
     closePortPanel();
+    closeFleetPanel();
+    closeShipyardPanel();
+    closeHirePanel();
     renderKnownPorts();
     knownPortsPanel.hidden = false;
   });
 
+  fleetButton.addEventListener("click", () => {
+    if (fleetPanel.hidden) openFleetPanel();
+    else closeFleetPanel();
+  });
+  fleetClose.addEventListener("click", closeFleetPanel);
   portClose.addEventListener("click", closePortPanel);
   knownPortsClose.addEventListener("click", () => {
     knownPortsPanel.hidden = true;
@@ -1833,10 +2416,37 @@ async function start(): Promise<void> {
     if (selectedPortId) sendPortOrder(selectedPortId);
   });
   portUndock.addEventListener("click", sendUndock);
+  portShipyard.addEventListener("click", () => {
+    if (selectedPortId) openShipyard(selectedPortId);
+  });
+  portHire.addEventListener("click", () => {
+    if (selectedPortId) openHirePanel(selectedPortId);
+  });
+  shipyardClose.addEventListener("click", closeShipyardPanel);
+  hireClose.addEventListener("click", closeHirePanel);
+  namingRandom.addEventListener("click", () => {
+    namingName.value = suggestShipName(playerNavy);
+    namingError.hidden = true;
+    namingName.focus();
+  });
+  namingCancel.addEventListener("click", () => {
+    namingClass = null;
+    namingStep.hidden = true;
+  });
+  namingConfirm.addEventListener("click", confirmPurchase);
+  namingName.addEventListener("keydown", (event) => {
+    if (event.key === "Enter") {
+      event.preventDefault();
+      confirmPurchase();
+    }
+  });
   document.addEventListener("keydown", (event) => {
     if (event.key !== "Escape") return;
     closePortPanel();
     knownPortsPanel.hidden = true;
+    closeFleetPanel();
+    closeShipyardPanel();
+    closeHirePanel();
   });
 
   versionNotice.addEventListener("click", () => location.reload());
@@ -1888,7 +2498,7 @@ async function start(): Promise<void> {
 
     const dt = Math.min(0.1, app.ticker.deltaMS / 1000);
     updateClockAndNight(now);
-    const own = ships.get(ownId);
+    const own = selectedShipView();
 
     if (view.follow && own && mode === "ship") {
       view.x = own.x;
@@ -1904,9 +2514,11 @@ async function start(): Promise<void> {
       const screen = toScreen(ship.x, ship.y);
       ship.hull.position.set(screen.x, screen.y);
       ship.hull.rotation = ship.heading;
+      ship.ring.position.set(screen.x, screen.y);
       ship.hull.visible =
         screen.x > -90 && screen.x < app.screen.width + 90 &&
         screen.y > -90 && screen.y < app.screen.height + 90;
+      ship.ring.visible = ship.own && ship.hull.visible;
     }
 
     refreshMap(now);

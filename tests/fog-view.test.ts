@@ -41,6 +41,8 @@ test("test and dev rooms show the fog debug line; normal rooms do not", () => {
     liveBlocks: 12,
     graphicsResets: 1,
     devicePixelRatio: 1.5,
+    money: 50_000,
+    fleetShips: 7,
   });
   assert.match(devLine ?? "", new RegExp(`${chartColumns * chartRows} discovered cells`));
   assert.match(devLine ?? "", /50 bots/);
@@ -53,6 +55,8 @@ test("test and dev rooms show the fog debug line; normal rooms do not", () => {
   assert.match(devLine ?? "", /12 live block graphics/);
   assert.match(devLine ?? "", /1 graphics resets/);
   assert.match(devLine ?? "", /dpr 1\.50/);
+  assert.match(devLine ?? "", /50000 pieces/);
+  assert.match(devLine ?? "", /7 fleet ships/);
 });
 
 test("live sight hides paper inside the circle and leaves the outside blank", () => {

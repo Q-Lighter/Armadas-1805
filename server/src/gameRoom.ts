@@ -16,6 +16,7 @@ import {
   hireCrew,
   removePlayer,
   selectShip,
+  shipClassForRoom,
   stepWorld,
   takeNotice,
   undock,
@@ -150,7 +151,7 @@ export class GameRoom {
     addPlayer(
       this.world,
       playerId,
-      shipClass ?? this.world.startShipClass,
+      shipClass ?? shipClassForRoom(room),
       startMoney ?? this.world.startMoney,
     );
 

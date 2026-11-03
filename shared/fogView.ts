@@ -31,6 +31,8 @@ export interface FogDebugInfo {
   liveBlocks?: number;
   graphicsResets?: number;
   devicePixelRatio?: number;
+  money?: number;
+  fleetShips?: number;
 }
 
 /** How many cells the player knows, with dev rooms counting the whole chart. */
@@ -59,6 +61,8 @@ export function fogDebugLine(
     `sight ${settings.fog.sightRangeKm} km`,
     `build ${(info.buildCommit ?? "unknown").slice(0, 12)}`,
   ];
+  if (info.money !== undefined) parts.push(`${Math.round(info.money)} pieces`);
+  if (info.fleetShips !== undefined) parts.push(`${info.fleetShips} fleet ships`);
   if (info.playerId) parts.push(`player ${info.playerId.slice(0, 8)}`);
   if (info.fps !== undefined) parts.push(`${Math.round(info.fps)} fps`);
   if (info.liveBlocks !== undefined) parts.push(`${info.liveBlocks} live block graphics`);

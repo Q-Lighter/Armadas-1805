@@ -15,6 +15,7 @@ import {
   stepShip,
   type Ship,
   type ShipClassId,
+  type ShipRoute,
 } from "./sailing.js";
 import { isLandAt } from "./land.js";
 import {
@@ -25,6 +26,7 @@ import {
 } from "./map.js";
 import {
   createChart,
+  isCellDiscovered,
   requestChartResume as markChartForResume,
   revealCircle,
   roomKindForCode,
@@ -35,6 +37,13 @@ import {
   type RoomKind,
 } from "./fog.js";
 import { addBots, refreshBotOrders } from "./bots.js";
+import {
+  nearestSeaPoint,
+  planRoute,
+  ROUTE_LAND,
+  ROUTE_NEAREST_SEA,
+  routeSegmentClear,
+} from "./route.js";
 import type { DebugStats } from "./loadMetrics.js";
 import type { NavyId } from "./navies.js";
 import {
@@ -166,6 +175,8 @@ export interface World {
   nextPriceShiftGameMs: number;
   /** Provisions multiplier; normal rooms always use one. */
   hungerMultiplier: number;
+  /** Automatic re-plan budget per player, counted in server ticks. */
+  routePlans: Map<string, { tick: number; count: number }>;
 }
 
 /**
@@ -244,6 +255,8 @@ export interface OwnShipSnapshot {
   cargoUsed: number;
   provisionsDays: number;
   starving: boolean;
+  /** The selected ship's planned route, own ships only. */
+  route?: Array<[number, number]> | null;
 }
 
 /**
@@ -369,6 +382,7 @@ export function createWorld(roomCode = "main", options: WorldOptions = {}): Worl
     nextProductionGameMs: gameCycleMs(settings.trade.production.cycleGameDays),
     nextPriceShiftGameMs: gameCycleMs(settings.trade.pricesCycle.shiftGameDays),
     hungerMultiplier: Math.max(0, hungerMultiplier),
+    routePlans: new Map(),
   };
 }
 
@@ -577,6 +591,7 @@ export function removePlayer(world: World, playerId: string): boolean {
   world.botFleets.delete(playerId);
   world.charts.delete(playerId);
   world.notices.delete(playerId);
+  world.routePlans.delete(playerId);
   return removedShip;
 }
 
@@ -615,6 +630,133 @@ function shipForOrder(world: World, playerId: string, shipId?: unknown): Ship | 
   return shipsForOwner(world, playerId).find((ship) => ship.id === shipId) ?? null;
 }
 
+/** Land this player has discovered. Undiscovered ground is open sea. */
+function routeKnownLand(
+  world: World,
+  playerId: string,
+): (x: number, y: number) => boolean {
+  const chart = world.charts.get(playerId);
+  return (x: number, y: number): boolean =>
+    Boolean(chart && (chart.all || isCellDiscovered(chart, x, y)) && isLandAt(x, y));
+}
+
+/** A player may automatically re-plan only a few times per real second. */
+function takeReplanBudget(world: World, playerId: string): boolean {
+  const windowTicks = Math.max(1, settings.server.tickHz);
+  let budget = world.routePlans.get(playerId);
+  if (!budget || world.tick - budget.tick >= windowTicks) {
+    budget = { tick: world.tick, count: 0 };
+    world.routePlans.set(playerId, budget);
+  }
+  if (budget.count >= settings.route.maxPlansPerSecond) return false;
+  budget.count += 1;
+  return true;
+}
+
+/** Put the current planned waypoint in front of the ship. */
+function startRouteLeg(ship: Ship): "sailing" | "arrived" | "blocked" {
+  const route = ship.route;
+  if (!route) return "blocked";
+  while (route.index < route.waypoints.length) {
+    const waypoint = route.waypoints[route.index]!;
+    if (distanceKm(ship, waypoint) <= settings.sailing.arrivalRadiusKm) {
+      route.index += 1;
+      continue;
+    }
+    if (sailTo(ship, waypoint.x, waypoint.y)) return "sailing";
+    route.index += 1;
+  }
+
+  const partial = route.partial;
+  ship.route = null;
+  // Reaching the last waypoint of a partial plan is not arriving at the
+  // destination; say so and leave the ship available for a new order.
+  ship.arrived = !partial;
+  return "arrived";
+}
+
+/** Plan and install a route. Returns false only when there is no waypoint. */
+function installRoute(
+  world: World,
+  playerId: string,
+  ship: Ship,
+  goal: { x: number; y: number },
+  kind: "point" | "port",
+  portId: string | null,
+): boolean {
+  ship.route = null;
+  const plan = planRoute({
+    start: { x: ship.x, y: ship.y },
+    goal,
+    knownLand: routeKnownLand(world, playerId),
+    isInside: isInsideMapFrame,
+  });
+
+  if (plan.status === "land") {
+    pushNotice(world, playerId, ROUTE_LAND);
+    ship.order = null;
+    return false;
+  }
+  if (plan.waypoints.length === 0) {
+    if (plan.message) pushNotice(world, playerId, plan.message);
+    ship.order = null;
+    return false;
+  }
+
+  const route: ShipRoute = {
+    waypoints: plan.waypoints.map((point) => ({ x: point.x, y: point.y })),
+    index: 0,
+    goal: { x: goal.x, y: goal.y },
+    kind,
+    portId,
+    partial: plan.status === "partial",
+    message: plan.message,
+    plannedTick: world.tick,
+  };
+  ship.route = route;
+  if (plan.message) pushNotice(world, playerId, plan.message);
+  return startRouteLeg(ship) !== "blocked";
+}
+
+/** Re-plan from the ship's current position, keeping the same final goal. */
+function replanRoute(world: World, playerId: string, ship: Ship, force = false): boolean {
+  const route = ship.route;
+  if (!route) return false;
+  if (!force && world.tick - route.plannedTick < settings.route.minReplanTicks) return false;
+  if (!takeReplanBudget(world, playerId)) return false;
+
+  const goal = { x: route.goal.x, y: route.goal.y };
+  const { kind, portId } = route;
+  ship.order = null;
+  ship.route = null;
+  return installRoute(world, playerId, ship, goal, kind, portId);
+}
+
+/** Known land on the next stretch of route, including the current leg. */
+function routeAheadBlocked(world: World, playerId: string, ship: Ship): boolean {
+  const route = ship.route;
+  if (!route) return false;
+  const knownLand = routeKnownLand(world, playerId);
+  let from = { x: ship.x, y: ship.y };
+  let remaining = settings.route.lookAheadKm;
+
+  for (let index = route.index; index < route.waypoints.length && remaining > 0; index += 1) {
+    const to = route.waypoints[index]!;
+    const length = distanceKm(from, to);
+    if (length < 1e-9) continue;
+    const share = Math.min(1, remaining / length);
+    const end = {
+      x: from.x + (to.x - from.x) * share,
+      y: from.y + (to.y - from.y) * share,
+    };
+    if (!routeSegmentClear(from, end, knownLand)) return true;
+    if (share < 1) break;
+    from = to;
+    remaining -= length;
+  }
+  return false;
+}
+
 /** The public status derived from the ship's position and delivery. */
 export function shipStatus(ship: Ship): ShipStatus {
   if (ship.deliveryPortId) return "delivery";
@@ -649,12 +791,34 @@ export function applyOrder(
     return false;
   }
   if (ship.dockedPortId) return false;
-  if (!sailTo(ship, x, y)) return false;
+
+  const distance = distanceKm(ship, { x, y });
+  if (
+    distance < settings.sailing.minOrderDistanceKm ||
+    distance > settings.sailing.maxOrderDistanceKm
+  ) {
+    return false;
+  }
+
+  // An order outside the chart keeps the old direct behaviour so the coast
+  // resolver can stop the ship at the edge; the planner only works inside.
+  if (!isInsideMapFrame(x, y)) {
+    ship.route = null;
+    ship.waitingPortId = null;
+    ship.waitingSinceGameMs = 0;
+    ship.portOrderId = null;
+    return sailTo(ship, x, y);
+  }
+  if (routeKnownLand(world, playerId)(x, y)) {
+    pushNotice(world, playerId, ROUTE_LAND);
+    return false;
+  }
 
   ship.waitingPortId = null;
   ship.waitingSinceGameMs = 0;
   ship.portOrderId = null;
-  return true;
+  ship.arrived = false;
+  return installRoute(world, playerId, ship, { x, y }, "point", null);
 }
 
 /** Remember one short message for a player. Older messages are dropped. */
@@ -712,6 +876,7 @@ function dockAt(
   ship.x = port.anchorage.x;
   ship.y = port.anchorage.y;
   ship.order = null;
+  ship.route = null;
   ship.speedKnots = 0;
   ship.dockedPortId = port.id;
   ship.waitingPortId = null;
@@ -732,6 +897,7 @@ function arriveAtPort(
   }
 
   ship.order = null;
+  ship.route = null;
   ship.speedKnots = 0;
   ship.portOrderId = null;
   ship.dockedPortId = null;
@@ -768,8 +934,13 @@ export function applyPortOrder(
     arriveAtPort(world, playerId, ship, port);
     return true;
   }
+  if (distanceKm(ship, port.anchorage) > settings.sailing.maxOrderDistanceKm) {
+    ship.portOrderId = null;
+    return false;
+  }
 
-  if (!sailTo(ship, port.anchorage.x, port.anchorage.y)) {
+  ship.arrived = false;
+  if (!installRoute(world, playerId, ship, port.anchorage, "port", port.id)) {
     ship.portOrderId = null;
     return false;
   }
@@ -786,6 +957,7 @@ export function undock(world: World, playerId: string, shipId?: unknown): boolea
   ship.dockedPortId = null;
   ship.speedKnots = 0;
   ship.order = null;
+  ship.route = null;
   ship.portOrderId = null;
   ship.waitingPortId = null;
   ship.arrived = true;
@@ -1298,6 +1470,7 @@ function deliverReadyShips(world: World): void {
       ship.headingRad = 0;
       ship.speedKnots = 0;
       ship.order = null;
+      ship.route = null;
       pushNotice(world, ownerId, `Ship delivered: ${ship.name} at ${port.name}.`);
       arriveAtPort(world, ownerId, ship, port);
     }
@@ -1655,6 +1828,45 @@ function stepOwnerShip(
     return;
   }
 
+  if (ship.route) {
+    // A waypoint reached last tick advances the route. If the order vanished
+    // well short of that waypoint, the coast stopped the ship: re-plan.
+    if (!ship.order) {
+      const current = ship.route.waypoints[ship.route.index];
+      if (current && distanceKm(ship, current) > settings.sailing.arrivalRadiusKm + 0.5) {
+        replanRoute(world, ownerId, ship);
+      } else {
+        startRouteLeg(ship);
+      }
+    }
+
+    const activeRoute = ship.route;
+    if (activeRoute) {
+      const knownLand = routeKnownLand(world, ownerId);
+      if (knownLand(activeRoute.goal.x, activeRoute.goal.y)) {
+        // The destination was unknown sea when ordered. Now it is land, so
+        // finish at the nearest reachable sea point and say why.
+        const seaPoint = nearestSeaPoint(
+          activeRoute.goal,
+          knownLand,
+          80,
+          isInsideMapFrame,
+        );
+        if (seaPoint) {
+          pushNotice(world, ownerId, ROUTE_NEAREST_SEA);
+          activeRoute.goal = { x: seaPoint.x, y: seaPoint.y };
+          replanRoute(world, ownerId, ship, true);
+        } else {
+          pushNotice(world, ownerId, ROUTE_LAND);
+          ship.order = null;
+          ship.route = null;
+        }
+      } else if (routeAheadBlocked(world, ownerId, ship)) {
+        replanRoute(world, ownerId, ship);
+      }
+    }
+  }
+
   // A ship close to a coast first turns and sails for open water. This gives
   // a new seaward order a way out even when the wind is blowing onshore.
   if (
@@ -1677,6 +1889,21 @@ function stepOwnerShip(
     ship.coastEscapeHeadingRad ?? undefined,
   );
   resolveMovement(world, ownerId, ship, fromX, fromY);
+
+  // stepShip clears the order on reaching a waypoint. Continue the route in
+  // the same tick so the ship never pauses between legs, and re-plan at once
+  // if the coast stopped it well short of the waypoint.
+  if (ship.route && !ship.order) {
+    const route = ship.route;
+    const current = route.waypoints[route.index];
+    if (current && distanceKm(ship, current) <= settings.sailing.arrivalRadiusKm + 0.5) {
+      route.index += 1;
+      startRouteLeg(ship);
+    } else if (current) {
+      replanRoute(world, ownerId, ship);
+    }
+  }
+
   finishPortOrder(world, ownerId, ship);
 }
 
@@ -1880,6 +2107,12 @@ export function visibleStateFor(
         ? Number(days.toFixed(2))
         : 9_999,
       starving: ship.starving,
+      route: ship.route
+        ? ship.route.waypoints.map((point) => [
+            Number(point.x.toFixed(2)),
+            Number(point.y.toFixed(2)),
+          ])
+        : null,
     };
   });
 

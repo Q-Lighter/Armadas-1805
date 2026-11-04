@@ -303,6 +303,20 @@ function parseOwnShip(raw: unknown): OwnShipSnapshot | null {
     cargoUsed,
     provisionsDays,
     starving: source.starving === true,
+    route: (() => {
+      if (!Array.isArray(source.route)) return null;
+      const points: Array<[number, number]> = [];
+      for (const rawPoint of source.route) {
+        if (!Array.isArray(rawPoint) || rawPoint.length !== 2) return null;
+        const px = finiteNumber(rawPoint[0]);
+        const py = finiteNumber(rawPoint[1]);
+        if (px === null || py === null) return null;
+        points.push([px, py]);
+      }
+      return points.length > 0 && points.length <= settings.route.maxWaypoints
+        ? points
+        : null;
+    })(),
   };
 }
 
@@ -499,6 +513,12 @@ async function start(): Promise<void> {
   // below ships. Only ports already found by this player reach this layer.
   const portLayer = new Container();
 
+  // The selected ship's planned route sits above the map and below ports.
+  const routeLayer = new Container();
+  const routeInk = new Graphics();
+  routeLayer.addChild(routeInk);
+  routeLayer.visible = false;
+
   const marker = new Graphics();
   marker.circle(0, 0, 9).stroke({ width: 2, color: INK_COLOR });
   marker.moveTo(-14, 0).lineTo(-7, 0).stroke({ width: 2, color: INK_COLOR });
@@ -529,6 +549,7 @@ async function start(): Promise<void> {
     liveHalo,
     liveMapLayer,
     liveMask,
+    routeLayer,
     portLayer,
     lastSeenLayer,
     fleetLayer,
@@ -1305,6 +1326,43 @@ async function start(): Promise<void> {
     }
     portLayer.visible = markers.length > 0;
     updateKnownPortsButton();
+  }
+
+  /** Dotted ink route for the selected ship only, on either screen. */
+  function drawSelectedRoute(): void {
+    routeInk.clear();
+    const own = selectedFleetShip();
+    const route = own?.route;
+    if (!own || !route || route.length === 0) {
+      routeLayer.visible = false;
+      return;
+    }
+
+    const points = [{ x: own.x, y: own.y }, ...route.map(([x, y]) => ({ x, y }))];
+    const dashPx = 4;
+    const gapPx = 3;
+    for (let index = 1; index < points.length; index += 1) {
+      const from = points[index - 1]!;
+      const to = points[index]!;
+      const a = toScreen(from.x, from.y);
+      const b = toScreen(to.x, to.y);
+      const lengthPx = Math.hypot(b.x - a.x, b.y - a.y);
+      if (lengthPx < 0.5) continue;
+      for (let at = 0; at < lengthPx; at += dashPx + gapPx) {
+        const t0 = at / lengthPx;
+        const t1 = Math.min(lengthPx, at + dashPx) / lengthPx;
+        routeInk
+          .moveTo(a.x + (b.x - a.x) * t0, a.y + (b.y - a.y) * t0)
+          .lineTo(a.x + (b.x - a.x) * t1, a.y + (b.y - a.y) * t1);
+      }
+    }
+    routeInk.stroke({ width: 1.2, color: INK_COLOR, alpha: 0.78 });
+
+    for (const point of route) {
+      const screen = toScreen(point[0], point[1]);
+      routeInk.circle(screen.x, screen.y, 2).fill({ color: INK_COLOR, alpha: 0.82 });
+    }
+    routeLayer.visible = true;
   }
 
   function portAt(screenX: number, screenY: number): PortMarkerPlan | null {
@@ -3209,6 +3267,7 @@ async function start(): Promise<void> {
     updateLiveCircles();
     updateLayerOffset();
     refreshPorts();
+    drawSelectedRoute();
 
     for (let index = 0; index < lastSeenViews.length; index += 1) {
       const markerView = lastSeenViews[index];

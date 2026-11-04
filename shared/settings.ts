@@ -171,8 +171,34 @@ export const settings = {
     /** Orders closer than this do nothing. Draft: 0.2 km. */
     minOrderDistanceKm: 0.2,
 
-    /** Longest order the server will accept. Draft: 400 km. */
-    maxOrderDistanceKm: 400,
+    /** Longest order the server will accept. Draft: 800 km. */
+    maxOrderDistanceKm: 800,
+  },
+
+  /** Automatic route planning around discovered land. Draft values. */
+  route: {
+    /** Search grid around the ship and destination. */
+    gridKm: 2,
+    /** Fallback grid if the first search hits its node limit. */
+    coarseGridKm: 4,
+    /** Preferred open-water clearance from known land. */
+    clearanceKm: 3,
+    /** Start and destination may be this close to land. */
+    terminalClearanceKm: 5,
+    /** How far ahead to look for newly discovered land across the route. */
+    lookAheadKm: 30,
+    /** Search boxes grow by this much when no route is found. */
+    searchMarginKm: 80,
+    /** Never grow a single search beyond this margin. */
+    maxSearchMarginKm: 480,
+    /** Hard limit on expanded grid nodes per search. */
+    maxNodes: 20_000,
+    /** Shortest representation the planner may produce. */
+    maxWaypoints: 50,
+    /** Plans allowed per player per real second. */
+    maxPlansPerSecond: 4,
+    /** Do not re-plan the same ship more often than this many server ticks. */
+    minReplanTicks: 5,
   },
 
   /** Player identity and rooms. */

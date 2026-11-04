@@ -37,6 +37,19 @@ export interface SailToOrder {
   readonly y: number;
 }
 
+/** A planned route being followed one leg at a time. */
+export interface ShipRoute {
+  waypoints: Array<{ x: number; y: number }>;
+  index: number;
+  /** The final destination, which may differ from the last waypoint. */
+  goal: { x: number; y: number };
+  kind: "point" | "port";
+  portId: string | null;
+  partial: boolean;
+  message: string | null;
+  plannedTick: number;
+}
+
 export interface Ship {
   readonly id: string;
   readonly classId: ShipClassId;
@@ -61,6 +74,8 @@ export interface Ship {
   speedKnots: number;
   /** The current order, or null when the ship is holding position. */
   order: SailToOrder | null;
+  /** The planned route behind the current order, or null. */
+  route: ShipRoute | null;
   /** The tack the ship will use the next time it has to beat upwind. */
   tackSide: TackSide;
   /** A held escape heading while turning away from a nearby coast. */
@@ -159,6 +174,7 @@ export function createShip(
     headingRad,
     speedKnots: 0,
     order: null,
+    route: null,
     tackSide: 1,
     arrived: false,
     dockedPortId: null,

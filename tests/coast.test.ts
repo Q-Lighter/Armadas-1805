@@ -8,6 +8,7 @@ import { settings } from "@naval/shared/settings";
 import { lonLatToMap } from "@naval/shared/map";
 import { isLandAt, isSeaAt } from "@naval/shared/land";
 import { createShip, type Ship } from "@naval/shared/sailing";
+import { ROUTE_LAND } from "@naval/shared/route";
 import {
   COAST_NOTICE,
   EDGE_NOTICE,
@@ -51,30 +52,21 @@ function distanceTo(ship: Ship, target: Position): number {
   return Math.hypot(ship.x - target.x, ship.y - target.y);
 }
 
-test("an order straight into Jamaica stops at the coast", () => {
+test("an order to known land is refused with That is land", () => {
   const world = createWorld();
   const ship = addPlayer(world, "alpha");
 
   place(ship, -79.0, 18.1, 90);
   assert.equal(isSeaAt(ship.x, ship.y), true, "start is at sea");
-  assert.equal(isLandAt(lonLatToMap(-77.3, 18.1).x, lonLatToMap(-77.3, 18.1).y), true);
+  const target = lonLatToMap(-77.3, 18.1);
+  assert.equal(isLandAt(target.x, target.y), true);
 
-  const target = lonLatToMap(-76.0, 18.1);
-  assert.equal(applyOrder(world, "alpha", target.x, target.y), true);
-
-  const ticks = sailUntilStopped(world, ship, 3_000);
-  assert.ok(ticks > 0 && ticks < 3_000, "the ship should stop without hitting the budget");
-
+  // This player has now charted the whole island, so the planner may use it.
+  world.charts.get("alpha")!.bits.fill(0xff);
+  assert.equal(applyOrder(world, "alpha", target.x, target.y), false);
   assert.equal(ship.order, null);
-  assert.equal(ship.speedKnots, 0);
-  assert.equal(ship.arrived, false);
-  assert.equal(takeNotice(world, "alpha"), COAST_NOTICE);
-
-  // It stopped on the west side of the island, in water just before the coast.
-  assert.ok(ship.x < lonLatToMap(-77.3, 18.1).x, "stopped west of central Jamaica");
-  assert.ok(ship.x > lonLatToMap(-79.0, 18.1).x, "moved east from the start");
-  assert.equal(isLandAt(ship.x, ship.y), false);
-  assert.ok(isLandAt(ship.x + 4, ship.y), "land lies close ahead");
+  assert.equal(ship.route, null);
+  assert.equal(takeNotice(world, "alpha"), ROUTE_LAND);
 });
 
 test("a very large step cannot jump over Jamaica", () => {
@@ -175,15 +167,9 @@ test("test and dev rooms get a frigate; other rooms keep the flagship", () => {
 test("a ship stopped on a coast can turn and sail away in any wind", () => {
   // Put a ship against the west side of Jamaica, then order it back out to sea
   // while it is still facing the shore.
-  const approach = createWorld();
-  const approachShip = addPlayer(approach, "alpha");
-  place(approachShip, -79.0, 18.1, 90);
-  const intoLand = lonLatToMap(-76.0, 18.1);
-  assert.equal(applyOrder(approach, "alpha", intoLand.x, intoLand.y), true);
-  const approachTicks = sailUntilStopped(approach, approachShip, 3_000);
-  assert.ok(approachTicks > 0 && approachTicks < 3_000);
-
-  const start = { x: approachShip.x, y: approachShip.y };
+  // A known sea point just west of Jamaica's coast, heading at the shore.
+  const start = { x: 1_140, y: 327 };
+  assert.equal(isSeaAt(start.x, start.y), true);
   for (const wind of [0, 45, 90, 135, 180, 225, 270, 315]) {
     const world = createWorld();
     const ship = addPlayer(world, "alpha");

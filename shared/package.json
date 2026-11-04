@@ -30,6 +30,10 @@
       "types": "./dist/land.d.ts",
       "default": "./dist/land.js"
     },
+    "./route": {
+      "types": "./dist/route.d.ts",
+      "default": "./dist/route.js"
+    },
     "./fog": {
       "types": "./dist/fog.d.ts",
       "default": "./dist/fog.js"

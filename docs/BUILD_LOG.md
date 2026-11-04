@@ -1458,3 +1458,64 @@ and short docking notices.
 
 - No browser is available: the Pixi texture path, WebGL context-loss recovery,
   actual phone rendering and the `Charting…` scrap have not been seen.
+
+## Session 2E-b: route planning
+
+**Date:** 2026-11-04
+**Branch:** main
+
+### What was built
+
+- Added pure `shared/route.ts`: weighted A* on the 2 km setting grid, eight-way
+  moves, 3 km clearance from known land, a growing search box, a 20,000-node
+  limit with a 4 km fallback, line-of-sight smoothing and a 50-waypoint cap.
+- The planner receives a `knownLand` predicate and never reads the land lookup
+  itself. The world passes only cells in the player's chart, plus all land in a
+  dev room, so undiscovered ground stays optimistic open sea.
+- Sail-to-point, sail-to-port and later group orders install a route and follow
+  it one leg at a time through the existing sailing and tacking rules. A route
+  pauses at no waypoint: the next leg starts in the same tick.
+- Every tick checks the next 30 km for newly discovered land and re-plans from
+  the ship's position. A coast stop also triggers a re-plan. Automatic plans
+  are limited to four per player per real second and one per ship per five
+  ticks. A partial route sails to the last known-safe point and reports
+  `No known route. Explore further.`; a known land destination is refused with
+  `That is land.`; a destination that becomes land re-plans to the nearest sea
+  point and says so.
+- Own fleet snapshots now carry the selected ship's waypoints only. The client
+  draws a dotted ink line with small waypoint marks on both the ship view and
+  the chart.
+- Point orders outside the chart frame keep the old direct coast-edge behavior;
+  the planner only plans inside the frame.
+
+### Measurements
+
+Measured with the Node test runner on this VM, nine runs each, full land known:
+
+- 500 km open-sea order: **0.01 ms** median (direct line of sight, no search).
+- Kingston to Montego Bay around Jamaica (71 km): **8.2 ms**, 724 nodes.
+- Montego Bay to Port-au-Prince through the Windward Passage (297 km):
+  **0.9 ms**, 156 nodes.
+- Montego Bay to Belize across the Caribbean (543 km): **1.5 ms**, 280 nodes
+  (the direct line happens to be clear).
+- Campeche to Matanzas around western Cuba (563 km): **18.9 ms**, 3,949 nodes.
+  This is above the 15 ms target for a long coastal detour; the open-sea and
+  short-island cases are well inside it. The per-player plan budget prevents
+  this cost from repeating every tick.
+
+### Checks
+
+- `npm test`: **163/163 passing**, including all new route cases and the earlier
+  sailing, coast, port and chart suites.
+- `npm run build`: passing.
+- `npm run test:server`: passing (`SIMULATION PASSED`).
+- `git diff --check`: passing.
+
+### Broken or unfinished
+
+- No browser is available, so the dotted route and waypoint marks have not been
+  seen on screen.
+- A long coastal detour can exceed the 15 ms target; 18.9 ms was measured for
+  the 563 km Campeche–Matanzas case. The fallback grid and node cap bound the
+  worst case.
+- Bots still use their simple direct orders, as requested.

@@ -232,6 +232,6 @@ test("docking fills a small port, queues the next ship and undocking frees a pla
   const snapshot = state.ports.find(([id]) => id === port.id)!;
   assert.equal(snapshot[8], 0);
 
-  // The undocked ship can sail again.
-  assert.equal(applyOrder(world, "one", first.x + 10, first.y), true);
+  // The undocked ship can sail again; west of Montego Bay is open sea.
+  assert.equal(applyOrder(world, "one", first.x - 10, first.y), true);
 });

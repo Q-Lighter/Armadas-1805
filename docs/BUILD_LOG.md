@@ -1519,3 +1519,45 @@ Measured with the Node test runner on this VM, nine runs each, full land known:
   the 563 km Campeche–Matanzas case. The fallback grid and node cap bound the
   worst case.
 - Bots still use their simple direct orders, as requested.
+
+## Session 2E-c: controls
+
+**Date:** 2026-11-04
+**Branch:** main
+
+### What was built
+
+- A sail-to-point or sail-to-port order now undocks a docked ship first. Invalid
+  orders are checked before the ship leaves the quay; an unfound port leaves a
+  docked ship where it is.
+- Tapping one of my docked ships, or the marker of a port holding one, opens a
+  small action sheet with `Undock` and `Port menu`. The ship panel also shows an
+  `Undock` button while the selected ship is docked.
+- The Fleet panel has tick boxes, `Select all`, `Clear` and `Undock selected`.
+  A `Multi-select` toolbar toggle lets several ships be picked by tapping them
+  on the map; selected ships carry the heavier ring and the toggle shows the
+  count. Group point orders are spread by the new 1.2 km `groupSpreadKm`
+  setting, and every ship receives its own route plan. Group port orders and
+  group undock use the same selection.
+- A neutral port now shows `Neutral port: no ships for sale here. Capturable
+  ports sell ships.` instead of a shipyard button. The shipyard test now also
+  proves Matanzas sells raiders and escort brigs but not frigates, and that an
+  NPC port sells nothing.
+- Phone layout rules cover the action sheet, Fleet tools and tick boxes. The
+  paper style, fog rules and earlier panels are unchanged.
+
+### Checks
+
+- `npm test`: **164/164 passing**, including the new auto-undock/port-order case
+  and the Matanzas escort assertion.
+- `npm run build`: passing.
+- `npm run test:server`: passing (`SIMULATION PASSED`, 118 ticks, 63 updates,
+  850-byte typical update).
+- `git diff --check`: passing.
+
+### Broken or unfinished
+
+- No browser is available: the action sheet, on-screen multi-select, group
+  rings/count and phone layout have not been seen or tapped.
+- Group spread is deliberately small; a point within 1.2 km of known land can
+  still produce an offset that the server refuses as land.

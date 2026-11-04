@@ -173,6 +173,9 @@ export const settings = {
 
     /** Longest order the server will accept. Draft: 800 km. */
     maxOrderDistanceKm: 800,
+
+    /** Small offset between ships ordered to the same sea point. Draft: 1.2 km. */
+    groupSpreadKm: 1.2,
   },
 
   /** Automatic route planning around discovered land. Draft values. */

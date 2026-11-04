@@ -210,13 +210,11 @@ test("docking fills a small port, queues the next ship and undocking frees a pla
   assert.equal(waitingShip.waitingPortId, port.id);
   assert.equal(takeNotice(world, waiting), PORT_FULL_NOTICE);
 
-  // A docked ship cannot sail, and the waiting ship gets the free place first.
+  // A sail order auto-undocks the ship, freeing a place for the waiting ship.
   const first = world.players.get("one")!;
-  assert.equal(applyOrder(world, "one", first.x + 10, first.y), false);
-  assert.equal(applyPortOrder(world, "one", port.id), false);
-  assert.equal(undock(world, "one"), true);
-  assert.equal(takeNotice(world, "one"), `Undocked from ${port.name}.`);
+  assert.equal(applyOrder(world, "one", first.x - 10, first.y), true);
   assert.equal(first.dockedPortId, null);
+  assert.equal(takeNotice(world, "one"), `Undocked from ${port.name}.`);
 
   // The retry is measured in real seconds, so run at least that much game time.
   for (let tick = 0; tick < 60; tick += 1) {
@@ -234,4 +232,27 @@ test("docking fills a small port, queues the next ship and undocking frees a pla
 
   // The undocked ship can sail again; west of Montego Bay is open sea.
   assert.equal(applyOrder(world, "one", first.x - 10, first.y), true);
+});
+
+test("a port order also undocks first, but an unfound port is refused cleanly", () => {
+  const from = findPortByName("Montego Bay")!;
+  const to = findPortByName("Kingston")!;
+  const world = createWorld();
+  const ship = addPlayer(world, "alpha");
+  const near = pointNear(from.anchorage, 1);
+  ship.x = near.x;
+  ship.y = near.y;
+  markFound(world, "alpha", from.id);
+  assert.equal(applyPortOrder(world, "alpha", from.id), true);
+  assert.equal(takeNotice(world, "alpha"), `Docked at ${from.name}.`);
+
+  // A bad order must not throw the ship off the quay.
+  assert.equal(applyPortOrder(world, "alpha", "not-a-real-port"), false);
+  assert.equal(ship.dockedPortId, from.id);
+  assert.equal(takeNotice(world, "alpha"), null);
+
+  markFound(world, "alpha", to.id);
+  assert.equal(applyPortOrder(world, "alpha", to.id), true);
+  assert.equal(ship.dockedPortId, null);
+  assert.equal(takeNotice(world, "alpha"), `Undocked from ${from.name}.`);
 });

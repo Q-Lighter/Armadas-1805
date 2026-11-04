@@ -31,6 +31,10 @@
         Fleet <span class="fleet-count" id="fleet-count">1</span>
       </button>
 
+      <button class="btn" id="multi-btn" type="button" aria-pressed="false">
+        Multi-select <span class="multi-count" id="multi-count" hidden>0</span>
+      </button>
+
       <button class="btn" id="follow-btn" type="button" aria-pressed="true">
         Follow my ship
       </button>
@@ -102,6 +106,9 @@
       <p class="ship-starving" id="ship-starving" role="status" hidden>
         Starving — the crew is dying without provisions.
       </p>
+      <button class="btn ship-undock" id="ship-undock" type="button" hidden>
+        Undock
+      </button>
 
       <div class="wind-row">
         <svg class="wind-arrow" viewBox="0 0 24 24" aria-hidden="true">
@@ -166,12 +173,32 @@
       </dl>
       <p class="port-free" id="port-free" hidden></p>
       <p class="port-distance" id="port-distance"></p>
+      <p class="port-npc-note" id="port-npc-note" hidden>
+        Neutral port: no ships for sale here. Capturable ports sell ships.
+      </p>
       <div class="port-actions">
         <button class="btn" id="port-sail" type="button" hidden>Sail to port</button>
         <button class="btn" id="port-undock" type="button" hidden>Undock</button>
         <button class="btn" id="port-trade" type="button" hidden>Trade</button>
         <button class="btn" id="port-shipyard" type="button" hidden>Shipyard</button>
         <button class="btn" id="port-hire" type="button" hidden>Hire crew</button>
+      </div>
+    </section>
+
+    <!-- Small actions for a docked ship, opened from the ship or its port. -->
+    <section
+      class="action-sheet paper"
+      id="ship-action"
+      role="dialog"
+      aria-labelledby="action-title"
+      hidden
+    >
+      <p class="kicker">Ship actions</p>
+      <h2 id="action-title">Docked ship</h2>
+      <div class="action-buttons">
+        <button class="btn" id="action-undock" type="button">Undock</button>
+        <button class="btn" id="action-port" type="button">Port menu</button>
+        <button class="btn" id="action-close" type="button">Close</button>
       </div>
     </section>
 
@@ -246,6 +273,13 @@
         <button class="btn panel-close" id="fleet-close" type="button">Close</button>
       </div>
       <p class="fleet-summary" id="fleet-summary">1 of 30 ships</p>
+      <div class="fleet-tools">
+        <button class="btn" id="fleet-select-all" type="button">Select all</button>
+        <button class="btn" id="fleet-undock" type="button">Undock selected</button>
+        <button class="btn" id="fleet-clear" type="button">Clear</button>
+      </div>
+      <p class="fleet-selected-count" id="fleet-selected-count">0 selected</p>
+      <p class="fleet-hint">Tick ships, then tap the chart to sail them together.</p>
       <ul class="fleet-list" id="fleet-list"></ul>
       <p class="fleet-empty" id="fleet-empty" hidden>No ships yet.</p>
     </section>

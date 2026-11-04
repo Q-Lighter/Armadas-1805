@@ -106,9 +106,12 @@ test("buying refuses no money, wrong port size and an unowned normal port", () =
   assert.deepEqual(drainNotices(world, "alpha"), ["Not enough money."]);
 
   world.owners.get("alpha")!.money = 50_000;
+  // A small capturable port sells raiders and escort brigs, not frigates.
+  const escort = buyShip(world, "alpha", small.id, "escort", "Little Escort");
+  assert.ok(escort);
   assert.equal(buyShip(world, "alpha", small.id, "frigate", "Too Big"), null);
   assert.match(drainNotices(world, "alpha").at(-1)!, /does not sell that ship/);
-  assert.equal(world.fleets.get("alpha")!.length, 1);
+  assert.equal(world.fleets.get("alpha")!.length, 2);
 
   // A normal room has no owned ports, so its shipyard is closed.
   const normal = createWorld("main");

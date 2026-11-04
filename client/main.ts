@@ -370,6 +370,7 @@ async function start(): Promise<void> {
   const portCapacity = element<HTMLElement>("port-capacity");
   const portFree = element<HTMLElement>("port-free");
   const portDistance = element<HTMLElement>("port-distance");
+  const portNpcNote = element<HTMLElement>("port-npc-note");
   const portSail = element<HTMLButtonElement>("port-sail");
   const portUndock = element<HTMLButtonElement>("port-undock");
   const portTrade = element<HTMLButtonElement>("port-trade");
@@ -396,6 +397,18 @@ async function start(): Promise<void> {
   const fleetList = element<HTMLUListElement>("fleet-list");
   const fleetEmpty = element<HTMLElement>("fleet-empty");
   const fleetClose = element<HTMLButtonElement>("fleet-close");
+  const multiButton = element<HTMLButtonElement>("multi-btn");
+  const multiCount = element<HTMLElement>("multi-count");
+  const fleetSelectAll = element<HTMLButtonElement>("fleet-select-all");
+  const fleetUndock = element<HTMLButtonElement>("fleet-undock");
+  const fleetClear = element<HTMLButtonElement>("fleet-clear");
+  const fleetSelectedCount = element<HTMLElement>("fleet-selected-count");
+  const shipUndock = element<HTMLButtonElement>("ship-undock");
+  const actionSheet = element<HTMLElement>("ship-action");
+  const actionTitle = element<HTMLElement>("action-title");
+  const actionUndock = element<HTMLButtonElement>("action-undock");
+  const actionPort = element<HTMLButtonElement>("action-port");
+  const actionClose = element<HTMLButtonElement>("action-close");
   const shipNameOut = element<HTMLElement>("ship-name");
   const shipTypeOut = element<HTMLElement>("ship-type");
   const shipCrewOut = element<HTMLElement>("ship-crew");
@@ -593,6 +606,10 @@ async function start(): Promise<void> {
   let ownSnapshot: ShipSnapshot | null = null;
   let fleetShips: OwnShipSnapshot[] = [];
   let selectedShipId = "";
+  let multiSelect = false;
+  const selectedShipIds = new Set<string>();
+  let actionShipId: string | null = null;
+  let actionPortId: string | null = null;
   let money = 0;
   let playerNavy: NavyId = "British";
   let selectedPortId: string | null = null;
@@ -1425,15 +1442,70 @@ async function start(): Promise<void> {
     return false;
   }
 
+  function groupShipIds(): string[] {
+    const wanted = multiSelect && selectedShipIds.size > 0
+      ? [...selectedShipIds]
+      : [selectedShipId];
+    return wanted.filter((id) =>
+      fleetShips.some((ship) => ship.id === id && ship.status !== "delivery"),
+    );
+  }
+
+  function updateMultiUi(): void {
+    const count = selectedShipIds.size;
+    multiButton.setAttribute("aria-pressed", String(multiSelect));
+    multiButton.classList.toggle("is-active", multiSelect);
+    multiCount.textContent = String(count);
+    multiCount.hidden = !multiSelect || count === 0;
+    fleetSelectedCount.textContent = `${count} selected`;
+    fleetUndock.disabled = count === 0;
+    fleetClear.disabled = count === 0;
+    for (const input of fleetList.querySelectorAll<HTMLInputElement>("[data-fleet-pick]")) {
+      input.checked = selectedShipIds.has(input.dataset.fleetPick ?? "");
+    }
+    updateShipRings();
+  }
+
+  function toggleGroupShip(id: string): void {
+    const row = fleetShips.find((ship) => ship.id === id);
+    if (!row || row.status === "delivery") return;
+    if (selectedShipIds.has(id)) selectedShipIds.delete(id);
+    else selectedShipIds.add(id);
+    multiSelect = selectedShipIds.size > 0;
+    updateMultiUi();
+  }
+
+  function closeShipActions(): void {
+    actionSheet.hidden = true;
+    actionShipId = null;
+    actionPortId = null;
+  }
+
+  function openShipActions(shipId: string): boolean {
+    const row = fleetShips.find((ship) => ship.id === shipId);
+    if (!row || row.status !== "docked" || !row.portId) return false;
+    actionShipId = row.id;
+    actionPortId = row.portId;
+    actionTitle.textContent = `${row.name} at ${portName(row.portId) ?? "port"}`;
+    closePortPanel();
+    closeTradePanel();
+    closeFleetPanel();
+    actionSheet.hidden = false;
+    return true;
+  }
+
   function updateShipRings(): void {
     const ownIds = new Set(fleetShips.map((ship) => ship.id));
+    const selectedIds = multiSelect
+      ? selectedShipIds
+      : new Set([selectedShipId]);
     for (const [id, ship] of ships) {
       const own = ownIds.has(id);
       ship.own = own;
       ship.ring.clear();
       ship.ring.visible = own;
       if (!own) continue;
-      const selected = id === selectedShipId;
+      const selected = selectedIds.has(id);
       ship.ring.circle(0, 0, selected ? 19 : 17).stroke({
         width: selected ? 3.5 : 1.25,
         color: 0x8c1d1d,
@@ -1444,6 +1516,7 @@ async function start(): Promise<void> {
   function updateSelectedShip(id: string, centre: boolean): boolean {
     const row = fleetShips.find((ship) => ship.id === id);
     if (!row || row.status === "delivery") return false;
+    if (!multiSelect) selectedShipIds.clear();
     selectedShipId = id;
     target = null;
     marker.visible = false;
@@ -1459,7 +1532,7 @@ async function start(): Promise<void> {
         refreshMap(performance.now(), true);
       }
     }
-    updateShipRings();
+    updateMultiUi();
     updateHud(ownSnapshot ?? undefined);
     return true;
   }
@@ -1471,13 +1544,27 @@ async function start(): Promise<void> {
   function renderFleetPanel(): void {
     fleetCountOut.textContent = String(fleetShips.length);
     fleetSummary.textContent = `${fleetCountText(fleetShips.length)} ships · ${formatMoney(money)} pieces`;
+    fleetSelectedCount.textContent = `${selectedShipIds.size} selected`;
+    fleetSelectAll.disabled = fleetShips.every((ship) => ship.status === "delivery");
     fleetList.replaceChildren();
     fleetEmpty.hidden = fleetShips.length > 0;
 
     for (const ship of fleetShips) {
       const row = buildFleetRow(ship, portName(ship.portId));
       const item = document.createElement("li");
+      const pick = document.createElement("label");
+      const tick = document.createElement("input");
       const button = document.createElement("button");
+      pick.className = "fleet-pick";
+      tick.type = "checkbox";
+      tick.className = "fleet-pick-box";
+      tick.dataset.fleetPick = ship.id;
+      tick.checked = selectedShipIds.has(ship.id);
+      tick.disabled = !row.selectable;
+      tick.setAttribute("aria-label", `Select ${row.name}`);
+      tick.addEventListener("click", (event) => event.stopPropagation());
+      tick.addEventListener("change", () => toggleGroupShip(ship.id));
+      pick.append(tick);
       const name = document.createElement("span");
       const type = document.createElement("span");
       const crew = document.createElement("span");
@@ -1515,10 +1602,14 @@ async function start(): Promise<void> {
       button.append(name, crew, type, state, provisions, track);
       button.addEventListener("click", () => {
         if (!row.selectable) return;
+        if (multiSelect) {
+          toggleGroupShip(ship.id);
+          return;
+        }
         updateSelectedShip(ship.id, true);
         closeFleetPanel();
       });
-      item.append(button);
+      item.append(pick, button);
       fleetList.append(item);
     }
   }
@@ -1528,6 +1619,7 @@ async function start(): Promise<void> {
     closeTradePanel();
     closeShipyardPanel();
     closeHirePanel();
+    closeShipActions();
     knownPortsPanel.hidden = true;
     fleetPanel.hidden = false;
     renderFleetPanel();
@@ -2208,6 +2300,7 @@ async function start(): Promise<void> {
     portFree.textContent = model.freeText ?? "";
     portFree.hidden = model.freeText === null;
     portDistance.textContent = model.distanceText;
+    portNpcNote.hidden = !port.npc;
     portSail.hidden = !model.buttons.includes("sail");
     portUndock.hidden = !model.buttons.includes("undock");
     portTrade.hidden = !model.buttons.includes("trade");
@@ -2218,6 +2311,7 @@ async function start(): Promise<void> {
 
   function openPortPanel(portId: string): void {
     if (!portData.has(portId)) return;
+    closeShipActions();
     closeFleetPanel();
     closeTradePanel();
     closeShipyardPanel();
@@ -2229,21 +2323,30 @@ async function start(): Promise<void> {
 
   function sendPortOrder(portId: string): void {
     const port = portData.get(portId);
-    if (!port || !selectedShipId) return;
+    const ids = groupShipIds();
+    if (!port || ids.length === 0) return;
     target = { x: port.x, y: port.y };
     const screen = toScreen(port.x, port.y);
     marker.position.set(screen.x, screen.y);
     marker.visible = true;
 
-    if (sendCommand({ t: "sailToPort", port: portId, ship: selectedShipId })) {
-      closePortPanel();
+    let sent = false;
+    for (const id of ids) {
+      sent = sendCommand({ t: "sailToPort", port: portId, ship: id }) || sent;
     }
+    if (sent) closePortPanel();
   }
 
   function sendUndock(): void {
-    if (!selectedShipId) return;
-    if (sendCommand({ t: "undock", ship: selectedShipId })) {
+    const ids = groupShipIds();
+    if (ids.length === 0) return;
+    let sent = false;
+    for (const id of ids) {
+      sent = sendCommand({ t: "undock", ship: id }) || sent;
+    }
+    if (sent) {
       closePortPanel();
+      closeShipActions();
     }
   }
 
@@ -2436,6 +2539,7 @@ async function start(): Promise<void> {
       speedOut.textContent = "–";
       headingOut.textContent = "–";
     }
+    shipUndock.hidden = row?.status !== "docked";
   }
 
   function updateClockAndNight(now: number): void {
@@ -2614,6 +2718,13 @@ async function start(): Promise<void> {
     } else if (!fleetShips.some((ship) => ship.id === selectedShipId)) {
       selectedShipId = fleetShips.find((ship) => ship.status !== "delivery")?.id ?? "";
     }
+    for (const id of [...selectedShipIds]) {
+      if (!fleetShips.some((ship) => ship.id === id && ship.status !== "delivery")) {
+        selectedShipIds.delete(id);
+      }
+    }
+    if (selectedShipIds.size === 0) multiSelect = false;
+    updateMultiUi();
     const ownIds = new Set(fleetShips.map((ship) => ship.id));
 
     windFrom = Number.isFinite(state.w) ? state.w : settings.weather.windFromDeg;
@@ -2860,18 +2971,30 @@ async function start(): Promise<void> {
   }
 
   function sendOrder(x: number, y: number): void {
-    if (!selectedShipId) return;
+    const ids = groupShipIds();
+    if (ids.length === 0) return;
     target = { x, y };
     const screen = toScreen(x, y);
     marker.position.set(screen.x, screen.y);
     marker.visible = true;
 
-    sendCommand({
-      t: "o",
-      x: Number(x.toFixed(2)),
-      y: Number(y.toFixed(2)),
-      ship: selectedShipId,
-    });
+    for (let index = 0; index < ids.length; index += 1) {
+      let tx = x;
+      let ty = y;
+      if (ids.length > 1 && index > 0) {
+        const radius = settings.sailing.groupSpreadKm *
+          Math.sqrt(index / (ids.length - 1));
+        const angle = index * 2.399963229728653;
+        tx = clamp(x + Math.cos(angle) * radius, 0.5, MAP_WIDTH_KM - 0.5);
+        ty = clamp(y + Math.sin(angle) * radius, 0.5, MAP_HEIGHT_KM - 0.5);
+      }
+      sendCommand({
+        t: "o",
+        x: Number(tx.toFixed(2)),
+        y: Number(ty.toFixed(2)),
+        ship: ids[index]!,
+      });
+    }
   }
 
   // ---- Chart mode and scale ----------------------------------------------
@@ -3012,11 +3135,21 @@ async function start(): Promise<void> {
       const screenY = event.clientY - rect.top;
       const ownShip = shipAt(screenX, screenY);
       if (ownShip) {
+        if (multiSelect) {
+          toggleGroupShip(ownShip.id);
+          return;
+        }
+        const row = fleetShips.find((ship) => ship.id === ownShip.id);
+        if (row?.status === "docked" && openShipActions(ownShip.id)) return;
         updateSelectedShip(ownShip.id, false);
         return;
       }
       const port = portAt(screenX, screenY);
       if (port) {
+        const docked = fleetShips.find(
+          (ship) => ship.status === "docked" && ship.portId === port.id,
+        );
+        if (docked && !multiSelect && openShipActions(docked.id)) return;
         openPortPanel(port.id);
         return;
       }
@@ -3050,6 +3183,44 @@ async function start(): Promise<void> {
 
   chartButton.addEventListener("click", () => {
     setMode(mode === "chart" ? "ship" : "chart");
+  });
+
+  multiButton.addEventListener("click", () => {
+    multiSelect = !multiSelect;
+    selectedShipIds.clear();
+    if (multiSelect && selectedShipId) selectedShipIds.add(selectedShipId);
+    updateMultiUi();
+  });
+
+  fleetSelectAll.addEventListener("click", () => {
+    selectedShipIds.clear();
+    for (const ship of fleetShips) {
+      if (ship.status !== "delivery") selectedShipIds.add(ship.id);
+    }
+    multiSelect = selectedShipIds.size > 0;
+    updateMultiUi();
+  });
+
+  fleetClear.addEventListener("click", () => {
+    selectedShipIds.clear();
+    multiSelect = false;
+    updateMultiUi();
+  });
+
+  fleetUndock.addEventListener("click", sendUndock);
+  shipUndock.addEventListener("click", sendUndock);
+
+  actionUndock.addEventListener("click", () => {
+    if (actionShipId) sendCommand({ t: "undock", ship: actionShipId });
+    closeShipActions();
+  });
+
+  actionPort.addEventListener("click", () => {
+    if (actionPortId) openPortPanel(actionPortId);
+  });
+  actionClose.addEventListener("click", closeShipActions);
+  document.addEventListener("keydown", (event) => {
+    if (event.key === "Escape") closeShipActions();
   });
 
   // TEMP-DEBUG: block and cell outlines for screenshots in test/dev rooms.

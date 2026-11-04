@@ -790,8 +790,6 @@ export function applyOrder(
     if (world.players.has(playerId)) pushNotice(world, playerId, "Needs crew.");
     return false;
   }
-  if (ship.dockedPortId) return false;
-
   const distance = distanceKm(ship, { x, y });
   if (
     distance < settings.sailing.minOrderDistanceKm ||
@@ -803,6 +801,8 @@ export function applyOrder(
   // An order outside the chart keeps the old direct behaviour so the coast
   // resolver can stop the ship at the edge; the planner only works inside.
   if (!isInsideMapFrame(x, y)) {
+    // A sail order is enough to leave the quay; no separate Undock tap needed.
+    if (ship.dockedPortId && !undock(world, playerId, ship.id)) return false;
     ship.route = null;
     ship.waitingPortId = null;
     ship.waitingSinceGameMs = 0;
@@ -813,6 +813,7 @@ export function applyOrder(
     pushNotice(world, playerId, ROUTE_LAND);
     return false;
   }
+  if (ship.dockedPortId && !undock(world, playerId, ship.id)) return false;
 
   ship.waitingPortId = null;
   ship.waitingSinceGameMs = 0;
@@ -922,8 +923,12 @@ export function applyPortOrder(
     pushNotice(world, playerId, "Needs crew.");
     return false;
   }
-  if (ship.dockedPortId) return false;
   if (!world.charts.get(playerId)?.foundPorts.has(portId)) return false;
+  if (ship.dockedPortId === port.id) return true;
+  if (distanceKm(ship, port.anchorage) > settings.sailing.maxOrderDistanceKm) {
+    return false;
+  }
+  if (ship.dockedPortId && !undock(world, playerId, ship.id)) return false;
 
   ship.waitingPortId = null;
   ship.waitingSinceGameMs = 0;
@@ -933,10 +938,6 @@ export function applyPortOrder(
     ship.order = null;
     arriveAtPort(world, playerId, ship, port);
     return true;
-  }
-  if (distanceKm(ship, port.anchorage) > settings.sailing.maxOrderDistanceKm) {
-    ship.portOrderId = null;
-    return false;
   }
 
   ship.arrived = false;

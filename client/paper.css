@@ -367,6 +367,28 @@ h2 {
   font-variant-numeric: tabular-nums;
 }
 
+.multi-count {
+  display: inline-grid;
+  place-items: center;
+  min-width: 1.35rem;
+  min-height: 1.35rem;
+  padding: 0 0.25rem;
+  border-radius: 50%;
+  background: var(--wax);
+  color: var(--paper);
+  font-size: calc(0.75rem * var(--ui-scale));
+  font-variant-numeric: tabular-nums;
+}
+
+.multi-count[hidden] {
+  display: none;
+}
+
+#multi-btn.is-active {
+  background: var(--ink);
+  color: var(--paper);
+}
+
 .room {
   margin: 0;
   color: var(--ink-faded);
@@ -549,6 +571,19 @@ h2 {
   font-size: calc(0.9rem * var(--ui-scale));
 }
 
+.port-npc-note {
+  margin: 0.1rem 0 0.7rem;
+  padding: 0.4rem 0.55rem;
+  border-left: 3px solid var(--rule);
+  color: var(--ink-faded);
+  font-size: calc(0.86rem * var(--ui-scale));
+  font-style: italic;
+}
+
+.port-npc-note[hidden] {
+  display: none;
+}
+
 .port-actions {
   display: flex;
   flex-wrap: wrap;
@@ -631,12 +666,56 @@ h2 {
   font-size: calc(0.92rem * var(--ui-scale));
 }
 
+.fleet-tools {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+}
+
+.fleet-tools .btn {
+  flex: 1 1 7rem;
+}
+
+.fleet-selected-count {
+  margin: 0.45rem 0 0;
+  font-weight: 600;
+  font-size: calc(0.88rem * var(--ui-scale));
+}
+
+.fleet-hint {
+  margin: 0.1rem 0 0.55rem;
+  color: var(--ink-faded);
+  font-size: calc(0.8rem * var(--ui-scale));
+}
+
 .fleet-list {
   display: grid;
   gap: 0.2rem;
   margin: 0;
   padding: 0;
   list-style: none;
+}
+
+.fleet-list li {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: start;
+}
+
+.fleet-pick {
+  display: grid;
+  place-items: start center;
+  min-width: var(--tap);
+  min-height: var(--tap);
+  padding-top: 0.55rem;
+  cursor: pointer;
+}
+
+.fleet-pick-box {
+  width: 1.35rem;
+  height: 1.35rem;
+  margin: 0;
+  accent-color: var(--wax);
 }
 
 .fleet-row {
@@ -1368,6 +1447,44 @@ h2 {
   display: none;
 }
 
+.ship-undock {
+  width: 100%;
+  margin-top: 0.45rem;
+}
+
+.ship-undock[hidden] {
+  display: none;
+}
+
+.action-sheet {
+  position: fixed;
+  z-index: 26;
+  left: 50%;
+  bottom: max(1rem, env(safe-area-inset-bottom));
+  transform: translateX(-50%);
+  width: min(26rem, calc(100% - 1rem));
+  padding: calc(0.8rem * var(--ui-scale));
+}
+
+.action-sheet[hidden] {
+  display: none;
+}
+
+.action-sheet h2 {
+  margin: 0.1rem 0 0.65rem;
+  font-size: calc(1.15rem * var(--ui-scale));
+}
+
+.action-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.55rem;
+}
+
+.action-buttons .btn {
+  flex: 1 1 7rem;
+}
+
 .wind-row {
   display: flex;
   align-items: center;
@@ -1492,5 +1609,14 @@ h2 {
   .fog-debug {
     top: max(5.2rem, calc(env(safe-area-inset-top) + 4.6rem));
     right: max(0.5rem, env(safe-area-inset-right));
+  }
+
+  .action-sheet {
+    bottom: max(0.5rem, env(safe-area-inset-bottom));
+    width: calc(100% - 1rem);
+  }
+
+  .fleet-tools .btn {
+    flex: 1 1 30%;
   }
 }

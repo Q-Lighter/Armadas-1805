@@ -78,6 +78,10 @@
       "types": "./dist/chartMemory.d.ts",
       "default": "./dist/chartMemory.js"
     },
+    "./chart-paint": {
+      "types": "./dist/chartPaint.d.ts",
+      "default": "./dist/chartPaint.js"
+    },
     "./fog-paint": {
       "types": "./dist/fogPaint.d.ts",
       "default": "./dist/fogPaint.js"

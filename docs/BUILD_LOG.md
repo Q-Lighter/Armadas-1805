@@ -1561,3 +1561,92 @@ Measured with the Node test runner on this VM, nine runs each, full land known:
   rings/count and phone layout have not been seen or tapped.
 - Group spread is deliberately small; a point within 1.2 km of known land can
   still produce an offset that the server refuses as land.
+
+## Session 2F-a: drawing audit
+
+**Date:** 2026-11-04
+**Branch:** main
+
+### What was asked
+
+Verify the drawing itself, not only the stored data: find the long stray ink
+line and the rectangles that do not follow a coast; share the exact draw
+commands between Pixi and tests; audit stitches, boundary misses, block-border
+fills, whole-block sea fills, sea cells and winding; run real map areas; add a
+TEMP-DEBUG suspect count and a magenta highlight toggle.
+
+### Root causes, with evidence
+
+- **Stray line.** `scripts/build-chart-blocks.mjs` `clipLine()` walked
+  `points[(i + 1) % points.length]` over open coast chains. It therefore joined
+  the last point of every chain to the first with one straight segment. Block
+  `45_3` contained exactly the bogus two-point line
+  `[1146.497,100] -> [1125,91.336]`; the same pattern appeared in `46_4`,
+  `5_6` and `56_6`. The loop now stops at the last real segment.
+- **Rectangles from tile overlap.** Source fill rings still carried their
+  128 km tile-clipping edge and only then were clipped to 25 km blocks. That
+  produced 15,033 fill rings with a block-border edge, 5,223 whole-square rings
+  and 84 whole-square rings where the 1 km lookup was not all land (for example
+  `34_3` 618/625 and `17_12` 483/625). Fills are now clipped to the source tile
+  core first. The 84 whole-square rings are replaced by the lookup's 1 km land
+  cells, so the area stays right and no 25 km rectangle is drawn.
+- **Winding.** 549 source rings were clockwise. They are now all normalised to
+  one winding; Pixi and the audit receive the same commands.
+- No evidence was found for stale Graphics objects: both live and chart paths
+  clear before painting, so that was not a root cause here.
+
+### Audit counts
+
+The audit is over `buildBlockCommands()` / `buildChartCommands()`, the same
+functions the Pixi renderer calls. Before counts are over the raw committed
+blocks; after counts are over the regenerated blocks and commands. The audit
+splits long straight coast segments before drawing, so a remaining `stitch` is
+a real 6 km+ jump in the command list, not a source simplification artefact.
+
+| Flag | Before | After |
+| --- | ---: | ---: |
+| Coast segments | 56,759 | 54,345 |
+| Stitches over 6 km | 2,759 | 0 |
+| Stroke points away from 1.5 km boundary | 303 | 0 |
+| Fill rings | 15,335 | 17,573 |
+| Rings with a block-border edge | 15,033 | 17,134 |
+| Whole-block fills on non-land blocks | 84 | 0 |
+| Sea cells inside fills | 4,615 | 1,115 rings carry rounding sea cells |
+| Clockwise rings | 549 | 0 |
+
+After-fix area counts (`fills / strokes / stitches / away / whole-block /
+winding`):
+
+- Montego Bay and western Jamaica: 8 / 20 / 0 / 0 / 0 / 0.
+- Kingston and the south Jamaica coast: 8 / 22 / 0 / 0 / 0 / 0.
+- Windward Passage: 23 / 66 / 0 / 0 / 0 / 0.
+- Mosquito Coast near Bluefields: 24 / 30 / 0 / 0 / 0 / 0.
+- Whole Caribbean dev view: 17,573 / 11,988 / 0 / 0 / 0 / 0.
+
+### What was built
+
+- `shared/chartPaint.ts`: pure fill/stroke command building, winding and
+  long-segment normalisation, bounds filtering, suspect finding and the drawing
+  audit. Pixi and the tests both call it.
+- The ship view and the cached chart now paint those commands instead of
+  reading `block.fill` and `block.coast` directly.
+- TEMP-DEBUG appends `suspicious segments: N` and has a `Highlight suspects`
+  button. Suspect strokes and fill outlines are magenta at 6 px. Both are
+  test/dev-room only.
+
+### Checks
+
+- `npm test`: **170/170 passing**, including six new chart-paint tests.
+- `npm run build`: passing.
+- Browser/WebGL: unavailable, so the live page, magenta overlay and screenshots
+  have not been seen. No PNG canvas dependency was installed; the audit is
+  geometry-only.
+
+### Broken or unfinished
+
+- The audit still reports 52 exposed border fill edges and 1,115 fill rings
+  with a few lookup-sea cells from 1 km raster rounding. These are small edge
+  slivers, not the 25 km rectangles; the fog/discovery edge remains a visual
+  risk that only a browser can confirm.
+- `build-chart-blocks.mjs` still takes several minutes because it now checks
+  every coast segment against the lookup.

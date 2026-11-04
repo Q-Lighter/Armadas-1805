@@ -99,9 +99,11 @@ function clipLine(points, rect) {
     if (current.length >= 4) lines.push(current);
     current = [];
   };
-  for (let i = 0; i < points.length; i += 1) {
+  // Source coast lines are open chains. Closing the last point back to the
+  // first drew a long straight line across bays and open water.
+  for (let i = 0; i + 1 < points.length; i += 1) {
     const a = points[i];
-    const b = points[(i + 1) % points.length];
+    const b = points[i + 1];
     const clipped = clipSegment(a, b, rect);
     if (!clipped) {
       flush();
@@ -134,6 +136,43 @@ function ringArea(ring) {
   return Math.abs(sum / 2);
 }
 
+function ringHasAllCorners(ring, rect) {
+  const has = (x, y) => {
+    for (let i = 0; i < ring.length; i += 2) {
+      if (Math.abs(ring[i] - x) < 0.01 && Math.abs(ring[i + 1] - y) < 0.01) return true;
+    }
+    return false;
+  };
+  return has(rect.minX, rect.minY) && has(rect.maxX, rect.minY) &&
+    has(rect.maxX, rect.maxY) && has(rect.minX, rect.maxY);
+}
+
+function rectAllLand(rect) {
+  for (let y = rect.minY + 0.5; y < rect.maxY; y += 1) {
+    for (let x = rect.minX + 0.5; x < rect.maxX; x += 1) {
+      if (!isLandAt(x, y)) return false;
+    }
+  }
+  return true;
+}
+
+/** Land cells as row runs, used instead of a block-sized rectangle. */
+function landCellRuns(rect) {
+  const rings = [];
+  for (let y = rect.minY; y < rect.maxY; y += 1) {
+    let start = null;
+    for (let x = rect.minX; x <= rect.maxX; x += 1) {
+      const land = x < rect.maxX && isLandAt(x + 0.5, y + 0.5);
+      if (land && start === null) start = x;
+      if ((!land || x === rect.maxX) && start !== null) {
+        rings.push([start, y, x, y, x, y + 1, start, y + 1]);
+        start = null;
+      }
+    }
+  }
+  return rings;
+}
+
 function cleanRing(ring) {
   const out = [];
   for (let i = 0; i < ring.length; i += 2) {
@@ -153,7 +192,21 @@ function cleanRing(ring) {
   ) {
     out.splice(out.length - 2, 2);
   }
-  return out.length >= 6 && ringArea(out) > 0.05 ? out : null;
+  if (out.length < 6 || ringArea(out) <= 0.05) return null;
+
+  // Pixi's fill rule is easier to reason about when every land ring has the
+  // same winding. Source data contains both directions.
+  let signed = 0;
+  for (let i = 0; i < out.length; i += 2) {
+    const next = (i + 2) % out.length;
+    signed += out[i] * out[next + 1] - out[next] * out[i + 1];
+  }
+  if (signed < 0) {
+    const reversed = [];
+    for (let i = out.length - 2; i >= 0; i -= 2) reversed.push(out[i], out[i + 1]);
+    return reversed;
+  }
+  return out;
 }
 
 /** True when a segment lies along the chart frame or the block's own edge. */
@@ -186,23 +239,36 @@ function onRectEdge(a, b, rect) {
  * about a kilometre. This removes source-tile clip edges and ink that runs
  * through the middle of land, while keeping the island and coast detail.
  */
-function isCoastSegment(a, b) {
-  const mx = (a[0] + b[0]) / 2;
-  const my = (a[1] + b[1]) / 2;
+function nearBoundary(x, y) {
   // Search in every direction, not only across the segment. A short segment
   // in a bay can be tangent to the raster boundary.
   for (let direction = 0; direction < 16; direction += 1) {
     const angle = (direction / 16) * Math.PI * 2;
     const dx = Math.cos(angle);
     const dy = Math.sin(angle);
-    let previous = isLandAt(mx, my);
+    let previous = isLandAt(x, y);
     for (let distance = 0.1; distance <= 1.2 + 1e-9; distance += 0.1) {
-      const current = isLandAt(mx + dx * distance, my + dy * distance);
+      const current = isLandAt(x + dx * distance, y + dy * distance);
       if (current !== previous) return true;
       previous = current;
     }
   }
   return false;
+}
+
+function isCoastSegment(a, b) {
+  // A midpoint-only test accepted a long source segment whose middle happened
+  // to touch a coast while both ends ran into open water. Check the whole
+  // segment, not merely its midpoint.
+  const length = Math.hypot(b[0] - a[0], b[1] - a[1]);
+  const steps = Math.max(1, Math.ceil(length));
+  for (let step = 0; step <= steps; step += 1) {
+    const t = step / steps;
+    if (!nearBoundary(a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t)) {
+      return false;
+    }
+  }
+  return true;
 }
 
 function samePoint(a, b) {
@@ -220,7 +286,12 @@ function cleanCoastLine(line, rect) {
   for (let i = 0; i + 3 < line.length; i += 2) {
     const a = [line[i], line[i + 1]];
     const b = [line[i + 2], line[i + 3]];
-    if (onRectEdge(a, b, rect) || !isCoastSegment(a, b)) {
+    const mid = [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2];
+    if (
+      onRectEdge(a, b, rect) ||
+      !isCoastSegment(a, b) ||
+      !nearBoundary(mid[0], mid[1])
+    ) {
       flush();
       continue;
     }
@@ -271,8 +342,19 @@ for (const [tx, ty] of level.tiles) {
   sourceTiles += 1;
 
   for (const rawRing of data.fill ?? []) {
-    const points = [];
-    for (let i = 0; i < rawRing.length; i += 2) points.push([rawRing[i], rawRing[i + 1]]);
+    const rawPoints = [];
+    for (let i = 0; i < rawRing.length; i += 2) rawPoints.push([rawRing[i], rawRing[i + 1]]);
+
+    // Tiles overlap by 0.75 km. Clip to the tile's own square first, otherwise
+    // the overlap edge becomes a straight strip of land inside a 25 km block.
+    const core = {
+      minX: data.x * data.km,
+      minY: data.y * data.km,
+      maxX: Math.min(mapWidth, (data.x + 1) * data.km),
+      maxY: Math.min(mapHeight, (data.y + 1) * data.km),
+    };
+    const points = clipRing(rawPoints, core);
+    if (points.length < 3) continue;
     const bounds = points.reduce(
       (b, p) => ({
         minX: Math.min(b.minX, p[0]),
@@ -298,7 +380,18 @@ for (const [tx, ty] of level.tiles) {
         if (clipped.length >= 3) {
           const block = addBlock(blocks, col, row);
           const ring = cleanRing(flat(clipped));
-          if (ring) {
+          // A source fill clipped to a whole block becomes a flat rectangle.
+          // Replace it with the lookup's 1 km land cells. That keeps the land
+          // area but removes the hard 25 km step at the edge of discovery.
+          if (ring && ringHasAllCorners(ring, rect) && !rectAllLand(rect)) {
+            for (const run of landCellRuns(rect)) {
+              const key = JSON.stringify(run);
+              if (block.fillKeys.has(key)) continue;
+              block.fillKeys.add(key);
+              block.fill.push(run);
+              block.points += run.length / 2;
+            }
+          } else if (ring) {
             const key = JSON.stringify(ring);
             if (!block.fillKeys.has(key)) {
               block.fillKeys.add(key);

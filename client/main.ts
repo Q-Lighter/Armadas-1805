@@ -36,6 +36,8 @@ import type {
   StateMessage,
 } from "@naval/shared/world";
 import { orderedChartBlocks } from "@naval/shared/chart-draw";
+import { buildBlockCommands, findChartSuspects } from "@naval/shared/chart-paint";
+import { isLandAt } from "@naval/shared/land";
 import { fogDebugLine, type FogDebugInfo } from "@naval/shared/fog-view";
 import { GRAPHICS_RESET_NOTICE, GraphicsRecovery } from "@naval/shared/graphics-safety";
 import { formatGameClock, gameClockAt } from "@naval/shared/time";
@@ -440,6 +442,7 @@ async function start(): Promise<void> {
   const knownPortsEmpty = element<HTMLElement>("known-ports-empty");
   const knownPortsClose = element<HTMLButtonElement>("known-ports-close");
   const bordersButton = element<HTMLButtonElement>("borders-btn");
+  const highlightButton = element<HTMLButtonElement>("highlight-btn");
   const clockPanel = element<HTMLElement>("game-clock-panel");
   const clockOut = element<HTMLElement>("game-clock");
   const roomOut = element<HTMLElement>("room-code");
@@ -544,6 +547,7 @@ async function start(): Promise<void> {
   const lastSeenLayer = new Container();
   const windLayer = new Graphics();
   const borderLayer = new Graphics();
+  const suspectLayer = new Graphics();
   const rulerLayer = new Container();
   const rulerLine = new Graphics();
   const rulerText = new Text({
@@ -568,6 +572,7 @@ async function start(): Promise<void> {
     fleetLayer,
     windLayer,
     borderLayer,
+    suspectLayer,
     grainLayer,
     marker,
     rulerLayer,
@@ -662,6 +667,8 @@ async function start(): Promise<void> {
   let retry: number | null = null;
   let takenOver = false;
   let bordersVisible = false;
+  let suspectsVisible = false;
+  let suspectSegments = 0;
   let noticeTimer = 0;
   let noticeHideTimer = 0;
   let windFrom: number = settings.weather.windFromDeg;
@@ -842,27 +849,29 @@ async function start(): Promise<void> {
     );
   }
 
-  function drawFill(graphics: Graphics, block: ChartBlock, color: number): void {
-    for (const ring of block.fill) {
-      if (ring.length < 6) continue;
-      const points: number[] = [];
-      for (let index = 0; index < ring.length; index += 2) {
-        const point = builtScreen(ring[index]!, ring[index + 1]!);
-        points.push(point.x, point.y);
-      }
-      graphics.poly(points).fill(color);
-    }
-  }
-
-  function drawLines(
+  /** Draw the same pure command list the chart audit checks. */
+  function drawBlockCommands(
     graphics: Graphics,
     block: ChartBlock,
-    width: number,
-    color: number,
-    alpha: number,
+    land: number,
+    water: number,
+    ink: number,
   ): void {
-    for (const line of block.coast) {
-      if (line.length < 4) continue;
+    const commands = buildBlockCommands(
+      block,
+      settings.view.waterLinePx,
+      settings.view.coastLinePx,
+    );
+    for (const command of commands.fills) {
+      const points: number[] = [];
+      for (let index = 0; index < command.ring.length; index += 2) {
+        const point = builtScreen(command.ring[index]!, command.ring[index + 1]!);
+        points.push(point.x, point.y);
+      }
+      graphics.poly(points).fill(land);
+    }
+    for (const command of commands.strokes) {
+      const line = command.line;
       const first = builtScreen(line[0]!, line[1]!);
       graphics.moveTo(first.x, first.y);
       for (let index = 2; index < line.length; index += 2) {
@@ -870,9 +879,9 @@ async function start(): Promise<void> {
         graphics.lineTo(point.x, point.y);
       }
       graphics.stroke({
-        width,
-        color,
-        alpha,
+        width: command.widthPx,
+        color: command.layer === "water" ? water : ink,
+        alpha: 1,
         cap: "round",
         join: "round",
       });
@@ -886,9 +895,7 @@ async function start(): Promise<void> {
     water: number,
     ink: number,
   ): void {
-    drawFill(graphics, block, land);
-    drawLines(graphics, block, settings.view.waterLinePx, water, 1);
-    drawLines(graphics, block, settings.view.coastLinePx, ink, 1);
+    drawBlockCommands(graphics, block, land, water, ink);
   }
 
   function destroyBlockPaints(): void {
@@ -1058,32 +1065,31 @@ async function start(): Promise<void> {
 
       const block = blocks.get(id);
       if (!block) continue;
-      for (const ring of block.fill) {
-        if (ring.length < 6) continue;
+      const commands = buildBlockCommands(
+        block,
+        settings.view.waterLinePx,
+        settings.view.coastLinePx,
+      );
+      for (const command of commands.fills) {
         const points: number[] = [];
-        for (let index = 0; index < ring.length; index += 2) {
-          points.push(ring[index]! * scale, ring[index + 1]! * scale);
+        for (let index = 0; index < command.ring.length; index += 2) {
+          points.push(command.ring[index]! * scale, command.ring[index + 1]! * scale);
         }
         chartGraphics.poly(points).fill(LAND_COLOR);
       }
-      for (const [lineWidth, color] of [
-        [settings.view.waterLinePx, WATERLINE_COLOR],
-        [settings.view.coastLinePx, INK_COLOR],
-      ] as const) {
-        for (const line of block.coast) {
-          if (line.length < 4) continue;
-          chartGraphics.moveTo(line[0]! * scale, line[1]! * scale);
-          for (let index = 2; index < line.length; index += 2) {
-            chartGraphics.lineTo(line[index]! * scale, line[index + 1]! * scale);
-          }
-          chartGraphics.stroke({
-            width: lineWidth,
-            color,
-            alpha: 1,
-            cap: "round",
-            join: "round",
-          });
+      for (const command of commands.strokes) {
+        const line = command.line;
+        chartGraphics.moveTo(line[0]! * scale, line[1]! * scale);
+        for (let index = 2; index < line.length; index += 2) {
+          chartGraphics.lineTo(line[index]! * scale, line[index + 1]! * scale);
         }
+        chartGraphics.stroke({
+          width: command.widthPx,
+          color: command.layer === "water" ? WATERLINE_COLOR : INK_COLOR,
+          alpha: 1,
+          cap: "round",
+          join: "round",
+        });
       }
     }
 
@@ -1138,6 +1144,7 @@ async function start(): Promise<void> {
         builtRevision = chartRevision;
         lastMapBuild = now;
       }
+      drawSuspects();
       return;
     }
 
@@ -1148,6 +1155,7 @@ async function start(): Promise<void> {
     rebuildShipBlocks();
     builtRevision = chartRevision;
     lastMapBuild = now;
+    drawSuspects();
   }
 
   function updateLayerOffset(): void {
@@ -2621,8 +2629,11 @@ async function start(): Promise<void> {
         hungerMultiplier,
       },
     );
-    fogDebugOut.textContent = line ?? "";
-    fogDebugOut.hidden = line === null;
+    const debugLine = line === null
+      ? null
+      : `${line} · suspicious segments: ${suspectSegments}`;
+    fogDebugOut.textContent = debugLine ?? "";
+    fogDebugOut.hidden = debugLine === null;
   }
 
   /**
@@ -2730,10 +2741,14 @@ async function start(): Promise<void> {
     windFrom = Number.isFinite(state.w) ? state.w : settings.weather.windFromDeg;
     roomKind = validRoomKind(state.k) ? state.k : "normal";
     bordersButton.hidden = roomKind === "normal";
+    highlightButton.hidden = roomKind === "normal";
     if (roomKind === "normal") {
       bordersVisible = false;
+      suspectsVisible = false;
       bordersButton.setAttribute("aria-pressed", "false");
+      highlightButton.setAttribute("aria-pressed", "false");
       borderLayer.clear();
+      suspectLayer.clear();
     }
     windArrow.setAttribute("transform", `rotate(${(windFrom + 180) % 360} 12 12)`);
     windLabel.textContent = `Wind from ${compassPoint(windFrom)} (${Math.round(windFrom)}°)`;
@@ -3229,6 +3244,46 @@ async function start(): Promise<void> {
     bordersButton.setAttribute("aria-pressed", String(bordersVisible));
     drawBorders();
   });
+
+  highlightButton.addEventListener("click", () => {
+    suspectsVisible = !suspectsVisible;
+    highlightButton.setAttribute("aria-pressed", String(suspectsVisible));
+    drawSuspects();
+  });
+
+  function drawSuspects(): void {
+    suspectLayer.clear();
+    suspectSegments = 0;
+    if (
+      !suspectsVisible ||
+      (roomKind !== "test" && roomKind !== "dev") ||
+      app.screen.width <= 0
+    ) {
+      return;
+    }
+
+    const suspects = findChartSuspects(screenBlockList(), isLandAt);
+    for (const suspect of suspects) {
+      if (suspect.kind === "stitch" && suspect.line) {
+        suspectSegments += 1;
+        const a = builtScreen(suspect.line[0]!, suspect.line[1]!);
+        const b = builtScreen(suspect.line[2]!, suspect.line[3]!);
+        suspectLayer
+          .moveTo(a.x, a.y)
+          .lineTo(b.x, b.y)
+          .stroke({ width: 6, color: 0xff00ff, alpha: 1, cap: "round" });
+      } else if (suspect.ring) {
+        const points: number[] = [];
+        for (let index = 0; index < suspect.ring.length; index += 2) {
+          const point = builtScreen(suspect.ring[index]!, suspect.ring[index + 1]!);
+          points.push(point.x, point.y);
+        }
+        suspectLayer
+          .poly(points)
+          .stroke({ width: 6, color: 0xff00ff, alpha: 1, join: "round" });
+      }
+    }
+  }
 
   function drawBorders(): void {
     borderLayer.clear();

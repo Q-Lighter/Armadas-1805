@@ -11,6 +11,11 @@ import {
   type ShipClassId,
   type ShipType,
 } from "./data/ships.js";
+import {
+  cargoSpeedMultiplier,
+  emptyStores,
+  type ShipStores,
+} from "./trade.js";
 
 /** One knot is 1.852 km/h. A definition, not a tuning value. */
 export const KM_PER_HOUR_PER_KNOT = 1.852;
@@ -41,6 +46,8 @@ export interface Ship {
   /** Sailors aboard, and the full complement from the ship table. */
   crew: number;
   readonly fullCrew: number;
+  /** Provisions, ammunition, repair materials and cargo, in tonnes. */
+  stores: ShipStores;
   /** A ship under construction has a port and a game-time delivery moment. */
   deliveryPortId: string | null;
   deliveryReadyGameMs: number;
@@ -141,6 +148,7 @@ export function createShip(
     name: name ?? type.name,
     crew: crew ?? type.crew,
     fullCrew: type.crew,
+    stores: emptyStores(),
     deliveryPortId: null,
     deliveryReadyGameMs: 0,
     x,
@@ -288,8 +296,9 @@ export function stepShip(
   );
   ship.headingRad += turnDeg * DEG;
 
-  // Speed follows the angle to the wind, then the ship moves along its heading.
-  ship.speedKnots = speedForHeading(spec, ship.headingRad, windFromDeg);
+  // Speed follows the angle to the wind, then a loaded cargo hold slows it.
+  ship.speedKnots = speedForHeading(spec, ship.headingRad, windFromDeg) *
+    cargoSpeedMultiplier(ship.stores, spec.cargoTonnes);
   const travelKm = ship.speedKnots * KM_PER_HOUR_PER_KNOT * (dtGameSeconds / 3600);
   ship.x += Math.sin(ship.headingRad) * travelKm;
   ship.y -= Math.cos(ship.headingRad) * travelKm;

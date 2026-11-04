@@ -109,6 +109,14 @@
     "./fleet-view": {
       "types": "./dist/fleetView.d.ts",
       "default": "./dist/fleetView.js"
+    },
+    "./goods": {
+      "types": "./dist/data/goods.d.ts",
+      "default": "./dist/data/goods.js"
+    },
+    "./trade": {
+      "types": "./dist/trade.d.ts",
+      "default": "./dist/trade.js"
     }
   },
   "files": [

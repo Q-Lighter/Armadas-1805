@@ -116,6 +116,22 @@ export const settings = {
     },
     /** The longest permanent ship name the server accepts. */
     maxNameLength: 40,
+
+    /** Ship stores and the cost of sailing them. Draft values. */
+    stores: {
+      /** Tonnes of provisions one sailor eats in one game day. Draft: 0.0065. */
+      provisionsTonnesPerCrewPerGameDay: 0.0065,
+      /** A full cargo hold removes this share of a ship's speed. Draft: 10%. */
+      fullCargoSpeedLoss: 0.1,
+      /** Sailors lost each game day without provisions. Draft: 8%. */
+      starvationCrewSharePerGameDay: 0.08,
+      /** Rounds carried for each of the ship's broadsides. Draft: 60. */
+      ammunitionBroadsides: 60,
+      /** Pounds in a tonne. A definition, kept here for the ammunition formula. */
+      poundsPerTonne: 2_000,
+      /** Hull points per tonne of repair materials. Draft: 200. */
+      repairHullPointsPerTonne: 200,
+    },
   },
 
   /** Placeholder weather: one constant wind until the weather phase. */
@@ -198,6 +214,68 @@ export const settings = {
         lookoutRangeKm: 30,
       },
     },
+  },
+
+  /** Goods, port production, prices and trading. Draft values. */
+  trade: {
+    /** Posted base prices in pieces of eight per tonne. */
+    prices: {
+      hides: 10,
+      sugar: 15,
+      tobacco: 20,
+      coffee: 25,
+      rum: 30,
+      silver: 100,
+      whaleOil: 20,
+      provisions: 5,
+      timber: 8,
+      cloth: 10,
+      repairMaterials: 12,
+      ammunition: 15,
+    },
+
+    /** Port production and NPC stock, all on game time. Draft values. */
+    production: {
+      /** One production cycle lasts this many game days. Draft: 3. */
+      cycleGameDays: 3,
+      /** The port's regional good produced each cycle. Draft: 20 t. */
+      regionalGoodTonnes: 20,
+      /** Each of the two basic resources produced each cycle. Draft: 30 t. */
+      basicResourceTonnes: 30,
+      /** Repair materials a usable port produces each cycle. Draft: 10 t. */
+      repairMaterialsTonnes: 10,
+      /** Ammunition a usable port produces each cycle. Draft: 10 t. */
+      ammunitionTonnes: 10,
+      /** NPC stock cap per resource, by port size. Draft values. */
+      npcStockCapTonnes: { S: 150, M: 300, L: 450 },
+      /** NPC stock starts at this share of each resource cap. Draft: full. */
+      npcStartStockShare: 1,
+      /** NPC repair materials added each cycle. Draft: 30 t. */
+      npcRefillRepairMaterialsTonnes: 30,
+      /** NPC ammunition added each cycle. Draft: 30 t. */
+      npcRefillAmmunitionTonnes: 30,
+      /** Port storage starts at this share of its limit. Draft: half. */
+      storageStartShare: 0.5,
+    },
+
+    /** Price movement. Draft values. */
+    pricesCycle: {
+      /** Prices change this often in game days. Draft: 60. */
+      shiftGameDays: 60,
+      /** Each region's new trend is within this share, up or down. Draft: 30%. */
+      regionalTrendMax: 0.3,
+      /** Each port's new random factor is within this share. Draft: 10%. */
+      portRandomMax: 0.1,
+      /** A port sells its own regional good for this share of its price. Draft: 75%. */
+      producerFactor: 0.75,
+      /** Posted prices never fall below this many pieces. */
+      minimumPrice: 1,
+    },
+
+    /** Test and dev rooms consume provisions faster. Draft: ten times. */
+    testHungerMultiplier: 10,
+    /** Normal rooms consume provisions at the ordinary rate. */
+    normalHungerMultiplier: 1,
   },
 
   /** The four navies, their real starts and their draft hull colours. */

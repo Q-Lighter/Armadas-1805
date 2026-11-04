@@ -1289,3 +1289,35 @@ and short docking notices.
   wax-seal flow were not visually or interactively checked.
 - Starting ships in test and dev rooms are fully crewed, not only flagships;
   this keeps those rooms playable without first reaching a port.
+
+## Session 2D-a: goods, stores and prices
+
+**Date:** 2026-11-04
+**Branch:** main
+
+### What was built
+
+- Added twelve goods: seven trade goods and five resources. Cargo carries the
+  trade goods, timber and cloth together; provisions, ammunition and repair
+  materials have their own stores.
+- Added capacity formulas from stores days, complement, broadsides, broadside
+  weight and hull points, plus empty and fully stocked store helpers.
+- Added daily provisions use, starvation at 8% of the crew per game day, days
+  left, and the cargo-hold speed multiplier wired into the sailing step.
+- Added port production bundles, half-full port storage, NPC resource stock
+  caps and refills, and regional/basic production rules.
+- Added deterministic per-room price trends and port randoms, the producer
+  discount, price lists and pure buy/sell/load/unload quotes.
+
+### Checks
+
+- `npm test`: **118/118 passing**, including all 24 ship capacity formulas,
+  provisions endurance, starvation, full-hold speed, production, stock caps,
+  seeded prices, bounds and trade limits.
+- `npm run build`: passing.
+
+### Broken or unfinished
+
+- No world storage yet, no server commands and no trade screens. Those are
+  Parts B and C.
+- No browser is available; this part is pure data and rules only.

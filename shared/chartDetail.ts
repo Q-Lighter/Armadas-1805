@@ -46,6 +46,26 @@ export function chartDetailBlend(
   return Math.max(0, Math.min(1, (thresholdKm - kmAcross) / fadeKm));
 }
 
+/**
+ * A settled chart texture is view-sized and device-pixel sharp, but never
+ * bigger than the screen times the device ratio or the hard cache ceiling.
+ */
+export function chartTextureSize(
+  width: number,
+  height: number,
+  devicePixelRatio: number,
+  maxPx: number,
+): { width: number; height: number } {
+  const dpr = Math.max(1, devicePixelRatio);
+  const sourceWidth = Math.max(1, width * dpr);
+  const sourceHeight = Math.max(1, height * dpr);
+  const scale = Math.min(1, maxPx / sourceWidth, maxPx / sourceHeight);
+  return {
+    width: Math.max(1, Math.round(sourceWidth * scale)),
+    height: Math.max(1, Math.round(sourceHeight * scale)),
+  };
+}
+
 function intersects(block: ChartBlock, view: ChartViewport): boolean {
   return !(
     block.x + block.km < view.left ||

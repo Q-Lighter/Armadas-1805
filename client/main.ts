@@ -36,7 +36,7 @@ import type {
   StateMessage,
 } from "@naval/shared/world";
 import { orderedChartBlocks } from "@naval/shared/chart-draw";
-import { chartDetailBlend, planChartDetail } from "@naval/shared/chart-detail";
+import { chartTextureSize, planChartDetail } from "@naval/shared/chart-detail";
 import {
   auditLayout,
   layoutIssueSummary,
@@ -45,6 +45,7 @@ import {
 import { buildBlockCommands, findChartSuspects } from "@naval/shared/chart-paint";
 import { isLandAt } from "@naval/shared/land";
 import { cameraScale, screenToWorld, worldToScreen } from "@naval/shared/camera";
+import { buildDiscoveredOutline, type OutlineRing } from "@naval/shared/discovered-outline";
 import { dotsAlongPath } from "@naval/shared/route-ink";
 import { readTapToSail, resolveTap, writeTapToSail } from "@naval/shared/tap-to-sail";
 import { fogDebugLine, type FogDebugInfo } from "@naval/shared/fog-view";
@@ -685,6 +686,29 @@ async function start(): Promise<void> {
   let chartCacheInitialized = false;
   let lastChartBuild = 0;
   let liveBlockGraphics = 0;
+  let discoveredOutline: OutlineRing[] = [];
+  let outlineRevision = -1;
+  let outlineCellCount = -1;
+  let outlineBuiltAt = 0;
+
+  interface ChartViewPose {
+    x: number;
+    y: number;
+    kmAcross: number;
+    width: number;
+    height: number;
+    scale: number;
+  }
+  const chartViewLayer = new Container();
+  const chartViewPaper = new Graphics();
+  const chartViewBlocks = new Container();
+  chartViewLayer.addChild(chartViewPaper, chartViewBlocks);
+  let chartViewTexture: RenderTexture | null = null;
+  let chartViewPose: ChartViewPose | null = null;
+  let chartViewPendingKey = "";
+  let chartViewPendingRevision = -1;
+  let chartViewDirty = true;
+  let chartViewSettledAt = 0;
 
   const chartMemory = createChartMemory();
   const blocks = chartMemory.blocks;
@@ -843,7 +867,46 @@ async function start(): Promise<void> {
     }
   }
 
-  /** Paint stained paper, then only the discovered 5 km cells in opaque sea. */
+  /** Rebuild the outline only after cells change, at most every 200 ms. */
+  function refreshDiscoveredOutline(now: number, force = false): void {
+    if (chartAll) {
+      discoveredOutline = [];
+      outlineRevision = chartRevision;
+      outlineCellCount = discovered.size;
+      return;
+    }
+    if (
+      !force &&
+      outlineRevision === chartRevision &&
+      outlineCellCount === discovered.size
+    ) {
+      return;
+    }
+    if (!force && now - outlineBuiltAt < 200) return;
+    discoveredOutline = buildDiscoveredOutline(
+      discovered,
+      chartColumns,
+      chartRows,
+      chartCellKm,
+    ).rings;
+    outlineRevision = chartRevision;
+    outlineCellCount = discovered.size;
+    outlineBuiltAt = now;
+  }
+
+  function paintDiscoveredWash(graphics: Graphics, holeColor: number): void {
+    for (const ring of discoveredOutline) {
+      const points: number[] = [];
+      for (let index = 0; index < ring.points.length; index += 2) {
+        const point = toScreen(ring.points[index]!, ring.points[index + 1]!);
+        points.push(point.x, point.y);
+      }
+      if (points.length < 6) continue;
+      graphics.poly(points).fill(ring.area < 0 ? holeColor : DIM_SEA_COLOR);
+    }
+  }
+
+  /** Paint stained paper, then the smooth discovered wash in opaque sea. */
   function refreshFogPaper(): void {
     unknownPaper.clear();
     dimSea.clear();
@@ -862,31 +925,7 @@ async function start(): Promise<void> {
       dimSea.rect(0, 0, app.screen.width, app.screen.height).fill(DIM_SEA_COLOR);
       return;
     }
-
-    // Only visit cells that can touch the screen. A player who has explored
-    // most of the ocean still paints a small, constant number of rectangles.
-    const s = scale();
-    const halfWidth = app.screen.width / (2 * s);
-    const halfHeight = app.screen.height / (2 * s);
-    const firstColumn = Math.max(0, Math.floor((view.x - halfWidth) / chartCellKm));
-    const lastColumn = Math.min(
-      chartColumns - 1,
-      Math.floor((view.x + halfWidth) / chartCellKm),
-    );
-    const firstRow = Math.max(0, Math.floor((view.y - halfHeight) / chartCellKm));
-    const lastRow = Math.min(
-      chartRows - 1,
-      Math.floor((view.y + halfHeight) / chartCellKm),
-    );
-    for (let row = firstRow; row <= lastRow; row += 1) {
-      for (let column = firstColumn; column <= lastColumn; column += 1) {
-        if (!discovered.has(row * chartColumns + column)) continue;
-        const topLeft = toScreen(column * chartCellKm, row * chartCellKm);
-        dimSea
-          .rect(topLeft.x, topLeft.y, chartCellKm * s, chartCellKm * s)
-          .fill(DIM_SEA_COLOR);
-      }
-    }
+    paintDiscoveredWash(dimSea, PAPER_COLOR);
   }
 
   // ---- Map geometry -------------------------------------------------------
@@ -1202,14 +1241,8 @@ async function start(): Promise<void> {
       chartVectorSea
         .rect(0, 0, app.screen.width, app.screen.height)
         .fill(DIM_SEA_COLOR);
-    }
-    for (const index of plan.cells) {
-      const column = index % chartColumns;
-      const row = Math.floor(index / chartColumns);
-      const topLeft = toScreen(column * chartCellKm, row * chartCellKm);
-      chartVectorSea
-        .rect(topLeft.x, topLeft.y, chartCellKm * s, chartCellKm * s)
-        .fill(DIM_SEA_COLOR);
+    } else {
+      paintDiscoveredWash(chartVectorSea, PAPER_COLOR);
     }
 
     for (const block of plan.blocks) {
@@ -1223,6 +1256,105 @@ async function start(): Promise<void> {
       );
       chartVectorBlocks.addChild(graphics);
     }
+  }
+
+  /** Render the settled view into a view-sized texture. The texture is
+   *  transformed from the previous camera until the new one is ready. */
+  function renderChartViewTexture(now: number): void {
+    const width = app.screen.width;
+    const height = app.screen.height;
+    if (width <= 0 || height <= 0) return;
+    const dimensions = chartTextureSize(
+      width,
+      height,
+      window.devicePixelRatio || 1,
+      settings.view.chartCacheMaxPx,
+    );
+    const textureWidth = dimensions.width;
+    const textureHeight = dimensions.height;
+
+    if (
+      !chartViewTexture ||
+      chartViewTexture.width !== textureWidth ||
+      chartViewTexture.height !== textureHeight
+    ) {
+      chartViewTexture?.destroy(true);
+      chartViewTexture = RenderTexture.create({
+        width: textureWidth,
+        height: textureHeight,
+        resolution: 1,
+        antialias: true,
+      });
+      chartSprite.texture = chartViewTexture;
+    }
+
+    chartViewPaper.clear();
+    chartViewPaper.rect(0, 0, width, height).fill(PAPER_COLOR);
+    if (chartAll) {
+      chartViewPaper.rect(0, 0, width, height).fill(DIM_SEA_COLOR);
+    } else {
+      paintDiscoveredWash(chartViewPaper, PAPER_COLOR);
+    }
+
+    for (const child of [...chartViewBlocks.children]) child.destroy();
+    const s = scale();
+    const halfW = width / (2 * s);
+    const halfH = height / (2 * s);
+    const plan = planChartDetail({
+      blocks,
+      discovered,
+      viewport: {
+        left: view.x - halfW,
+        top: view.y - halfH,
+        right: view.x + halfW,
+        bottom: view.y + halfH,
+      },
+      kmAcross: view.kmAcross,
+      thresholdKm: settings.view.chartDetailThresholdKm,
+      chartAll,
+      maxBlocks: settings.view.maxLiveBlockGraphics,
+    });
+    for (const block of plan.blocks) {
+      // A block smaller than a pixel cannot show a meaningful coast ring.
+      if (block.km * s < 1) continue;
+      const graphics = new Graphics();
+      paintBlock(
+        graphics,
+        block,
+        DIM_LAND_COLOR,
+        DIM_WATERLINE_COLOR,
+        DIM_INK_COLOR,
+      );
+      chartViewBlocks.addChild(graphics);
+    }
+
+    chartViewLayer.scale.set(textureWidth / width, textureHeight / height);
+    app.renderer.render({
+      container: chartViewLayer,
+      target: chartViewTexture,
+      clear: true,
+    });
+    chartViewLayer.scale.set(1, 1);
+
+    chartViewPose = {
+      x: view.x,
+      y: view.y,
+      kmAcross: view.kmAcross,
+      width,
+      height,
+      scale: s,
+    };
+    chartViewPendingKey = [
+      view.x,
+      view.y,
+      view.kmAcross,
+      width,
+      height,
+    ].join("|");
+    chartViewPendingRevision = chartRevision;
+    chartViewDirty = false;
+    chartViewSettledAt = now;
+    chartSprite.visible = true;
   }
 
   function drawMap(now: number): void {
@@ -1239,27 +1371,23 @@ async function start(): Promise<void> {
       dimSea.visible = false;
       unknownPaper.visible = false;
       dimBlockLayer.visible = false;
+      chartVectorLayer.visible = false;
+      chartBlockLayer.visible = true;
+      chartBlockLayer.alpha = 1;
 
-      const blend = chartDetailBlend(
-        view.kmAcross,
-        settings.view.chartDetailThresholdKm,
-        settings.view.chartDetailFadeKm,
-      );
-      const useVector = blend > 0;
-      chartBlockLayer.visible = !useVector || blend < 1;
-      chartBlockLayer.alpha = 1 - blend;
-      chartVectorLayer.visible = useVector;
-      chartVectorLayer.alpha = blend;
-
-      if (useVector) {
-        drawChartVector();
-        builtRevision = chartRevision;
-        lastMapBuild = now;
-        drawSuspects();
-        return;
+      const poseKey = [view.x, view.y, view.kmAcross, app.screen.width, app.screen.height].join("|");
+      if (poseKey !== chartViewPendingKey) {
+        chartViewPendingKey = poseKey;
+        chartViewDirty = true;
+        chartViewSettledAt = now;
       }
-
-      if (repaintChartCache(now)) {
+      if (chartRevision !== chartViewPendingRevision) {
+        chartViewPendingRevision = chartRevision;
+        chartViewDirty = true;
+        chartViewSettledAt = now;
+      }
+      if (!chartViewTexture || (chartViewDirty && now - chartViewSettledAt >= 200)) {
+        renderChartViewTexture(now);
         builtRevision = chartRevision;
         lastMapBuild = now;
       }
@@ -1278,6 +1406,24 @@ async function start(): Promise<void> {
     drawSuspects();
   }
 
+  /** The previous chart texture is transformed while a gesture is in flight. */
+  function updateChartSpriteTransform(): void {
+    if (!chartViewTexture || !chartViewPose) {
+      chartSprite.visible = false;
+      return;
+    }
+    const s1 = scale();
+    const s0 = chartViewPose.scale;
+    const worldLeft = chartViewPose.x - chartViewPose.width / (2 * s0);
+    const worldTop = chartViewPose.y - chartViewPose.height / (2 * s0);
+    const origin = toScreen(worldLeft, worldTop);
+    const factor = s1 / s0;
+    chartSprite.position.set(origin.x, origin.y);
+    chartSprite.width = chartViewPose.width * factor;
+    chartSprite.height = chartViewPose.height * factor;
+    chartSprite.visible = true;
+  }
+
   function updateLayerOffset(): void {
     const x = (builtView.x - view.x) * builtScale;
     const y = (builtView.y - view.y) * builtScale;
@@ -1285,9 +1431,9 @@ async function start(): Promise<void> {
     liveMapLayer.position.set(x, y);
     liveMask.position.set(x, y);
 
-    const origin = toScreen(0, 0);
-    chartBlockLayer.position.set(origin.x, origin.y);
-    chartBlockLayer.scale.set(scale(), scale());
+    chartBlockLayer.position.set(0, 0);
+    chartBlockLayer.scale.set(1, 1);
+    updateChartSpriteTransform();
   }
 
   function refreshMap(now: number, force = false): void {
@@ -1300,24 +1446,30 @@ async function start(): Promise<void> {
       builtScale > 0 &&
       (Math.abs(view.x - builtView.x) * builtScale > app.screen.width * panLimit ||
         Math.abs(view.y - builtView.y) * builtScale > app.screen.height * panLimit);
-    const chartCacheChanged =
-      mode === "chart" &&
-      (!chartCacheInitialized || chartDirtyBlocks.size > 0);
-    const dataChanged = builtRevision !== chartRevision || chartCacheChanged;
-
-    if (!force && !zoomChanged && !farPan && !dataChanged) {
-      updateLayerOffset();
-      return;
+    const dataChanged = builtRevision !== chartRevision;
+    if (mode === "chart") {
+      const poseKey = [
+        view.x,
+        view.y,
+        view.kmAcross,
+        app.screen.width,
+        app.screen.height,
+      ].join("|");
+      if (poseKey !== chartViewPendingKey) {
+        chartViewPendingKey = poseKey;
+        chartViewDirty = true;
+        chartViewSettledAt = now;
+      }
+      if (chartRevision !== chartViewPendingRevision) {
+        chartViewPendingRevision = chartRevision;
+        chartViewDirty = true;
+        chartViewSettledAt = now;
+      }
     }
+    const chartWaiting =
+      mode === "chart" && chartViewDirty && now - chartViewSettledAt >= 200;
 
-    if (
-      !force &&
-      dataChanged &&
-      !zoomChanged &&
-      !farPan &&
-      mode === "chart" &&
-      now - lastMapBuild < settings.view.chartCacheRebuildMs
-    ) {
+    if (!force && !zoomChanged && !farPan && !dataChanged && !chartWaiting) {
       updateLayerOffset();
       return;
     }
@@ -2506,6 +2658,11 @@ async function start(): Promise<void> {
   function rebuildAfterGraphicsReset(): void {
     chartTexture?.destroy(true);
     chartTexture = null;
+    chartViewTexture?.destroy(true);
+    chartViewTexture = null;
+    chartViewPose = null;
+    chartViewDirty = true;
+    chartViewPendingKey = "";
     chartSprite.texture = Texture.EMPTY;
     chartCacheInitialized = false;
     chartGraphics.clear();
@@ -3790,6 +3947,7 @@ async function start(): Promise<void> {
       ship.ring.visible = ship.own && ship.hull.visible;
     }
 
+    refreshDiscoveredOutline(now);
     refreshMap(now);
     refreshFogPaper();
     updateLiveCircles();

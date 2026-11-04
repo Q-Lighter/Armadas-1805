@@ -6,6 +6,7 @@ import { test } from "node:test";
 import {
   chartDetailBlend,
   chartDetailLevel,
+  chartTextureSize,
   planChartDetail,
 } from "@naval/shared/chart-detail";
 import {
@@ -22,6 +23,21 @@ function block(id: string, x: number, y: number): ChartBlock {
 function cellAt(column: number, row: number): number {
   return row * chartColumns + column;
 }
+
+test("the view texture is screen-sized, capped and never upscaled", () => {
+  assert.deepEqual(chartTextureSize(1280, 800, 1, 2_048), {
+    width: 1_280,
+    height: 800,
+  });
+  const retina = chartTextureSize(1280, 800, 2, 2_048);
+  assert.ok(retina.width <= 2_048 && retina.height <= 2_048);
+  assert.ok(retina.width <= 1280 * 2 && retina.height <= 800 * 2);
+  assert.deepEqual(retina, { width: 2_048, height: 1_280 });
+
+  const phone = chartTextureSize(360, 740, 3, 2_048);
+  assert.ok(phone.width <= 360 * 3 && phone.height <= 740 * 3);
+  assert.ok(phone.width <= 2_048 && phone.height <= 2_048);
+});
 
 test("the detail level switches below the configured view width", () => {
   const threshold = 300;

@@ -86,6 +86,10 @@
       "types": "./dist/chartDetail.d.ts",
       "default": "./dist/chartDetail.js"
     },
+    "./discovered-outline": {
+      "types": "./dist/discoveredOutline.d.ts",
+      "default": "./dist/discoveredOutline.js"
+    },
     "./camera": {
       "types": "./dist/camera.d.ts",
       "default": "./dist/camera.js"

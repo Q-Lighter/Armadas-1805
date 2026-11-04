@@ -1798,3 +1798,27 @@ winding`):
   audit (2G-a) is wired to report overlaps, clipping, off-screen boxes and
   sub-44 px targets in test/dev rooms, but its viewport table has not been
   produced and the layout has not been visually checked.
+
+## 2G-d: smooth discovered areas
+
+- `shared/discoveredOutline.ts` traces the boundary of the discovered-cell
+  union, closes its loops, applies two rounds of Chaikin smoothing and returns
+  outer rings and holes in map kilometres. The ship view and chart fill that
+  wash instead of drawing five-kilometre cell rectangles. Reconstruction is
+  throttled to 200 ms and only follows chart revisions; a fully explored room
+  is just a rectangle, and live sight circles are unchanged.
+- The fixed 2,048 px whole-world chart texture is no longer used for the chart.
+  A settled chart is rendered from stored blocks into a view-sized texture,
+  capped by the screen times device pixel ratio and 2,048 px. During a pan or
+  zoom the previous texture is transformed from its old camera; after 200 ms the
+  visible blocks are re-rendered into the new view texture. Blocks smaller than
+  a pixel are skipped and the 300-graphic block cap is retained.
+
+### Checks
+
+- `npm test`: **199/199 passing**, including five outline tests (smooth
+  staircase, rounded rectangle, cell-centre containment), the existing
+  chart-content and graphics-cap tests, and a view-texture cap test.
+- `npm run build`: passing.
+- No browser is available: the zoom screenshots, edge smoothness and frame rate
+  have not been measured on screen.

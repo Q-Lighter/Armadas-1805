@@ -25,6 +25,7 @@ import {
 } from "./map.js";
 import {
   createChart,
+  requestChartResume as markChartForResume,
   revealCircle,
   roomKindForCode,
   takeChartUpdate,
@@ -560,6 +561,14 @@ export function addPlayer(
 }
 
 /** Remove a human player's fleet, chart and waiting messages. */
+/** A new socket gets the player's whole discovered record, then changes. */
+export function requestChartResume(world: World, playerId: string): boolean {
+  const chart = world.charts.get(playerId);
+  if (!chart) return false;
+  markChartForResume(chart);
+  return true;
+}
+
 export function removePlayer(world: World, playerId: string): boolean {
   const removedPrimary = world.players.delete(playerId);
   const removedFleet = world.fleets.delete(playerId);

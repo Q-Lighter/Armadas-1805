@@ -1399,3 +1399,62 @@ and short docking notices.
 - No browser is available, so the trade panel, phone layout, steppers, bars and
   paper notices have not been visually or interactively tested.
 - No new game rules or Draft numbers were added in this part.
+
+## Session 2E-a: chart repair
+
+**Date:** 2026-11-04
+**Branch:** main
+
+### Root causes, with evidence
+
+- **A new page received no chart history.** The old `takeChartUpdate` drained
+  only cells and blocks discovered since the last message. `GameRoom` did not
+  mark a new socket for a replay, so after refresh or reconnect the client got
+  `cells: []` and `blocks: []` while the server still held the bits and
+  `sentBlocks`. The new reconnect test failed against that path.
+- **The chart never painted discovered open sea.** `rebuildChartCache` looped
+  only over received land blocks and filled each whole block with sea colour.
+  A discovered 5 km cell in open ocean has no land block, so the cell set was
+  ignored and most of a voyage showed blank paper. The render-plan test now
+  requires a sea layer from the discovered cells themselves.
+- **The cache had no guaranteed recovery from an empty client.** Its rebuild
+  was keyed on `chartRevision`, while the durable discovery record lived only
+  in the page that was replaced. A refresh, a second tab taking over, or a lost
+  page therefore also lost the data the texture would have been rebuilt from.
+  Culling and the live-graphics cap were checked separately: they never fed the
+  chart, but that was not enough protection without a durable store.
+- Context loss rebuilt from the in-memory block map, but that map was empty
+  after a reload because of the missing server replay. Stale block replacement
+  was also checked and did not remove chart content.
+
+### What was built
+
+- Added a pure `shared/chartMemory.ts`: discovered cells and plain block
+  geometry are stored separately from ship-view graphics, with deterministic
+  content, render and repaint plans.
+- Every new socket now receives an alternating zero/one run-length snapshot of
+  the whole discovery bitset plus the blocks touched by those cells. Blocks
+  arrive nearest-first within the existing per-second budget; the client shows
+  `Charting…` until `remaining` reaches zero.
+- The chart now paints a pale discovered-sea wash, then land, waterline and
+  coast. Its 2,048 px texture starts with a paper base and repaints only dirty
+  25 km blocks into the existing target. A throttled repaint keeps its dirty
+  set and retries next frame; a context reset marks every stored block dirty.
+- The chart keeps discovered ground when a later snapshot arrives, so cells
+  never shrink; culling, the live-graphics cap and graphics resets cannot
+  delete chart content.
+
+### Checks
+
+- `npm test`: **149/149 passing**, including long-voyage growth, culling and
+  graphics-cap independence, interrupted reconnect, pure arrival-order
+  equality, render-plan sea/land/coast and throttled-repaint recovery.
+- `npm run build`: passing.
+- `npm run test:server`: passing (`SIMULATION PASSED`, 118 ticks, 63 updates,
+  823-byte typical update).
+- `git diff --check`: passing.
+
+### Broken or unfinished
+
+- No browser is available: the Pixi texture path, WebGL context-loss recovery,
+  actual phone rendering and the `Charting…` scrap have not been seen.

@@ -1207,6 +1207,27 @@ h2 {
   display: none;
 }
 
+/* A small paper scrap while the player's private chart is still arriving. */
+.charting {
+  z-index: 4;
+  top: max(7.5rem, calc(env(safe-area-inset-top) + 6.9rem));
+  left: 50%;
+  transform: translateX(-50%);
+  margin: 0;
+  padding: 0.3rem 0.65rem;
+  border: 1px solid var(--rule);
+  background: var(--paper);
+  color: var(--ink-faded);
+  font-size: calc(0.8rem * var(--ui-scale));
+  line-height: 1.35;
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+.charting[hidden] {
+  display: none;
+}
+
 .hud-ship {
   left: max(0.5rem, env(safe-area-inset-left));
   bottom: max(0.5rem, env(safe-area-inset-bottom));

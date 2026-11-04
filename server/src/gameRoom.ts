@@ -16,6 +16,7 @@ import {
   createWorld,
   hireCrew,
   removePlayer,
+  requestChartResume,
   resupplyShip,
   selectShip,
   sellGoods,
@@ -183,6 +184,9 @@ export class GameRoom {
       shipClass ?? shipClassForRoom(room),
       startMoney ?? this.world.startMoney,
     );
+    // A refresh, a new tab or a reconnect starts with an empty client chart.
+    // Replay the stored record and all block geometry before normal changes.
+    requestChartResume(this.world, playerId);
 
     // TEMP-DEBUG: every join with bots=N sets the target count. This is what
     // lets a second tab change 25 bots to 50, or 100 bots down to 10.

@@ -60,12 +60,22 @@ export interface ChartState {
   seen: Map<string, SeenShip>;
   /** Ports this player has found. Never sent anywhere before discovery. */
   foundPorts: Set<string>;
+  /** A new socket must receive the whole record before normal changes. */
+  resume?: boolean;
 }
 
 export interface ChartUpdate {
+  /** Cells discovered since the last update. Empty on a resumed record. */
   cells: number[];
   blocks: ChartBlock[];
   all: boolean;
+  /**
+   * Alternating zero/one run lengths for the whole discovery grid. Present
+   * when a new socket attaches, so a refreshed page can rebuild its chart.
+   */
+  snapshotRuns?: number[];
+  /** Private blocks still queued after this batch. */
+  remaining: number;
 }
 
 export function blockIdAt(xKm: number, yKm: number): string {
@@ -89,6 +99,7 @@ export function createChart(kind: RoomKind): ChartState {
     all: kind === "dev",
     seen: new Map(),
     foundPorts: new Set(),
+    resume: false,
   };
 
   if (kind === "dev") {
@@ -149,6 +160,77 @@ export function revealCircle(
   }
 }
 
+/**
+ * Encode the discovered bits as alternating zero/one run lengths. This is the
+ * compact record sent when a page attaches. A fully explored dev chart uses
+ * the `all` flag instead of a run list.
+ */
+export function encodeChartRuns(chart: ChartState): number[] {
+  if (chart.all) return [];
+  const cellCount = chartColumns * chartRows;
+  const runs: number[] = [];
+  let value = 0;
+  let run = 0;
+  for (let index = 0; index < cellCount; index += 1) {
+    const bit = (chart.bits[index >> 3]! & (1 << (index & 7))) !== 0 ? 1 : 0;
+    if (bit !== value) {
+      runs.push(run);
+      value = bit;
+      run = 0;
+    }
+    run += 1;
+  }
+  if (run > 0 && value === 1) runs.push(run);
+  return runs;
+}
+
+/** Decode the compact discovery record defensively. */
+export function decodeChartRuns(
+  runs: readonly number[],
+  cellCount: number = chartColumns * chartRows,
+): Set<number> {
+  const cells = new Set<number>();
+  let index = 0;
+  let value = false;
+  for (const raw of runs) {
+    const run = Math.floor(raw);
+    if (!Number.isFinite(run) || run < 0) break;
+    if (value) {
+      const end = Math.min(cellCount, index + run);
+      for (let cell = index; cell < end; cell += 1) cells.add(cell);
+    }
+    index += run;
+    value = !value;
+    if (index >= cellCount) break;
+  }
+  return cells;
+}
+
+/** Queue the full discovered record for the next state sent to this player. */
+export function requestChartResume(chart: ChartState): void {
+  chart.resume = true;
+}
+
+/** Add the block ids touched by every discovered cell to the send queue. */
+function queueAllDiscoveredBlocks(chart: ChartState): void {
+  chart.pendingBlocks.clear();
+  if (chart.all) {
+    for (let row = 0; row < blockRows; row += 1) {
+      for (let column = 0; column < blockColumns; column += 1) {
+        chart.pendingBlocks.add(`${column}_${row}`);
+      }
+    }
+    return;
+  }
+
+  const cellCount = chartColumns * chartRows;
+  for (let index = 0; index < cellCount; index += 1) {
+    if ((chart.bits[index >> 3]! & (1 << (index & 7))) !== 0) {
+      chart.pendingBlocks.add(blockIdForCell(index));
+    }
+  }
+}
+
 /** Move queued chart data into a websocket message. */
 export function takeChartUpdate(
   chart: ChartState,
@@ -156,14 +238,23 @@ export function takeChartUpdate(
   maxBlocks: number = settings.fog.maxBlocksPerMessage,
   near?: { x: number; y: number },
 ): ChartUpdate {
+  let snapshotRuns: number[] | undefined;
+  if (chart.resume) {
+    chart.resume = false;
+    chart.pendingCells.length = 0;
+    chart.sentBlocks.clear();
+    queueAllDiscoveredBlocks(chart);
+    if (!chart.all) snapshotRuns = encodeChartRuns(chart);
+  }
+
   const cells = chart.pendingCells.splice(0, chart.pendingCells.length);
   const updateBlocks: ChartBlock[] = [];
 
   if (blocks && maxBlocks > 0) {
     const pending = [...chart.pendingBlocks].filter((id) => !chart.sentBlocks.has(id));
     if (near) {
-      // A dev room starts with every block queued. Send the blocks around the
-      // player first, so the useful chart arrives before the horizon.
+      // A dev room starts (or resumes) with every block queued. Send the
+      // blocks around the player first, so useful chart arrives first.
       pending.sort((a, b) => {
         const blockA = blocks.get(a);
         const blockB = blocks.get(b);
@@ -188,5 +279,11 @@ export function takeChartUpdate(
     }
   }
 
-  return { cells, blocks: updateBlocks, all: chart.all };
+  return {
+    cells,
+    blocks: updateBlocks,
+    all: chart.all,
+    snapshotRuns,
+    remaining: [...chart.pendingBlocks].filter((id) => !chart.sentBlocks.has(id)).length,
+  };
 }

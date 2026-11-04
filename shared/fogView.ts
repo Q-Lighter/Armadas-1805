@@ -33,6 +33,7 @@ export interface FogDebugInfo {
   devicePixelRatio?: number;
   money?: number;
   fleetShips?: number;
+  hungerMultiplier?: number;
 }
 
 /** How many cells the player knows, with dev rooms counting the whole chart. */
@@ -63,6 +64,9 @@ export function fogDebugLine(
   ];
   if (info.money !== undefined) parts.push(`${Math.round(info.money)} pieces`);
   if (info.fleetShips !== undefined) parts.push(`${info.fleetShips} fleet ships`);
+  if (info.hungerMultiplier !== undefined) {
+    parts.push(`hunger x${info.hungerMultiplier}`);
+  }
   if (info.playerId) parts.push(`player ${info.playerId.slice(0, 8)}`);
   if (info.fps !== undefined) parts.push(`${Math.round(info.fps)} fps`);
   if (info.liveBlocks !== undefined) parts.push(`${info.liveBlocks} live block graphics`);

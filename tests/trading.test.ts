@@ -313,8 +313,10 @@ test("prices and storage are only sent to players who may see them", () => {
   const alphaNpc = alphaState.ports.find((port) => port[0] === npc.id)!;
   const betaNpc = betaState.ports.find((port) => port[0] === npc.id)!;
   assert.ok(alphaNpc[11]?.prices);
+  assert.ok(alphaNpc[11]?.npcStock);
   assert.equal(alphaNpc[11]?.storage, null);
   assert.equal(betaNpc[11]?.prices, null);
+  assert.equal(betaNpc[11]?.npcStock, null);
   assert.equal(betaNpc[11]?.storage, null);
 
   const alphaOwned = alphaState.ports.find((port) => port[0] === owned.id)!;

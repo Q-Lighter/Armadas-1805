@@ -98,6 +98,11 @@
         <dd id="heading">–</dd>
       </dl>
 
+      <div class="ship-stores" id="ship-stores" aria-label="Selected ship stores"></div>
+      <p class="ship-starving" id="ship-starving" role="status" hidden>
+        Starving — the crew is dying without provisions.
+      </p>
+
       <div class="wind-row">
         <svg class="wind-arrow" viewBox="0 0 24 24" aria-hidden="true">
           <g id="wind-arrow">
@@ -164,8 +169,64 @@
       <div class="port-actions">
         <button class="btn" id="port-sail" type="button" hidden>Sail to port</button>
         <button class="btn" id="port-undock" type="button" hidden>Undock</button>
+        <button class="btn" id="port-trade" type="button" hidden>Trade</button>
         <button class="btn" id="port-shipyard" type="button" hidden>Shipyard</button>
         <button class="btn" id="port-hire" type="button" hidden>Hire crew</button>
+      </div>
+    </section>
+
+    <!-- Trade folio for the selected ship, docked at this port. -->
+    <section
+      class="wide-panel trade-panel paper"
+      id="trade-panel"
+      role="dialog"
+      aria-labelledby="trade-title"
+      hidden
+    >
+      <div class="panel-head">
+        <div>
+          <p class="kicker" id="trade-port">Port</p>
+          <h2 id="trade-title">Trade</h2>
+        </div>
+        <button class="btn panel-close" id="trade-close" type="button">Close</button>
+      </div>
+      <p class="trade-meta" id="trade-meta"></p>
+      <p class="trade-free" id="trade-free"></p>
+      <div class="trade-tabs" id="trade-tabs" role="tablist" aria-label="Trade sections">
+        <button
+          class="btn trade-tab"
+          id="trade-tab-buy"
+          type="button"
+          role="tab"
+          data-trade-tab="buy"
+          aria-selected="true"
+        >Buy</button>
+        <button
+          class="btn trade-tab"
+          id="trade-tab-sell"
+          type="button"
+          role="tab"
+          data-trade-tab="sell"
+          aria-selected="false"
+        >Sell</button>
+        <button
+          class="btn trade-tab"
+          id="trade-tab-storage"
+          type="button"
+          role="tab"
+          data-trade-tab="storage"
+          aria-selected="false"
+        >Storage</button>
+      </div>
+      <div class="trade-body" id="trade-body" role="tabpanel"></div>
+      <p class="trade-notice" id="trade-notice" role="status" aria-live="polite" hidden></p>
+      <div class="trade-footer">
+        <button class="btn btn-seal trade-resupply" id="trade-resupply" type="button">
+          Resupply all
+        </button>
+        <p class="trade-resupply-hint" id="trade-resupply-hint">
+          Fills provisions, repair materials and ammunition from this port.
+        </p>
       </div>
     </section>
 

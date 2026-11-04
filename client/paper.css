@@ -680,9 +680,20 @@ h2 {
 
 .fleet-type,
 .fleet-state,
-.fleet-crew {
+.fleet-crew,
+.fleet-provisions {
   color: var(--ink-faded);
   font-size: calc(0.82rem * var(--ui-scale));
+}
+
+.fleet-provisions {
+  grid-column: 1 / -1;
+  font-variant-numeric: tabular-nums;
+}
+
+.fleet-provisions.is-low {
+  color: var(--urgent);
+  font-weight: 600;
 }
 
 .fleet-state {
@@ -937,6 +948,244 @@ h2 {
   opacity: 0.5;
 }
 
+/* --- Trade folio ------------------------------------------------------- */
+
+.trade-panel {
+  width: min(52rem, calc(100% - 1rem));
+}
+
+.trade-meta,
+.trade-free,
+.trade-resupply-hint {
+  margin: 0.25rem 0;
+  color: var(--ink-faded);
+  font-size: calc(0.86rem * var(--ui-scale));
+}
+
+.trade-free {
+  font-variant-numeric: tabular-nums;
+}
+
+.trade-tabs {
+  display: flex;
+  gap: 0.4rem;
+  margin: 0.65rem 0;
+  padding-bottom: 0.45rem;
+  border-bottom: 1px solid var(--rule);
+}
+
+.trade-tab {
+  flex: 1 1 0;
+  min-height: var(--tap);
+  padding: 0.45rem 0.7rem;
+}
+
+.trade-tab[aria-selected="true"] {
+  background: var(--ink);
+  color: var(--paper);
+}
+
+.trade-tab:disabled {
+  cursor: not-allowed;
+  opacity: 0.42;
+}
+
+.trade-body {
+  display: grid;
+  gap: 0.65rem;
+}
+
+.trade-section-title {
+  margin: 0;
+  font-family: "IM Fell English", Georgia, serif;
+  font-size: calc(1.18rem * var(--ui-scale));
+  font-weight: 400;
+}
+
+.trade-help,
+.trade-empty {
+  margin: 0;
+  color: var(--ink-faded);
+  font-size: calc(0.88rem * var(--ui-scale));
+}
+
+.trade-row {
+  display: grid;
+  gap: 0.4rem;
+  padding: 0.65rem;
+  border: 1px solid var(--rule);
+  background: rgba(42, 28, 16, 0.035);
+}
+
+.trade-row-head {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 0.3rem 0.7rem;
+  align-items: baseline;
+}
+
+.trade-row h4 {
+  margin: 0;
+  font-family: "IM Fell English", Georgia, serif;
+  font-size: calc(1.05rem * var(--ui-scale));
+  font-weight: 400;
+}
+
+.trade-cheap {
+  padding: 0.05rem 0.35rem;
+  border: 1px solid var(--rule);
+  color: var(--wax);
+  font-size: calc(0.72rem * var(--ui-scale));
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.trade-row-meta,
+.trade-total {
+  margin: 0;
+  color: var(--ink-faded);
+  font-size: calc(0.82rem * var(--ui-scale));
+  font-variant-numeric: tabular-nums;
+}
+
+.trade-total {
+  color: var(--ink);
+  font-weight: 600;
+}
+
+.trade-stepper {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  align-items: center;
+}
+
+.trade-stepper .btn {
+  min-width: var(--tap);
+  min-height: var(--tap);
+  padding: 0.3rem 0.55rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.trade-amount {
+  min-width: 4.2rem;
+  padding: 0.3rem 0.4rem;
+  border: 1px solid var(--rule);
+  background: var(--paper);
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+  text-align: center;
+}
+
+.trade-fill {
+  min-height: var(--tap);
+}
+
+.trade-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+}
+
+.trade-actions .btn {
+  flex: 1 1 9rem;
+}
+
+.trade-storage-row {
+  display: grid;
+  gap: 0.45rem;
+}
+
+.trade-storage-side {
+  display: grid;
+  gap: 0.15rem;
+  padding-top: 0.35rem;
+  border-top: 1px dashed var(--rule);
+}
+
+.trade-storage-side strong {
+  font-size: calc(0.82rem * var(--ui-scale));
+}
+
+.trade-prices {
+  margin-top: 0.4rem;
+  padding-top: 0.55rem;
+  border-top: 1px solid var(--rule);
+}
+
+.trade-prices h3 {
+  margin: 0 0 0.35rem;
+  font-family: "IM Fell English", Georgia, serif;
+  font-size: calc(1.05rem * var(--ui-scale));
+  font-weight: 400;
+}
+
+.trade-price-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(12rem, 1fr));
+  gap: 0.1rem 0.8rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.trade-price-list li {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.5rem;
+  padding: 0.2rem 0;
+  border-bottom: 1px dotted var(--rule);
+  font-size: calc(0.82rem * var(--ui-scale));
+  font-variant-numeric: tabular-nums;
+}
+
+.trade-price-list .is-cheap {
+  color: var(--wax);
+  font-weight: 600;
+}
+
+.trade-notice {
+  margin: 0.6rem 0 0;
+  padding: 0.35rem 0.55rem;
+  border-left: 3px solid var(--wax);
+  color: var(--ink);
+  font-weight: 600;
+}
+
+.trade-notice[hidden] {
+  display: none;
+}
+
+.trade-footer {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.6rem;
+  margin-top: 0.8rem;
+  padding-top: 0.6rem;
+  border-top: 1px solid var(--rule);
+}
+
+.trade-resupply {
+  flex: 0 1 13rem;
+}
+
+.trade-resupply:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+.trade-resupply-hint {
+  flex: 1 1 14rem;
+  margin: 0;
+}
+
+.trade-panel[hidden] {
+  display: none;
+}
+
 /* TEMP-DEBUG: a small readout in test and dev rooms only. */
 .fog-debug {
   z-index: 4;
@@ -1026,6 +1275,76 @@ h2 {
 .readout dd {
   margin: 0;
   font-weight: 600;
+}
+
+/* --- Selected ship stores ---------------------------------------------- */
+
+.ship-stores {
+  display: grid;
+  gap: 0.32rem;
+  margin: 0.45rem 0 0.2rem;
+  padding-top: 0.4rem;
+  border-top: 1px solid var(--rule);
+}
+
+.store-bar {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 0.05rem 0.55rem;
+  font-size: calc(0.76rem * var(--ui-scale));
+}
+
+.store-label {
+  color: var(--ink-faded);
+  font-weight: 600;
+}
+
+.store-amount {
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.store-track {
+  grid-column: 1 / -1;
+  height: 7px;
+  border: 1px solid var(--rule);
+  background: transparent;
+}
+
+.store-fill {
+  display: block;
+  height: 100%;
+  background: var(--ink-faded);
+}
+
+.store-detail {
+  grid-column: 1 / -1;
+  margin: 0;
+  color: var(--ink-faded);
+  font-size: calc(0.72rem * var(--ui-scale));
+}
+
+.store-bar.is-urgent .store-amount,
+.store-bar.is-urgent .store-detail {
+  color: var(--urgent);
+  font-weight: 600;
+}
+
+.store-bar.is-urgent .store-fill {
+  background: var(--urgent);
+}
+
+.ship-starving {
+  margin: 0.35rem 0 0;
+  padding: 0.25rem 0.5rem;
+  border-left: 3px solid var(--urgent);
+  color: var(--urgent);
+  font-size: calc(0.8rem * var(--ui-scale));
+  font-weight: 600;
+}
+
+.ship-starving[hidden] {
+  display: none;
 }
 
 .wind-row {
@@ -1123,6 +1442,25 @@ h2 {
 
   .shipyard-cards {
     grid-template-columns: 1fr;
+  }
+
+  .trade-panel {
+    width: calc(100% - 1rem);
+  }
+
+  .trade-tabs {
+    position: sticky;
+    top: 0;
+    z-index: 2;
+    background: var(--paper);
+  }
+
+  .trade-stepper .btn {
+    flex: 1 1 auto;
+  }
+
+  .trade-amount {
+    flex: 1 1 4rem;
   }
 
   .yard-stats {

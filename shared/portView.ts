@@ -3,6 +3,7 @@
 
 import { settings } from "./settings.js";
 import type { PortSize } from "./data/ports.js";
+import type { GoodId } from "./data/goods.js";
 
 export interface PortInfo {
   id: string;
@@ -21,6 +22,13 @@ export interface PortInfo {
   buyable?: boolean;
   /** Sailors currently in the shared pool. */
   crewAvailable?: number;
+  /** Posted prices, only when this player may know them. */
+  prices?: Partial<Record<GoodId, number>>;
+  /** Usable port storage, all goods together. */
+  storage?: Partial<Record<GoodId, number>>;
+  storageLimit?: number;
+  /** NPC resources for sale, only while docked there. */
+  npcStock?: Partial<Record<GoodId, number>>;
 }
 
 export interface PortViewport {
@@ -191,7 +199,7 @@ export function knownPortsNearest(
     .map((entry) => entry.port);
 }
 
-export type PortPanelButton = "sail" | "undock" | "shipyard" | "hire";
+export type PortPanelButton = "sail" | "undock" | "trade" | "shipyard" | "hire";
 
 export interface PortPanelModel {
   title: string;
@@ -212,6 +220,7 @@ export function buildPortPanelModel(input: {
   dockedHere: boolean;
   hasShip: boolean;
   canBuy?: boolean;
+  canTrade?: boolean;
   hasDockedShip?: boolean;
 }): PortPanelModel {
   const { port } = input;
@@ -219,6 +228,7 @@ export function buildPortPanelModel(input: {
   const sizeLabel = port.size === "S" ? "Small port" : port.size === "M" ? "Medium port" : "Large port";
   const buttons: PortPanelButton[] = [];
   if (input.hasShip) buttons.push(input.dockedHere ? "undock" : "sail");
+  if (input.canTrade) buttons.push("trade");
   if (input.canBuy ?? port.buyable) buttons.push("shipyard");
   if (input.hasDockedShip) buttons.push("hire");
 

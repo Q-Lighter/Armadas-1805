@@ -1357,3 +1357,45 @@ and short docking notices.
 - No trade screens yet; the client ignores the new trade and store fields until
   Part C.
 - No browser is available, so none of the trading UI has been visually tested.
+
+## Session 2D-c: trade and supplies screens
+
+**Date:** 2026-11-04
+**Branch:** main
+
+### What was built
+
+- Added four paper store bars to the selected-ship panel: provisions with days
+  left, repair materials, ammunition and the cargo hold. Provision days turn
+  red under ten days, and a starving crew shows a red warning.
+- Added days of provisions to every fleet row, with the same red low/starving
+  warning.
+- Added the Trade action to the port folio and a scrolling paper trade panel
+  with BUY, SELL and STORAGE tabs.
+- BUY lists the five resources with price, remaining NPC stock, large stepper
+  buttons, Fill up and a live total cost. SELL lists carried cargo with price
+  and total paid. STORAGE shows port against ship amounts with separate load
+  and unload steppers and Fill up buttons.
+- The panel shows money, free room in each store and the full price list, with
+  the regional good marked cheap. Resupply all fills the three supply stores
+  from the port and shows the server's taken/cost summary.
+- Wired the filtered trade, NPC stock, private stores, capacities, provisions
+  days and starving fields into the client, and passed the test/dev hunger
+  multiplier to TEMP-DEBUG.
+- Kept the paper style, large touch targets, wrapping steppers and scrolling
+  phone layout.
+
+### Checks
+
+- `npm test`: **142/142 passing**, including new store-bar, fleet-provisions,
+  buy/sell/storage-limit, price-book, port Trade-button and hunger-debug tests.
+- `npm run build`: passing.
+- `npm run test:server`: passing (`SIMULATION PASSED`, 118 ticks, 63 updates,
+  809-byte typical update).
+- Static DOM check: every id the client looks up exists once in `index.html`.
+
+### Broken or unfinished
+
+- No browser is available, so the trade panel, phone layout, steppers, bars and
+  paper notices have not been visually or interactively tested.
+- No new game rules or Draft numbers were added in this part.

@@ -39,6 +39,7 @@ import {
 import { cleanShipName, suggestShipName } from "@naval/shared/ship-rules";
 import {
   buildFleetRow,
+  buildShipStoreBars,
   crewQuickTargets,
   crewQuote,
   fleetCountText,
@@ -46,6 +47,23 @@ import {
   formatMoney,
   shipyardCards,
 } from "@naval/shared/fleet-view";
+import {
+  buildBuyRows,
+  buildSellRows,
+  buildStorageRows,
+  formatPrice,
+  formatTonnes,
+  formatTonnesWithUnit,
+  freeSpaceText,
+  priceBookRows,
+  regionalGoodNote,
+} from "@naval/shared/trade-view";
+import {
+  CARGO_GOOD_IDS,
+  GOOD_IDS,
+  type GoodId,
+} from "@naval/shared/goods";
+import type { ShipStoreCapacities, ShipStores } from "@naval/shared/trade";
 import {
   buildPortPanelModel,
   knownPortsNearest,
@@ -164,6 +182,122 @@ function validRoomKind(value: unknown): value is RoomKind {
   return value === "normal" || value === "test" || value === "dev";
 }
 
+function finiteNumber(value: unknown): number | null {
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
+/** Read only the goods actually sent; a missing good stays missing. */
+function numericGoods(raw: unknown): Partial<Record<GoodId, number>> | null {
+  if (!raw || typeof raw !== "object") return null;
+  const source = raw as Record<string, unknown>;
+  const out: Partial<Record<GoodId, number>> = {};
+  let found = 0;
+  for (const good of GOOD_IDS) {
+    const value = finiteNumber(source[good]);
+    if (value === null) continue;
+    out[good] = Math.max(0, value);
+    found += 1;
+  }
+  return found > 0 ? out : null;
+}
+
+function parseStores(raw: unknown): ShipStores | null {
+  if (!raw || typeof raw !== "object") return null;
+  const source = raw as Record<string, unknown>;
+  const provisions = finiteNumber(source.provisions);
+  const ammunition = finiteNumber(source.ammunition);
+  const repairMaterials = finiteNumber(source.repairMaterials);
+  if (provisions === null || ammunition === null || repairMaterials === null) {
+    return null;
+  }
+  const rawCargo = source.cargo;
+  if (!rawCargo || typeof rawCargo !== "object") return null;
+  const cargoSource = rawCargo as Record<string, unknown>;
+  const cargo = {} as ShipStores["cargo"];
+  for (const good of CARGO_GOOD_IDS) {
+    const amount = finiteNumber(cargoSource[good]);
+    if (amount === null) return null;
+    cargo[good] = Math.max(0, amount);
+  }
+  return {
+    provisions: Math.max(0, provisions),
+    ammunition: Math.max(0, ammunition),
+    repairMaterials: Math.max(0, repairMaterials),
+    cargo,
+  };
+}
+
+function parseCapacities(raw: unknown): ShipStoreCapacities | null {
+  if (!raw || typeof raw !== "object") return null;
+  const source = raw as Record<string, unknown>;
+  const provisions = finiteNumber(source.provisions);
+  const ammunition = finiteNumber(source.ammunition);
+  const repairMaterials = finiteNumber(source.repairMaterials);
+  const cargo = finiteNumber(source.cargo);
+  if (
+    provisions === null ||
+    ammunition === null ||
+    repairMaterials === null ||
+    cargo === null
+  ) return null;
+  return { provisions, ammunition, repairMaterials, cargo };
+}
+
+/** Validate one private fleet row without trusting the socket. */
+function parseOwnShip(raw: unknown): OwnShipSnapshot | null {
+  if (!raw || typeof raw !== "object") return null;
+  const source = raw as Record<string, unknown>;
+  const id = source.id;
+  const name = source.name;
+  const classId = source.classId;
+  const crew = finiteNumber(source.crew);
+  const fullCrew = finiteNumber(source.fullCrew);
+  const deliveryLeftMs = finiteNumber(source.deliveryLeftMs);
+  const x = finiteNumber(source.x);
+  const y = finiteNumber(source.y);
+  const cargoUsed = finiteNumber(source.cargoUsed);
+  const provisionsDays = finiteNumber(source.provisionsDays);
+  const status = source.status;
+  const navy = typeof source.navy === "string" ? parseNavy(source.navy) : null;
+  const stores = parseStores(source.stores);
+  const capacities = parseCapacities(source.capacities);
+  if (
+    typeof id !== "string" ||
+    typeof name !== "string" ||
+    typeof classId !== "string" ||
+    crew === null ||
+    fullCrew === null ||
+    deliveryLeftMs === null ||
+    x === null ||
+    y === null ||
+    cargoUsed === null ||
+    provisionsDays === null ||
+    (status !== "sailing" && status !== "docked" &&
+      status !== "waiting" && status !== "delivery") ||
+    !navy ||
+    !stores ||
+    !capacities
+  ) return null;
+  return {
+    id,
+    name,
+    classId: classId as OwnShipSnapshot["classId"],
+    navy,
+    crew,
+    fullCrew,
+    status,
+    portId: typeof source.portId === "string" ? source.portId : null,
+    deliveryLeftMs,
+    x,
+    y,
+    stores,
+    capacities,
+    cargoUsed,
+    provisionsDays,
+    starving: source.starving === true,
+  };
+}
+
 // ---------------------------------------------------------------------------
 // Game screen.
 // ---------------------------------------------------------------------------
@@ -216,9 +350,22 @@ async function start(): Promise<void> {
   const portDistance = element<HTMLElement>("port-distance");
   const portSail = element<HTMLButtonElement>("port-sail");
   const portUndock = element<HTMLButtonElement>("port-undock");
+  const portTrade = element<HTMLButtonElement>("port-trade");
   const portShipyard = element<HTMLButtonElement>("port-shipyard");
   const portHire = element<HTMLButtonElement>("port-hire");
   const portClose = element<HTMLButtonElement>("port-close");
+  const tradePanel = element<HTMLElement>("trade-panel");
+  const tradePort = element<HTMLElement>("trade-port");
+  const tradeTitle = element<HTMLElement>("trade-title");
+  const tradeMeta = element<HTMLElement>("trade-meta");
+  const tradeFree = element<HTMLElement>("trade-free");
+  const tradeBody = element<HTMLElement>("trade-body");
+  const tradeNotice = element<HTMLElement>("trade-notice");
+  const tradeClose = element<HTMLButtonElement>("trade-close");
+  const tradeResupply = element<HTMLButtonElement>("trade-resupply");
+  const tradeResupplyHint = element<HTMLElement>("trade-resupply-hint");
+  const shipStoresOut = element<HTMLElement>("ship-stores");
+  const shipStarvingOut = element<HTMLElement>("ship-starving");
   const moneyOut = element<HTMLElement>("money");
   const fleetCountOut = element<HTMLElement>("fleet-count");
   const fleetButton = element<HTMLButtonElement>("fleet-btn");
@@ -424,6 +571,13 @@ async function start(): Promise<void> {
   let shipyardPortId: string | null = null;
   let namingClass: BuyableShipClassId | null = null;
   let hirePortId: string | null = null;
+  let tradePortId: string | null = null;
+  let tradeShipId: string | null = null;
+  let tradeTab: "buy" | "sell" | "storage" = "buy";
+  let tradeRenderKey = "";
+  let hungerMultiplier: number | undefined;
+  const tradeAmounts = new Map<string, number>();
+  let storeRenderKey = "";
   let lastSeen: LastSeenSnapshot[] = [];
   let lastSeenViews: Container[] = [];
 
@@ -1164,6 +1318,7 @@ async function start(): Promise<void> {
       const type = document.createElement("span");
       const crew = document.createElement("span");
       const state = document.createElement("span");
+      const provisions = document.createElement("span");
       const track = document.createElement("span");
       const fill = document.createElement("span");
 
@@ -1179,6 +1334,10 @@ async function start(): Promise<void> {
       crew.textContent = row.crewText;
       state.className = "fleet-state";
       state.textContent = row.stateText;
+      provisions.className = "fleet-provisions";
+      provisions.textContent = `Provisions: ${row.provisionsText}`;
+      provisions.classList.toggle("is-low", row.provisionsLow || row.starving);
+      if (row.starving) provisions.textContent += " · Starving";
       if (row.needsCrew) {
         const warning = document.createElement("span");
         warning.className = "fleet-needs";
@@ -1189,7 +1348,7 @@ async function start(): Promise<void> {
       fill.className = "crew-fill";
       fill.style.width = `${row.crewPercent}%`;
       track.append(fill);
-      button.append(name, crew, type, state, track);
+      button.append(name, crew, type, state, provisions, track);
       button.addEventListener("click", () => {
         if (!row.selectable) return;
         updateSelectedShip(ship.id, true);
@@ -1202,6 +1361,7 @@ async function start(): Promise<void> {
 
   function openFleetPanel(): void {
     closePortPanel();
+    closeTradePanel();
     closeShipyardPanel();
     closeHirePanel();
     knownPortsPanel.hidden = true;
@@ -1340,6 +1500,7 @@ async function start(): Promise<void> {
       return;
     }
     closePortPanel();
+    closeTradePanel();
     closeFleetPanel();
     closeHirePanel();
     knownPortsPanel.hidden = true;
@@ -1468,12 +1629,379 @@ async function start(): Promise<void> {
   function openHirePanel(portId: string): void {
     if (!portData.has(portId)) return;
     closePortPanel();
+    closeTradePanel();
     closeFleetPanel();
     closeShipyardPanel();
     knownPortsPanel.hidden = true;
     hirePortId = portId;
     hirePanel.hidden = false;
     renderHirePanel();
+  }
+
+  function closeTradePanel(): void {
+    tradePortId = null;
+    tradeShipId = null;
+    tradeRenderKey = "";
+    tradePanel.hidden = true;
+  }
+
+  function tradeTabAvailable(
+    tab: "buy" | "sell" | "storage",
+    port: PortInfo,
+  ): boolean {
+    if (tab === "buy") return port.npc && !!port.prices && !!port.npcStock;
+    if (tab === "sell") return !!port.prices;
+    return !!port.storage;
+  }
+
+  function openTradePanel(portId: string): void {
+    const port = portData.get(portId);
+    const ship = selectedFleetShip();
+    if (!port || !ship || ship.status !== "docked" || ship.portId !== portId) {
+      showNotice("Dock a ship at this port to trade.");
+      return;
+    }
+
+    closePortPanel();
+    closeFleetPanel();
+    closeShipyardPanel();
+    closeHirePanel();
+    knownPortsPanel.hidden = true;
+    tradePortId = portId;
+    tradeShipId = ship.id;
+    tradeTab = port.npc ? "buy" : port.storage ? "storage" : "sell";
+    if (!tradeTabAvailable(tradeTab, port)) {
+      tradeTab = tradeTabAvailable("sell", port)
+        ? "sell"
+        : tradeTabAvailable("storage", port)
+          ? "storage"
+          : "buy";
+    }
+    tradeAmounts.clear();
+    tradeNotice.hidden = true;
+    tradeNotice.textContent = "";
+    tradeRenderKey = "";
+    tradePanel.hidden = false;
+    renderTradePanel(true);
+  }
+
+  function renderTradePanel(force = false): void {
+    if (!tradePortId || !tradeShipId) return;
+    const port = portData.get(tradePortId);
+    const ship = fleetShips.find((mine) => mine.id === tradeShipId);
+    if (!port || !ship || ship.status !== "docked" || ship.portId !== tradePortId) {
+      closeTradePanel();
+      return;
+    }
+
+    const key = JSON.stringify([
+      tradeShipId,
+      money,
+      ship.cargoUsed,
+      port.prices ?? null,
+      port.storage ?? null,
+      port.npcStock ?? null,
+      port.storageLimit ?? null,
+    ]);
+    if (!force && key === tradeRenderKey) return;
+    tradeRenderKey = key;
+
+    tradePort.textContent = port.name;
+    tradeTitle.textContent = `Trade · ${ship.name}`;
+    tradeMeta.textContent = `${formatMoney(money)} pieces · ${formatTonnesWithUnit(ship.cargoUsed)} in the cargo hold`;
+    tradeFree.textContent = freeSpaceText(ship);
+    tradeResupplyHint.textContent = port.npc
+      ? "Bought at the posted prices."
+      : "Taken free from this port's storage.";
+    tradeResupply.disabled = !(port.npc || port.buyable);
+
+    const available = {
+      buy: tradeTabAvailable("buy", port),
+      sell: tradeTabAvailable("sell", port),
+      storage: tradeTabAvailable("storage", port),
+    };
+    if (!available[tradeTab]) {
+      tradeTab = available.buy ? "buy" : available.storage ? "storage" : "sell";
+    }
+    for (const button of tradePanel.querySelectorAll<HTMLButtonElement>(
+      "[data-trade-tab]",
+    )) {
+      const tab = button.dataset.tradeTab;
+      if (tab !== "buy" && tab !== "sell" && tab !== "storage") continue;
+      button.disabled = !available[tab];
+      button.setAttribute("aria-selected", String(tab === tradeTab));
+    }
+
+    tradeBody.replaceChildren();
+
+    function makeStepper(
+      amountKey: string,
+      maxValue: number,
+      onChange: (amount: number) => void,
+    ): { element: HTMLElement; amount: () => number } {
+      const max = Math.max(0, Math.floor(maxValue));
+      const stored = tradeAmounts.get(amountKey);
+      let current = stored !== undefined && Number.isFinite(stored)
+        ? Math.floor(stored)
+        : Math.min(1, max);
+      current = Math.max(0, Math.min(max, current));
+
+      const element = document.createElement("div");
+      const out = document.createElement("span");
+      element.className = "trade-stepper";
+      out.className = "trade-amount";
+      out.setAttribute("aria-live", "polite");
+
+      const set = (next: number): void => {
+        current = Math.max(0, Math.min(max, Math.floor(next)));
+        tradeAmounts.set(amountKey, current);
+        out.textContent = `${current} t`;
+        onChange(current);
+      };
+
+      const stepButton = (label: string, delta: number): HTMLButtonElement => {
+        const button = document.createElement("button");
+        button.type = "button";
+        button.className = "btn";
+        button.textContent = label;
+        button.addEventListener("click", () => set(current + delta));
+        return button;
+      };
+      const fill = document.createElement("button");
+      fill.type = "button";
+      fill.className = "btn trade-fill";
+      fill.textContent = "Fill up";
+      fill.disabled = max <= 0;
+      fill.addEventListener("click", () => set(max));
+
+      element.append(
+        stepButton("−10", -10),
+        stepButton("−1", -1),
+        out,
+        stepButton("+1", 1),
+        stepButton("+10", 10),
+        fill,
+      );
+      out.textContent = `${current} t`;
+      return { element, amount: () => current };
+    }
+
+    const section = document.createElement("section");
+    const heading = document.createElement("h3");
+    const help = document.createElement("p");
+    heading.className = "trade-section-title";
+    help.className = "trade-help";
+
+    if (tradeTab === "buy") {
+      heading.textContent = "Buy resources";
+      help.textContent = "Neutral merchants sell these five resources from their stock.";
+      section.append(heading, help);
+      const rows = buildBuyRows(port, ship, money);
+      if (rows.length === 0) {
+        const empty = document.createElement("p");
+        empty.className = "trade-empty";
+        empty.textContent = "This port sells no resources.";
+        section.append(empty);
+      }
+      for (const row of rows) {
+        const card = document.createElement("article");
+        const head = document.createElement("div");
+        const title = document.createElement("h4");
+        const meta = document.createElement("p");
+        const total = document.createElement("p");
+        const actions = document.createElement("div");
+        const action = document.createElement("button");
+        card.className = "trade-row";
+        head.className = "trade-row-head";
+        title.textContent = row.name;
+        if (row.regional) {
+          const cheap = document.createElement("span");
+          cheap.className = "trade-cheap";
+          cheap.textContent = "regional · cheap";
+          title.append(" ", cheap);
+        }
+        meta.className = "trade-row-meta";
+        meta.textContent = `${formatPrice(row.price)} pieces/t · ${formatTonnes(row.stock)} t in stock · ${formatTonnes(row.freeSpace)} t free`;
+        total.className = "trade-total";
+        actions.className = "trade-actions";
+        action.type = "button";
+        action.className = "btn";
+        head.append(title);
+        card.append(head, meta);
+        const update = (amount: number): void => {
+          total.textContent = `Total cost: ${formatMoney(amount * row.price)} pieces`;
+          action.textContent = amount > 0 ? `Buy ${amount} t` : "Buy";
+          action.disabled = amount <= 0;
+        };
+        const stepper = makeStepper(`buy:${row.good}`, row.max, update);
+        action.addEventListener("click", () => {
+          const amount = stepper.amount();
+          if (amount <= 0) return;
+          sendCommand({
+            t: "buyGoods",
+            ship: ship.id,
+            port: port.id,
+            good: row.good,
+            amount,
+          });
+        });
+        actions.append(action);
+        card.append(stepper.element, total, actions);
+        update(stepper.amount());
+        section.append(card);
+      }
+    } else if (tradeTab === "sell") {
+      heading.textContent = "Sell cargo";
+      help.textContent = "Trade goods, timber and cloth in your hold are bought at the posted price.";
+      section.append(heading, help);
+      const rows = buildSellRows(port, ship);
+      if (rows.length === 0) {
+        const empty = document.createElement("p");
+        empty.className = "trade-empty";
+        empty.textContent = "Your cargo hold is empty.";
+        section.append(empty);
+      }
+      for (const row of rows) {
+        const card = document.createElement("article");
+        const head = document.createElement("div");
+        const title = document.createElement("h4");
+        const meta = document.createElement("p");
+        const total = document.createElement("p");
+        const actions = document.createElement("div");
+        const action = document.createElement("button");
+        card.className = "trade-row";
+        head.className = "trade-row-head";
+        title.textContent = row.name;
+        meta.className = "trade-row-meta";
+        meta.textContent = `${formatPrice(row.price)} pieces/t · ${formatTonnes(row.hold)} t in your hold`;
+        total.className = "trade-total";
+        actions.className = "trade-actions";
+        action.type = "button";
+        action.className = "btn";
+        head.append(title);
+        card.append(head, meta);
+        const update = (amount: number): void => {
+          total.textContent = `Total paid: ${formatMoney(amount * row.price)} pieces`;
+          action.textContent = amount > 0 ? `Sell ${amount} t` : "Sell";
+          action.disabled = amount <= 0;
+        };
+        const stepper = makeStepper(`sell:${row.good}`, row.max, update);
+        action.addEventListener("click", () => {
+          const amount = stepper.amount();
+          if (amount <= 0) return;
+          sendCommand({
+            t: "sellGoods",
+            ship: ship.id,
+            port: port.id,
+            good: row.good,
+            amount,
+          });
+        });
+        actions.append(action);
+        card.append(stepper.element, total, actions);
+        update(stepper.amount());
+        section.append(card);
+      }
+    } else {
+      heading.textContent = "Port storage";
+      section.append(heading);
+      const rows = buildStorageRows(port, ship);
+      if (rows.length === 0) {
+        const empty = document.createElement("p");
+        empty.className = "trade-empty";
+        empty.textContent = "This port has no storage you can use.";
+        section.append(empty);
+      } else {
+        const used = rows.reduce((total, row) => total + row.portAmount, 0);
+        help.textContent = `Port storage: ${formatTonnes(used)} t of ${formatTonnes(port.storageLimit ?? 0)} t used. Loading and unloading are free.`;
+        section.append(help);
+        for (const row of rows) {
+          const card = document.createElement("article");
+          const head = document.createElement("div");
+          const title = document.createElement("h4");
+          const meta = document.createElement("p");
+          card.className = "trade-row trade-storage-row";
+          head.className = "trade-row-head";
+          title.textContent = row.name;
+          meta.className = "trade-row-meta";
+          meta.textContent = `Port ${formatTonnes(row.portAmount)} t · Ship ${formatTonnes(row.shipAmount)} t`;
+          head.append(title);
+          card.append(head, meta);
+
+          const side = (
+            label: string,
+            key: string,
+            max: number,
+            command: "load" | "unload",
+          ): void => {
+            const wrap = document.createElement("div");
+            const strong = document.createElement("strong");
+            const actions = document.createElement("div");
+            const action = document.createElement("button");
+            wrap.className = "trade-storage-side";
+            strong.textContent = label;
+            actions.className = "trade-actions";
+            action.type = "button";
+            action.className = "btn";
+            action.textContent = command === "load" ? "Load" : "Unload";
+            const update = (amount: number): void => {
+              action.disabled = amount <= 0;
+              action.textContent = amount > 0
+                ? `${command === "load" ? "Load" : "Unload"} ${amount} t`
+                : command === "load" ? "Load" : "Unload";
+            };
+            const stepper = makeStepper(key, max, update);
+            action.addEventListener("click", () => {
+              const amount = stepper.amount();
+              if (amount <= 0) return;
+              sendCommand({
+                t: command,
+                ship: ship.id,
+                port: port.id,
+                good: row.good,
+                amount,
+              });
+            });
+            actions.append(action);
+            wrap.append(strong, stepper.element, actions);
+            update(stepper.amount());
+            card.append(wrap);
+          };
+
+          side("Load from port", `load:${row.good}`, row.loadMax, "load");
+          side("Unload into port", `unload:${row.good}`, row.unloadMax, "unload");
+          section.append(card);
+        }
+      }
+    }
+
+    tradeBody.append(section);
+
+    if (port.prices) {
+      const prices = document.createElement("section");
+      const priceTitle = document.createElement("h3");
+      const note = document.createElement("p");
+      const list = document.createElement("ul");
+      prices.className = "trade-prices";
+      priceTitle.textContent = "Price list";
+      note.className = "trade-help";
+      note.textContent = regionalGoodNote(port);
+      list.className = "trade-price-list";
+      for (const row of priceBookRows(port)) {
+        const item = document.createElement("li");
+        const name = document.createElement("span");
+        const price = document.createElement("span");
+        name.textContent = row.name;
+        price.textContent = row.cheap
+          ? `${formatPrice(row.price)} pieces · cheap`
+          : `${formatPrice(row.price)} pieces`;
+        if (row.cheap) item.className = "is-cheap";
+        item.append(name, price);
+        list.append(item);
+      }
+      prices.append(priceTitle, note, list);
+      tradeBody.append(prices);
+    }
   }
 
   function closePortPanel(): void {
@@ -1503,6 +2031,7 @@ async function start(): Promise<void> {
       dockedHere,
       hasShip: ship !== null,
       canBuy: port.buyable === true,
+      canTrade: dockedHere && (port.npc || port.buyable === true),
       hasDockedShip,
     });
 
@@ -1517,6 +2046,7 @@ async function start(): Promise<void> {
     portDistance.textContent = model.distanceText;
     portSail.hidden = !model.buttons.includes("sail");
     portUndock.hidden = !model.buttons.includes("undock");
+    portTrade.hidden = !model.buttons.includes("trade");
     portShipyard.hidden = !model.buttons.includes("shipyard");
     portHire.hidden = !model.buttons.includes("hire");
     portPanel.hidden = false;
@@ -1525,6 +2055,7 @@ async function start(): Promise<void> {
   function openPortPanel(portId: string): void {
     if (!portData.has(portId)) return;
     closeFleetPanel();
+    closeTradePanel();
     closeShipyardPanel();
     closeHirePanel();
     selectedPortId = portId;
@@ -1667,6 +2198,50 @@ async function start(): Promise<void> {
     return hull;
   }
 
+  function updateShipStores(ship: OwnShipSnapshot | null): void {
+    const key = ship
+      ? JSON.stringify([
+          ship.id,
+          ship.stores,
+          ship.capacities,
+          ship.cargoUsed,
+          ship.provisionsDays,
+          ship.starving,
+        ])
+      : "none";
+    if (key === storeRenderKey) return;
+    storeRenderKey = key;
+    shipStoresOut.replaceChildren();
+    if (!ship) {
+      shipStarvingOut.hidden = true;
+      return;
+    }
+
+    for (const bar of buildShipStoreBars(ship)) {
+      const row = document.createElement("div");
+      const label = document.createElement("span");
+      const amount = document.createElement("span");
+      const track = document.createElement("span");
+      const fill = document.createElement("span");
+      const detail = document.createElement("p");
+      row.className = "store-bar";
+      row.classList.toggle("is-urgent", bar.urgent);
+      label.className = "store-label";
+      label.textContent = bar.label;
+      amount.className = "store-amount";
+      amount.textContent = bar.amountText;
+      track.className = "store-track";
+      fill.className = "store-fill";
+      fill.style.width = `${bar.percent}%`;
+      track.append(fill);
+      detail.className = "store-detail";
+      detail.textContent = bar.detail;
+      row.append(label, amount, track, detail);
+      shipStoresOut.append(row);
+    }
+    shipStarvingOut.hidden = !ship.starving;
+  }
+
   function updateHud(own: ShipSnapshot | undefined): void {
     const row = selectedFleetShip();
     const viewRow = row ? buildFleetRow(row, portName(row.portId)) : null;
@@ -1675,6 +2250,7 @@ async function start(): Promise<void> {
     fleetSummary.textContent = `${fleetCountText(fleetShips.length)} ships · ${formatMoney(money)} pieces`;
     shipNameOut.textContent = row?.name ?? "No ship selected";
     shipTypeOut.textContent = viewRow?.typeName ?? "–";
+    updateShipStores(row);
     shipCrewOut.textContent = viewRow?.crewText ?? "–";
     shipCrewOut.classList.toggle("needs-crew", viewRow?.needsCrew === true);
     shipStateOut.textContent = viewRow
@@ -1772,6 +2348,7 @@ async function start(): Promise<void> {
         devicePixelRatio: app.renderer.resolution,
         money,
         fleetShips: fleetShips.length,
+        hungerMultiplier,
       },
     );
     fogDebugOut.textContent = line ?? "";
@@ -1852,7 +2429,16 @@ async function start(): Promise<void> {
 
     if (type === "n") {
       const text = (message as { text?: unknown }).text;
-      if (typeof text === "string" && text.length <= 120) showNotice(text);
+      if (typeof text === "string" && text.length <= 120) {
+        showNotice(text);
+        if (
+          !tradePanel.hidden &&
+          /^(Resupplied:|Bought |Sold |Loaded |Unloaded |No stock|Not enough money|No space)/.test(text)
+        ) {
+          tradeNotice.textContent = text;
+          tradeNotice.hidden = false;
+        }
+      }
       return;
     }
     if (type !== "s") return;
@@ -1887,30 +2473,12 @@ async function start(): Promise<void> {
     const incomingFleet: OwnShipSnapshot[] = [];
     if (Array.isArray(state.fleet)) {
       for (const raw of state.fleet) {
-        if (
-          !raw ||
-          typeof raw.id !== "string" ||
-          typeof raw.name !== "string" ||
-          typeof raw.classId !== "string" ||
-          !Number.isFinite(raw.crew) ||
-          !Number.isFinite(raw.fullCrew) ||
-          !Number.isFinite(raw.deliveryLeftMs) ||
-          !Number.isFinite(raw.x) ||
-          !Number.isFinite(raw.y) ||
-          (raw.status !== "sailing" &&
-            raw.status !== "docked" &&
-            raw.status !== "waiting" &&
-            raw.status !== "delivery")
-        ) {
-          continue;
-        }
-        incomingFleet.push({
-          ...raw,
-          navy: parseNavy(raw.navy) ?? "British",
-        });
+        const parsed = parseOwnShip(raw);
+        if (parsed) incomingFleet.push(parsed);
       }
     }
     fleetShips = incomingFleet;
+    hungerMultiplier = finiteNumber(state.h) ?? undefined;
     money = Number.isFinite(state.m) ? Math.max(0, Math.floor(state.m)) : 0;
     playerNavy = fleetShips[0]?.navy ?? playerNavy;
     const serverSelection = typeof state.sel === "string" ? state.sel : "";
@@ -1973,6 +2541,18 @@ async function start(): Promise<void> {
         const free = raw[8];
         const buyable = raw[9];
         const crewAvailable = raw[10];
+        const tradeRaw: unknown = raw[11];
+        let prices: PortInfo["prices"];
+        let storage: PortInfo["storage"];
+        let storageLimit: number | undefined;
+        let npcStock: PortInfo["npcStock"];
+        if (tradeRaw && typeof tradeRaw === "object") {
+          const tradeSource = tradeRaw as Record<string, unknown>;
+          prices = numericGoods(tradeSource.prices) ?? undefined;
+          storage = numericGoods(tradeSource.storage) ?? undefined;
+          npcStock = numericGoods(tradeSource.npcStock) ?? undefined;
+          storageLimit = finiteNumber(tradeSource.storageLimit) ?? undefined;
+        }
         incomingPorts.set(id, {
           id,
           name,
@@ -1992,6 +2572,10 @@ async function start(): Promise<void> {
             typeof crewAvailable === "number" && Number.isFinite(crewAvailable)
               ? Math.max(0, Math.floor(crewAvailable))
               : undefined,
+          prices,
+          storage,
+          storageLimit,
+          npcStock,
         });
       }
     }
@@ -2086,6 +2670,7 @@ async function start(): Promise<void> {
     if (!hirePanel.hidden && !hirePanel.contains(document.activeElement)) {
       renderHirePanel();
     }
+    if (!tradePanel.hidden) renderTradePanel();
 
     lastSeen = Array.isArray(state.l) ? state.l : [];
     drawLastSeen();
@@ -2403,6 +2988,26 @@ async function start(): Promise<void> {
     knownPortsPanel.hidden = false;
   });
 
+  for (const button of tradePanel.querySelectorAll<HTMLButtonElement>(
+    "[data-trade-tab]",
+  )) {
+    button.addEventListener("click", () => {
+      const tab = button.dataset.tradeTab;
+      if (tab !== "buy" && tab !== "sell" && tab !== "storage") return;
+      tradeTab = tab;
+      renderTradePanel(true);
+    });
+  }
+  tradeClose.addEventListener("click", closeTradePanel);
+  tradeResupply.addEventListener("click", () => {
+    if (!tradePortId || !tradeShipId) return;
+    sendCommand({
+      t: "resupply",
+      ship: tradeShipId,
+      port: tradePortId,
+    });
+  });
+
   fleetButton.addEventListener("click", () => {
     if (fleetPanel.hidden) openFleetPanel();
     else closeFleetPanel();
@@ -2416,6 +3021,9 @@ async function start(): Promise<void> {
     if (selectedPortId) sendPortOrder(selectedPortId);
   });
   portUndock.addEventListener("click", sendUndock);
+  portTrade.addEventListener("click", () => {
+    if (selectedPortId) openTradePanel(selectedPortId);
+  });
   portShipyard.addEventListener("click", () => {
     if (selectedPortId) openShipyard(selectedPortId);
   });
@@ -2443,6 +3051,7 @@ async function start(): Promise<void> {
   document.addEventListener("keydown", (event) => {
     if (event.key !== "Escape") return;
     closePortPanel();
+    closeTradePanel();
     knownPortsPanel.hidden = true;
     closeFleetPanel();
     closeShipyardPanel();

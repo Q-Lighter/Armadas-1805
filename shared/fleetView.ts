@@ -22,6 +22,7 @@ import {
   shipPrice,
 } from "./shipRules.js";
 import type { OwnShipSnapshot, ShipStatus } from "./world.js";
+import { formatTonnesWithUnit } from "./tradeView.js";
 
 /** Thousands separators without relying on a locale. */
 export function formatMoney(amount: number): string {
@@ -59,6 +60,74 @@ export interface FleetShipRow {
   needsCrew: boolean;
   selectable: boolean;
   status: ShipStatus;
+  /** Days of provisions left, or a dash for a ship with no crew. */
+  provisionsText: string;
+  provisionsLow: boolean;
+  starving: boolean;
+}
+
+/** Clearly readable days left; a ship with no crew eats nothing. */
+export function provisionsDaysText(days: number): string {
+  if (!Number.isFinite(days) || days >= 9_999) return "—";
+  const value = Math.max(0, days);
+  const shown = value >= 10 ? Math.round(value) : Math.round(value * 10) / 10;
+  return `${shown} ${shown === 1 ? "day" : "days"} left`;
+}
+
+export interface ShipStoreBar {
+  key: "provisions" | "repair" | "ammunition" | "cargo";
+  label: string;
+  percent: number;
+  amountText: string;
+  detail: string;
+  /** Red ink: under ten provision days, or a starving crew. */
+  urgent: boolean;
+}
+
+function storePercent(amount: number, capacity: number): number {
+  if (!(capacity > 0)) return 0;
+  return Math.max(0, Math.min(100, Math.round((amount / capacity) * 100)));
+}
+
+/** Four separate paper bars for the selected ship panel. */
+export function buildShipStoreBars(ship: OwnShipSnapshot): ShipStoreBar[] {
+  const c = ship.capacities;
+  const s = ship.stores;
+  const provisionsLow = ship.provisionsDays < 10;
+  return [
+    {
+      key: "provisions",
+      label: "Provisions",
+      percent: storePercent(s.provisions, c.provisions),
+      amountText: `${formatTonnesWithUnit(s.provisions)} / ${formatTonnesWithUnit(c.provisions)}`,
+      detail: provisionsDaysText(ship.provisionsDays),
+      urgent: provisionsLow || ship.starving,
+    },
+    {
+      key: "repair",
+      label: "Repair materials",
+      percent: storePercent(s.repairMaterials, c.repairMaterials),
+      amountText: `${formatTonnesWithUnit(s.repairMaterials)} / ${formatTonnesWithUnit(c.repairMaterials)}`,
+      detail: "Hull repairs later",
+      urgent: false,
+    },
+    {
+      key: "ammunition",
+      label: "Ammunition",
+      percent: storePercent(s.ammunition, c.ammunition),
+      amountText: `${formatTonnesWithUnit(s.ammunition)} / ${formatTonnesWithUnit(c.ammunition)}`,
+      detail: "Broadsides later",
+      urgent: false,
+    },
+    {
+      key: "cargo",
+      label: "Cargo hold",
+      percent: storePercent(ship.cargoUsed, c.cargo),
+      amountText: `${formatTonnesWithUnit(ship.cargoUsed)} / ${formatTonnesWithUnit(c.cargo)}`,
+      detail: "Goods, timber and cloth",
+      urgent: false,
+    },
+  ];
 }
 
 const STATUS_WORDS: Record<Exclude<ShipStatus, "docked" | "delivery">, string> = {
@@ -93,6 +162,9 @@ export function buildFleetRow(
     needsCrew,
     selectable: ship.status !== "delivery",
     status: ship.status,
+    provisionsText: provisionsDaysText(ship.provisionsDays),
+    provisionsLow: ship.provisionsDays < 10,
+    starving: ship.starving,
   };
 }
 

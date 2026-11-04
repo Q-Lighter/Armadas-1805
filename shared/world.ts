@@ -190,6 +190,8 @@ export interface PortTradeSnapshot {
   /** Shared storage, only for a port this player may use. */
   storage: GoodsAmounts | null;
   storageLimit: number;
+  /** NPC resources for sale, only when this player is docked there. */
+  npcStock: GoodsAmounts | null;
 }
 
 /**
@@ -1819,6 +1821,9 @@ export function visibleStateFor(
         : null,
       storage,
       storageLimit: portStorageLimit(port),
+      npcStock: port.npc && dockedHere
+        ? roundedGoods(npcStockFor(world, port))
+        : null,
     };
     const snapshot: PortSnapshot = [
       port.id,

@@ -110,6 +110,10 @@
       "types": "./dist/fleetView.d.ts",
       "default": "./dist/fleetView.js"
     },
+    "./trade-view": {
+      "types": "./dist/tradeView.d.ts",
+      "default": "./dist/tradeView.js"
+    },
     "./goods": {
       "types": "./dist/data/goods.d.ts",
       "default": "./dist/data/goods.js"

@@ -43,10 +43,10 @@ test("a sail-to order installs a clear planned route on the selected ship", () =
 
   const state = visibleStateFor(world, "alpha");
   const own = state.fleet.find((row) => row.id === ship.id)!;
-  assert.equal(own.route?.length, route.waypoints.length);
+  assert.equal(own.route?.length, route.curve?.length);
   assert.deepEqual(own.route?.[0], [
-    Number(route.waypoints[0]!.x.toFixed(2)),
-    Number(route.waypoints[0]!.y.toFixed(2)),
+    Number(route.curve?.[0]!.x.toFixed(2)),
+    Number(route.curve?.[0]!.y.toFixed(2)),
   ]);
 });
 

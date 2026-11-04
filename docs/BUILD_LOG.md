@@ -1747,3 +1747,28 @@ winding`):
 - `npm run build`: passing.
 - No browser screenshots were produced; the runtime audit has not yet been
   exercised in a real browser.
+
+## 2G-b: alignment and routes
+
+- Added `shared/camera.ts` as the single world-to-screen transform. The map,
+  port markers, labels, ships, last-seen markers, target marker and route all
+  now call it with the same live view state each frame; `layoutPortMarkers` uses
+  it too instead of a second copy of the maths.
+- The marker drift came from `refreshMap` deferring a zoom rebuild by up to
+  120 ms while ports and ships immediately used the new scale. The map now
+  rebuilds in the same frame as the zoom; chart texture/vector switching still
+  changes detail but no longer changes marker coordinates.
+- The server samples the smoothed route every 1.5 km (ceiling 200 points) and
+  sends only the unsailed part. The client draws 3 px dots every 10 screen
+  pixels along that curve for every selected ship, with no tack zigzags and no
+  route culling.
+
+### Checks
+
+- `npm test`: **195/195 passing**, including shared-camera alignment at six
+  zooms and pans, inverse taps, dot spacing along bends, the 200-point curve
+  limit, a visible Jamaica bend and removal of sailed points.
+- `npm run build`: passing.
+- No browser is available: the mock-page alignment screenshots and live zoom
+  gestures could not be run. Port-coast alignment is only covered indirectly by
+  the shared-transform tests.

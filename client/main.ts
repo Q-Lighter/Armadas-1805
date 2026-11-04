@@ -44,7 +44,8 @@ import {
 } from "@naval/shared/layout-audit";
 import { buildBlockCommands, findChartSuspects } from "@naval/shared/chart-paint";
 import { isLandAt } from "@naval/shared/land";
-import { smoothRoute } from "@naval/shared/route";
+import { cameraScale, screenToWorld, worldToScreen } from "@naval/shared/camera";
+import { dotsAlongPath } from "@naval/shared/route-ink";
 import { readTapToSail, resolveTap, writeTapToSail } from "@naval/shared/tap-to-sail";
 import { fogDebugLine, type FogDebugInfo } from "@naval/shared/fog-view";
 import { GRAPHICS_RESET_NOTICE, GraphicsRecovery } from "@naval/shared/graphics-safety";
@@ -724,22 +725,26 @@ async function start(): Promise<void> {
   let clockFrameAt = 0;
   let lastClockText = "";
 
-  const scale = (): number => Math.min(app.screen.width, app.screen.height) / view.kmAcross;
+  const scale = (): number =>
+    cameraScale(app.screen.width, app.screen.height, view.kmAcross);
 
   function toScreen(x: number, y: number): { x: number; y: number } {
-    const s = scale();
-    return {
-      x: app.screen.width / 2 + (x - view.x) * s,
-      y: app.screen.height / 2 + (y - view.y) * s,
-    };
+    return worldToScreen(
+      { x, y },
+      view,
+      app.screen.width,
+      app.screen.height,
+    );
   }
 
   function toWorld(screenX: number, screenY: number): { x: number; y: number } {
-    const s = scale();
-    return {
-      x: view.x + (screenX - app.screen.width / 2) / s,
-      y: view.y + (screenY - app.screen.height / 2) / s,
-    };
+    return screenToWorld(
+      screenX,
+      screenY,
+      view,
+      app.screen.width,
+      app.screen.height,
+    );
   }
 
   function builtScreen(x: number, y: number): { x: number; y: number } {
@@ -1307,11 +1312,8 @@ async function start(): Promise<void> {
       return;
     }
 
-    if (!force && zoomChanged && !farPan && now - lastMapBuild < 120) {
-      updateLayerOffset();
-      return;
-    }
-
+    // A zoom changes the map's pixels, so rebuild it in this frame. Throttling
+    // this was why ports and ships drifted away from the coast while zooming.
     drawMap(now);
     updateLayerOffset();
   }
@@ -1458,7 +1460,7 @@ async function start(): Promise<void> {
     updateKnownPortsButton();
   }
 
-  /** Dotted smooth ink for every selected ship, on either screen. */
+  /** Dotted route ink for every selected ship, on either screen. */
   function drawSelectedRoute(): void {
     routeInk.clear();
     const selected = fleetShips.filter((ship) =>
@@ -1467,41 +1469,19 @@ async function start(): Promise<void> {
         : ship.id === selectedFleetShip()?.id,
     );
     let drew = false;
-    const dashPx = 4;
-    const gapPx = 3;
 
     for (const own of selected) {
       const route = own.route;
       if (!route || route.length === 0) continue;
-      const points = smoothRoute(
-        { x: own.x, y: own.y },
-        route.map(([x, y]) => ({ x, y })),
-        () => false,
-        1,
-      );
-      for (let index = 1; index < points.length; index += 1) {
-        const from = points[index - 1]!;
-        const to = points[index]!;
-        const a = toScreen(from.x, from.y);
-        const b = toScreen(to.x, to.y);
-        const lengthPx = Math.hypot(b.x - a.x, b.y - a.y);
-        if (lengthPx < 0.5) continue;
-        for (let at = 0; at < lengthPx; at += dashPx + gapPx) {
-          const t0 = at / lengthPx;
-          const t1 = Math.min(lengthPx, at + dashPx) / lengthPx;
-          routeInk
-            .moveTo(a.x + (b.x - a.x) * t0, a.y + (b.y - a.y) * t0)
-            .lineTo(a.x + (b.x - a.x) * t1, a.y + (b.y - a.y) * t1);
-        }
+      const screenPoints = route.map(([x, y]) => toScreen(x, y));
+      const dots = dotsAlongPath(screenPoints, settings.view.routeDotSpacingPx);
+      for (const dot of dots) {
+        routeInk
+          .circle(dot.x, dot.y, settings.view.routeDotRadiusPx)
+          .fill({ color: INK_COLOR, alpha: 0.78 });
       }
-
-      for (const point of route) {
-        const screen = toScreen(point[0], point[1]);
-        routeInk.circle(screen.x, screen.y, 2).fill({ color: INK_COLOR, alpha: 0.82 });
-      }
-      drew = true;
+      drew = dots.length > 0;
     }
-    routeInk.stroke({ width: 1.2, color: INK_COLOR, alpha: 0.78 });
     routeLayer.visible = drew;
   }
 

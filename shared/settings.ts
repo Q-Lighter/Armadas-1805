@@ -206,6 +206,10 @@ export const settings = {
     curveRadiusFactor: 1.5,
     /** Look-ahead distance when steering along a smooth route curve. */
     steerLookAheadKm: 6,
+    /** Server route curve spacing sent to the client. */
+    curveSampleKm: 1.5,
+    /** Hard ceiling on points in one route curve. */
+    maxCurvePoints: 200,
     /** Search boxes grow by this much when no route is found. */
     searchMarginKm: 80,
     /** Never grow a single search beyond this margin. */
@@ -478,6 +482,9 @@ export const settings = {
     portMarkerRadiusPx: { S: 5, M: 6.5, L: 8 },
     portMarkerHitPadPx: 10,
     portLabelFontPx: 12,
+    /** Route dots stay ten screen pixels apart at every zoom. */
+    routeDotSpacingPx: 10,
+    routeDotRadiusPx: 1.5,
     /** Remembered ports outside a sight circle are faded to this opacity. */
     portDimAlpha: 0.45,
     /** Medium labels appear at this zoom or closer, small only much closer. */

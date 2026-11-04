@@ -300,6 +300,64 @@ export function smoothRoute(
   return out;
 }
 
+/** Resample a smooth route at a fixed spacing, with a hard point ceiling. */
+export function sampleRouteCurve(
+  points: readonly MapPoint[],
+  spacingKm: number,
+  maxPoints: number,
+): MapPoint[] {
+  if (points.length <= 1 || maxPoints < 2) return points.map((point) => ({ ...point }));
+  let total = 0;
+  for (let index = 1; index < points.length; index += 1) {
+    total += distance(points[index - 1]!, points[index]!);
+  }
+  if (total <= 1e-9) return [{ ...points[0]! }];
+
+  const step = Math.max(spacingKm, total / (maxPoints - 1));
+  const out: MapPoint[] = [{ ...points[0]! }];
+  let segment = 0;
+  let segmentStart = 0;
+  for (let at = step; at < total; at += step) {
+    while (
+      segment + 1 < points.length - 1 &&
+      segmentStart + distance(points[segment]!, points[segment + 1]!) < at
+    ) {
+      segmentStart += distance(points[segment]!, points[segment + 1]!);
+      segment += 1;
+    }
+    const from = points[segment]!;
+    const to = points[segment + 1] ?? from;
+    const segmentLength = distance(from, to);
+    const share = segmentLength > 1e-9 ? (at - segmentStart) / segmentLength : 0;
+    out.push({
+      x: from.x + (to.x - from.x) * share,
+      y: from.y + (to.y - from.y) * share,
+    });
+  }
+  const last = points[points.length - 1]!;
+  if (distance(out[out.length - 1]!, last) > 1e-6) out.push({ ...last });
+  return out;
+}
+
+/** Drop the part of a route the ship has already passed. */
+export function remainingRouteCurve(
+  points: readonly MapPoint[],
+  ship: MapPoint,
+): MapPoint[] {
+  if (points.length === 0) return [];
+  let bestIndex = 0;
+  let bestDistance = Number.POSITIVE_INFINITY;
+  for (let index = 0; index < points.length; index += 1) {
+    const point = points[index]!;
+    const distanceToShip = (point.x - ship.x) ** 2 + (point.y - ship.y) ** 2;
+    if (distanceToShip < bestDistance) {
+      bestDistance = distanceToShip;
+      bestIndex = index;
+    }
+  }
+  return points.slice(bestIndex).map((point) => ({ ...point }));
+}
+
 // Clearance probes are computed once; these run for every A* node. Sixteen
 // directions catch narrow points between the old eight compass rays; the
 // exact segment check below still rejects every land crossing on the route.

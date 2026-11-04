@@ -86,6 +86,14 @@
       "types": "./dist/chartDetail.d.ts",
       "default": "./dist/chartDetail.js"
     },
+    "./camera": {
+      "types": "./dist/camera.d.ts",
+      "default": "./dist/camera.js"
+    },
+    "./route-ink": {
+      "types": "./dist/routeInk.d.ts",
+      "default": "./dist/routeInk.js"
+    },
     "./layout-audit": {
       "types": "./dist/layoutAudit.d.ts",
       "default": "./dist/layoutAudit.js"

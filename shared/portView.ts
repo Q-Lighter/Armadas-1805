@@ -2,6 +2,7 @@
 // layout, so discovered-only markers, zoom labels and panel buttons agree.
 
 import { settings } from "./settings.js";
+import { cameraScale, worldToScreen } from "./camera.js";
 import type { PortSize } from "./data/ports.js";
 import type { GoodId } from "./data/goods.js";
 
@@ -96,11 +97,11 @@ function sizeRank(size: PortSize): number {
 
 /** Screen positions and readable, non-overlapping labels for found ports. */
 export function layoutPortMarkers(input: PortLayoutInput): PortMarkerPlan[] {
-  const scale = Math.min(input.width, input.height) / input.view.kmAcross;
+  const scale = cameraScale(input.width, input.height, input.view.kmAcross);
   const screenX = (x: number): number =>
-    input.width / 2 + (x - input.view.x) * scale;
+    worldToScreen({ x, y: 0 }, input.view, input.width, input.height).x;
   const screenY = (y: number): number =>
-    input.height / 2 + (y - input.view.y) * scale;
+    worldToScreen({ x: 0, y }, input.view, input.width, input.height).y;
   const font = settings.view.portLabelFontPx;
   const labelHeight = font + 4;
   const markers: PortMarkerPlan[] = [];

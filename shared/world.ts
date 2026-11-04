@@ -44,8 +44,10 @@ import {
   planRoute,
   ROUTE_LAND,
   ROUTE_NEAREST_SEA,
+  remainingRouteCurve,
   routeSegmentClear,
   routeSegmentHasClearance,
+  sampleRouteCurve,
   smoothRoute,
 } from "./route.js";
 import type { DebugStats } from "./loadMetrics.js";
@@ -713,13 +715,20 @@ function installRoute(
   const cruiseKmPerSecond = (spec.cruiseKnots * 1.852) / 3600;
   const minRadiusKm =
     (cruiseKmPerSecond / turnRateRad) * settings.route.curveRadiusFactor;
-  const curve = smoothRoute(
-    { x: ship.x, y: ship.y },
-    plan.waypoints,
-    (x, y) => !hasRouteClearance({ x, y }, knownLand, settings.route.clearanceKm),
-    minRadiusKm,
+  const curve = sampleRouteCurve(
+    smoothRoute(
+      { x: ship.x, y: ship.y },
+      plan.waypoints,
+      (x, y) => !hasRouteClearance({ x, y }, knownLand, settings.route.clearanceKm),
+      minRadiusKm,
+    ),
+    settings.route.curveSampleKm,
+    settings.route.maxCurvePoints,
   );
   const route: ShipRoute = {
+    // Keep the planner's sparse legal legs for navigation. The sampled curve
+    // is the smoothed presentation of the same track and is what the client
+    // draws, so a long route is not reduced to a handful of straight chords.
     waypoints: plan.waypoints.map((point) => ({ x: point.x, y: point.y })),
     curve: curve.map((point) => ({ x: point.x, y: point.y })),
     index: 0,
@@ -2154,7 +2163,7 @@ export function visibleStateFor(
         : 9_999,
       starving: ship.starving,
       route: ship.route
-        ? ship.route.waypoints.map((point) => [
+        ? remainingRouteCurve(ship.route.curve ?? ship.route.waypoints, ship).map((point) => [
             Number(point.x.toFixed(2)),
             Number(point.y.toFixed(2)),
           ])

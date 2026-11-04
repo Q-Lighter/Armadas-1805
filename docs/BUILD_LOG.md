@@ -1727,3 +1727,23 @@ winding`):
 - `npm run build`: passing.
 - Browser/WebGL is unavailable: the close-in vector look, the cross-fade and the
   chart on a real phone have not been seen.
+
+## 2G-a: browser test harness
+
+- Tried `puppeteer-core` with `@sparticuz/chromium`. The npm Chromium binary
+  launched but stopped at missing `libnspr4.so` and `libnss3.so`; this image has
+  no apt package list, so the headless route could not run. Both packages were
+  removed again.
+- Fell back to the requested runtime audit. Test and dev rooms measure the HUD,
+  panels and interactive controls on load and resize, reporting outside,
+  overlapping, clipped and sub-44 px targets. The count is in the TEMP-DEBUG
+  line; the details are in a collapsed paper section.
+- Removed the magenta suspect toggle and layer. The pure `suspicious segments`
+  count remains in the TEMP-DEBUG line.
+
+### Checks
+
+- `npm test`: **188/188 passing**, including five new layout-audit tests.
+- `npm run build`: passing.
+- No browser screenshots were produced; the runtime audit has not yet been
+  exercised in a real browser.

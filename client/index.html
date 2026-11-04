@@ -60,9 +60,6 @@
       <button class="btn" id="borders-btn" type="button" aria-pressed="false" hidden>
         Show borders
       </button>
-      <button class="btn" id="highlight-btn" type="button" aria-pressed="false" hidden>
-        Highlight suspects
-      </button>
 
       <div class="size-picker" role="group" aria-label="UI size">
         <button class="btn size-option" type="button" data-size="small" aria-pressed="false">
@@ -387,6 +384,10 @@
 
     <!-- TEMP-DEBUG: test and dev rooms only. The client reveals nothing extra. -->
     <p class="hud fog-debug" id="fog-debug" hidden></p>
+    <details class="hud layout-audit paper" id="layout-audit" hidden>
+      <summary id="layout-audit-summary">Layout audit</summary>
+      <ul id="layout-audit-list"></ul>
+    </details>
 
     <p class="hud charting" id="charting" hidden>Charting…</p>
 

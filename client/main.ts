@@ -37,6 +37,11 @@ import type {
 } from "@naval/shared/world";
 import { orderedChartBlocks } from "@naval/shared/chart-draw";
 import { chartDetailBlend, planChartDetail } from "@naval/shared/chart-detail";
+import {
+  auditLayout,
+  layoutIssueSummary,
+  type LayoutAuditElement,
+} from "@naval/shared/layout-audit";
 import { buildBlockCommands, findChartSuspects } from "@naval/shared/chart-paint";
 import { isLandAt } from "@naval/shared/land";
 import { smoothRoute } from "@naval/shared/route";
@@ -448,13 +453,15 @@ async function start(): Promise<void> {
   const knownPortsEmpty = element<HTMLElement>("known-ports-empty");
   const knownPortsClose = element<HTMLButtonElement>("known-ports-close");
   const bordersButton = element<HTMLButtonElement>("borders-btn");
-  const highlightButton = element<HTMLButtonElement>("highlight-btn");
   const clockPanel = element<HTMLElement>("game-clock-panel");
   const clockOut = element<HTMLElement>("game-clock");
   const roomOut = element<HTMLElement>("room-code");
   const notice = element<HTMLParagraphElement>("notice");
   const versionNotice = element<HTMLButtonElement>("version-notice");
   const fogDebugOut = element<HTMLParagraphElement>("fog-debug");
+  const layoutAudit = element<HTMLDetailsElement>("layout-audit");
+  const layoutAuditSummary = element<HTMLElement>("layout-audit-summary");
+  const layoutAuditList = element<HTMLUListElement>("layout-audit-list");
   const chartingOut = element<HTMLParagraphElement>("charting");
   const buildMeta = document.querySelector<HTMLMetaElement>(
     'meta[name="armadas-build"]',
@@ -565,7 +572,6 @@ async function start(): Promise<void> {
   const lastSeenLayer = new Container();
   const windLayer = new Graphics();
   const borderLayer = new Graphics();
-  const suspectLayer = new Graphics();
   const rulerLayer = new Container();
   const rulerLine = new Graphics();
   const rulerText = new Text({
@@ -592,7 +598,6 @@ async function start(): Promise<void> {
     fleetLayer,
     windLayer,
     borderLayer,
-    suspectLayer,
     grainLayer,
     marker,
     rulerLayer,
@@ -687,7 +692,8 @@ async function start(): Promise<void> {
   let retry: number | null = null;
   let takenOver = false;
   let bordersVisible = false;
-  let suspectsVisible = false;
+  let layoutIssueCount = 0;
+  let layoutAuditFrame = 0;
   const tapStorage = browserStorage("localStorage");
   let tapToSail = readTapToSail(tapStorage);
   let moveArmed = false;
@@ -2740,7 +2746,7 @@ async function start(): Promise<void> {
     );
     const debugLine = line === null
       ? null
-      : `${line} · suspicious segments: ${suspectSegments}`;
+      : `${line} · suspicious segments: ${suspectSegments} · layout issues: ${layoutIssueCount}`;
     fogDebugOut.textContent = debugLine ?? "";
     fogDebugOut.hidden = debugLine === null;
   }
@@ -2850,15 +2856,13 @@ async function start(): Promise<void> {
     windFrom = Number.isFinite(state.w) ? state.w : settings.weather.windFromDeg;
     roomKind = validRoomKind(state.k) ? state.k : "normal";
     bordersButton.hidden = roomKind === "normal";
-    highlightButton.hidden = roomKind === "normal";
+    layoutAudit.hidden = roomKind === "normal";
     if (roomKind === "normal") {
       bordersVisible = false;
-      suspectsVisible = false;
       bordersButton.setAttribute("aria-pressed", "false");
-      highlightButton.setAttribute("aria-pressed", "false");
       borderLayer.clear();
-      suspectLayer.clear();
     }
+    scheduleLayoutAudit();
     windArrow.setAttribute("transform", `rotate(${(windFrom + 180) % 360} 12 12)`);
     windLabel.textContent = `Wind from ${compassPoint(windFrom)} (${Math.round(windFrom)}°)`;
 
@@ -3489,43 +3493,75 @@ async function start(): Promise<void> {
     drawBorders();
   });
 
-  highlightButton.addEventListener("click", () => {
-    suspectsVisible = !suspectsVisible;
-    highlightButton.setAttribute("aria-pressed", String(suspectsVisible));
-    drawSuspects();
-  });
-
   function drawSuspects(): void {
-    suspectLayer.clear();
     suspectSegments = 0;
-    if (
-      !suspectsVisible ||
-      (roomKind !== "test" && roomKind !== "dev") ||
-      app.screen.width <= 0
-    ) {
+    if ((roomKind !== "test" && roomKind !== "dev") || app.screen.width <= 0) {
+      return;
+    }
+    suspectSegments = findChartSuspects(screenBlockList(), isLandAt).length;
+  }
+
+  function scheduleLayoutAudit(): void {
+    if (layoutAuditFrame) cancelAnimationFrame(layoutAuditFrame);
+    layoutAuditFrame = requestAnimationFrame(runLayoutAudit);
+  }
+
+  /** TEMP-DEBUG: measure the rendered UI in test and dev rooms. */
+  function runLayoutAudit(): void {
+    layoutAuditFrame = 0;
+    if (roomKind === "normal") {
+      layoutAudit.hidden = true;
+      layoutIssueCount = 0;
       return;
     }
 
-    const suspects = findChartSuspects(screenBlockList(), isLandAt);
-    for (const suspect of suspects) {
-      if (suspect.kind === "stitch" && suspect.line) {
-        suspectSegments += 1;
-        const a = builtScreen(suspect.line[0]!, suspect.line[1]!);
-        const b = builtScreen(suspect.line[2]!, suspect.line[3]!);
-        suspectLayer
-          .moveTo(a.x, a.y)
-          .lineTo(b.x, b.y)
-          .stroke({ width: 6, color: 0xff00ff, alpha: 1, cap: "round" });
-      } else if (suspect.ring) {
-        const points: number[] = [];
-        for (let index = 0; index < suspect.ring.length; index += 2) {
-          const point = builtScreen(suspect.ring[index]!, suspect.ring[index + 1]!);
-          points.push(point.x, point.y);
-        }
-        suspectLayer
-          .poly(points)
-          .stroke({ width: 6, color: 0xff00ff, alpha: 1, join: "round" });
-      }
+    const measures: LayoutAuditElement[] = [];
+    const add = (
+      node: Element,
+      group: string,
+      interactive: boolean,
+      index: number,
+    ): void => {
+      const element = node as HTMLElement;
+      const rect = element.getBoundingClientRect();
+      if (rect.width <= 0 || rect.height <= 0) return;
+      measures.push({
+        id: element.id || `${group}-${element.tagName.toLowerCase()}-${index}`,
+        group,
+        rect: {
+          left: rect.left,
+          top: rect.top,
+          right: rect.right,
+          bottom: rect.bottom,
+        },
+        interactive,
+        scrollWidth: element.scrollWidth,
+        clientWidth: element.clientWidth,
+        scrollHeight: element.scrollHeight,
+        clientHeight: element.clientHeight,
+      });
+    };
+
+    document.querySelectorAll("header.hud-top, .hud-ship, section[role='dialog']").forEach(
+      (node, index) => add(node, "surface", false, index),
+    );
+    document.querySelectorAll("button, input").forEach(
+      (node, index) => add(node, "control", true, index),
+    );
+
+    const issues = auditLayout(
+      measures,
+      { width: window.innerWidth, height: window.innerHeight },
+      44,
+    );
+    layoutIssueCount = issues.length;
+    layoutAudit.hidden = false;
+    layoutAuditSummary.textContent = layoutIssueSummary(issues);
+    layoutAuditList.replaceChildren();
+    for (const issue of issues) {
+      const item = document.createElement("li");
+      item.textContent = `${issue.kind}: ${issue.id}${issue.other ? ` ↔ ${issue.other}` : ""} — ${issue.detail}`;
+      layoutAuditList.append(item);
     }
   }
 
@@ -3803,6 +3839,8 @@ async function start(): Promise<void> {
 
   drawGrain();
   if (identity.warning) showNotice(identity.warning);
+  window.addEventListener("resize", scheduleLayoutAudit);
+  scheduleLayoutAudit();
   connect();
   void checkForNewVersion();
   window.setInterval(

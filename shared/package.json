@@ -86,6 +86,10 @@
       "types": "./dist/chartDetail.d.ts",
       "default": "./dist/chartDetail.js"
     },
+    "./layout-audit": {
+      "types": "./dist/layoutAudit.d.ts",
+      "default": "./dist/layoutAudit.js"
+    },
     "./fog-paint": {
       "types": "./dist/fogPaint.d.ts",
       "default": "./dist/fogPaint.js"

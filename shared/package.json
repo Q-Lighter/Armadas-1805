@@ -82,6 +82,10 @@
       "types": "./dist/chartPaint.d.ts",
       "default": "./dist/chartPaint.js"
     },
+    "./chart-detail": {
+      "types": "./dist/chartDetail.d.ts",
+      "default": "./dist/chartDetail.js"
+    },
     "./fog-paint": {
       "types": "./dist/fogPaint.d.ts",
       "default": "./dist/fogPaint.js"

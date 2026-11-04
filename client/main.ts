@@ -36,6 +36,7 @@ import type {
   StateMessage,
 } from "@naval/shared/world";
 import { orderedChartBlocks } from "@naval/shared/chart-draw";
+import { chartDetailBlend, planChartDetail } from "@naval/shared/chart-detail";
 import { buildBlockCommands, findChartSuspects } from "@naval/shared/chart-paint";
 import { isLandAt } from "@naval/shared/land";
 import { smoothRoute } from "@naval/shared/route";
@@ -516,6 +517,14 @@ async function start(): Promise<void> {
   chartBlockLayer.addChild(chartSprite);
   chartBlockLayer.visible = false;
 
+  // Close-in chart detail: remembered sea cells plus the real block geometry,
+  // painted with the same dimmed palette as the ship view.
+  const chartVectorLayer = new Container();
+  const chartVectorSea = new Graphics();
+  const chartVectorBlocks = new Container();
+  chartVectorLayer.addChild(chartVectorSea, chartVectorBlocks);
+  chartVectorLayer.visible = false;
+
   // The night wash sits above the chart but below live circles, ships and HUD.
   const nightTint = new Graphics();
   const liveHalo = new Graphics();
@@ -571,6 +580,7 @@ async function start(): Promise<void> {
     dimSea,
     dimBlockLayer,
     chartBlockLayer,
+    chartVectorLayer,
     nightTint,
     liveHalo,
     liveMapLayer,
@@ -1145,6 +1155,55 @@ async function start(): Promise<void> {
     return chartDirtyBlocks.size === 0;
   }
 
+  function drawChartVector(): void {
+    chartVectorSea.clear();
+    for (const child of [...chartVectorBlocks.children]) child.destroy();
+
+    const s = scale();
+    const halfW = app.screen.width / (2 * s);
+    const halfH = app.screen.height / (2 * s);
+    const plan = planChartDetail({
+      blocks,
+      discovered,
+      viewport: {
+        left: view.x - halfW,
+        top: view.y - halfH,
+        right: view.x + halfW,
+        bottom: view.y + halfH,
+      },
+      kmAcross: view.kmAcross,
+      thresholdKm: settings.view.chartDetailThresholdKm,
+      chartAll,
+      maxBlocks: settings.view.maxLiveBlockGraphics,
+    });
+
+    if (chartAll) {
+      chartVectorSea
+        .rect(0, 0, app.screen.width, app.screen.height)
+        .fill(DIM_SEA_COLOR);
+    }
+    for (const index of plan.cells) {
+      const column = index % chartColumns;
+      const row = Math.floor(index / chartColumns);
+      const topLeft = toScreen(column * chartCellKm, row * chartCellKm);
+      chartVectorSea
+        .rect(topLeft.x, topLeft.y, chartCellKm * s, chartCellKm * s)
+        .fill(DIM_SEA_COLOR);
+    }
+
+    for (const block of plan.blocks) {
+      const graphics = new Graphics();
+      paintBlock(
+        graphics,
+        block,
+        DIM_LAND_COLOR,
+        DIM_WATERLINE_COLOR,
+        DIM_INK_COLOR,
+      );
+      chartVectorBlocks.addChild(graphics);
+    }
+  }
+
   function drawMap(now: number): void {
     const s = scale();
     builtView = { x: view.x, y: view.y };
@@ -1159,7 +1218,26 @@ async function start(): Promise<void> {
       dimSea.visible = false;
       unknownPaper.visible = false;
       dimBlockLayer.visible = false;
-      chartBlockLayer.visible = true;
+
+      const blend = chartDetailBlend(
+        view.kmAcross,
+        settings.view.chartDetailThresholdKm,
+        settings.view.chartDetailFadeKm,
+      );
+      const useVector = blend > 0;
+      chartBlockLayer.visible = !useVector || blend < 1;
+      chartBlockLayer.alpha = 1 - blend;
+      chartVectorLayer.visible = useVector;
+      chartVectorLayer.alpha = blend;
+
+      if (useVector) {
+        drawChartVector();
+        builtRevision = chartRevision;
+        lastMapBuild = now;
+        drawSuspects();
+        return;
+      }
+
       if (repaintChartCache(now)) {
         builtRevision = chartRevision;
         lastMapBuild = now;
@@ -1169,6 +1247,7 @@ async function start(): Promise<void> {
     }
 
     chartBlockLayer.visible = false;
+    chartVectorLayer.visible = false;
     dimBlockLayer.visible = true;
     unknownPaper.visible = true;
     dimSea.visible = true;

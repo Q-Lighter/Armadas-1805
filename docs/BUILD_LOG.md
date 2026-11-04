@@ -1704,3 +1704,26 @@ winding`):
 - `npm run build`: passing.
 - Browser/WebGL is unavailable: the ring animation and actual pointer gestures
   have not been watched on screen.
+
+## 2F-d: sharp chart when zoomed in
+
+- `shared/chartDetail.ts` is the pure detail planner. It switches to vector
+  blocks below 300 km across, culls to intersecting blocks and discovered
+  cells, orders blocks deterministically and caps the live graphics at the
+  existing 300-block ceiling. Texture and vector plans return the same stored
+  blocks and cells for a given view.
+- The chart keeps its 2,048 px cached texture for far views. Below the
+  threshold it draws a vector layer in screen space using the same dimmed
+  palette as the ship view: discovered sea cells, then land fills and coast
+  lines. A 40 km band cross-fades the two layers instead of popping.
+- Only the chart is affected; ship-view styling and the existing chart cache
+  are unchanged.
+
+### Checks
+
+- `npm test`: **183/183 passing**, including four new chart-detail tests for
+  the threshold, viewport culling, identical stored contents across the switch
+  and the graphics cap.
+- `npm run build`: passing.
+- Browser/WebGL is unavailable: the close-in vector look, the cross-fade and the
+  chart on a real phone have not been seen.

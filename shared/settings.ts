@@ -439,6 +439,10 @@ export const settings = {
     shipMaxKmAcross: 65,
     /** Chart-screen zoom range. */
     chartMinKmAcross: 25,
+    /** Below this view width the chart draws vector blocks, not its texture. */
+    chartDetailThresholdKm: 300,
+    /** Distance over which the texture and vector layers cross-fade. */
+    chartDetailFadeKm: 40,
     /** How dark remembered land and sea are outside a live sight circle. */
     fogDimAlpha: 0.52,
     /** Mix of the remembered sea colour into paper. */

@@ -37,6 +37,12 @@ export const settings = {
     graphicsFailureWindowMs: 60_000,
     /** This many losses shows the tap-to-reload notice. */
     graphicsFailureLimit: 3,
+    /** Press-and-hold time that sends one move order when tap-to-sail is off. */
+    tapHoldMs: 500,
+    /** Screen radius of the hold-to-sail progress ring. */
+    tapHoldRingPx: 24,
+    /** Stroke width of the hold-to-sail progress ring. */
+    tapHoldRingWidthPx: 3,
   },
 
   /** The chart: the flat map frame and how it is turned into tiles. */

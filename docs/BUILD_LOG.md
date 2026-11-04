@@ -1682,3 +1682,25 @@ winding`):
   segment steps; very thin land features can still sit between those samples.
 - Browser/WebGL is unavailable, so the dotted curve and waypoint marks have not
   been seen on screen.
+
+## 2F-c: tap-to-sail toggle
+
+- The top bar now has `Tap-to-sail: On / Off`, saved under
+  `armadas.tapToSail`; a new player starts On. The button and its small wax-red
+  mark show the active mode.
+- Off means a quick sea tap only closes panels. Holding the sea starts a
+  screen-space ring; it fills for 500 ms and sends one order only if the finger
+  stays put. Moving or lifting early cancels it.
+- `Move` appears while the mode is Off. Pressing it arms one order; the next
+  sea tap sends that order and disarms the button. Group sea orders use the same
+  gate, and ship selection and port taps are unchanged.
+- Preference and tap decisions are pure functions in `shared/tapToSail.ts`; the
+  client owns only the ring and DOM state.
+
+### Checks
+
+- `npm test`: **179/179 passing**, including five new tap-to-sail tests for the
+  saved preference, quick tap, hold threshold and one-shot Move button.
+- `npm run build`: passing.
+- Browser/WebGL is unavailable: the ring animation and actual pointer gestures
+  have not been watched on screen.

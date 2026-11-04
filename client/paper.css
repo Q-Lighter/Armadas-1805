@@ -384,9 +384,23 @@ h2 {
   display: none;
 }
 
-#multi-btn.is-active {
+#multi-btn.is-active,
+#move-btn.is-armed {
   background: var(--ink);
   color: var(--paper);
+}
+
+#tap-btn.is-off .tap-icon {
+  opacity: 0.35;
+}
+
+.tap-icon {
+  font-size: calc(0.95rem * var(--ui-scale));
+  color: var(--wax);
+}
+
+#tap-btn.is-off .tap-icon {
+  color: var(--ink-faded);
 }
 
 .room {

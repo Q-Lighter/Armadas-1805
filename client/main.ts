@@ -39,6 +39,7 @@ import { orderedChartBlocks } from "@naval/shared/chart-draw";
 import { buildBlockCommands, findChartSuspects } from "@naval/shared/chart-paint";
 import { isLandAt } from "@naval/shared/land";
 import { smoothRoute } from "@naval/shared/route";
+import { readTapToSail, resolveTap, writeTapToSail } from "@naval/shared/tap-to-sail";
 import { fogDebugLine, type FogDebugInfo } from "@naval/shared/fog-view";
 import { GRAPHICS_RESET_NOTICE, GraphicsRecovery } from "@naval/shared/graphics-safety";
 import { formatGameClock, gameClockAt } from "@naval/shared/time";
@@ -363,6 +364,9 @@ async function start(): Promise<void> {
   const compassNeedle = element<SVGGElement>("compass-needle");
   const followButton = element<HTMLButtonElement>("follow-btn");
   const chartButton = element<HTMLButtonElement>("chart-btn");
+  const tapButton = element<HTMLButtonElement>("tap-btn");
+  const tapModeLabel = element<HTMLElement>("tap-mode-label");
+  const moveButton = element<HTMLButtonElement>("move-btn");
   const knownPortsButton = element<HTMLButtonElement>("known-ports-btn");
   const portPanel = element<HTMLElement>("port-panel");
   const portSize = element<HTMLElement>("port-size");
@@ -536,6 +540,10 @@ async function start(): Promise<void> {
   routeLayer.addChild(routeInk);
   routeLayer.visible = false;
 
+  // Screen-space progress ring for the press-and-hold order gesture.
+  const holdRing = new Graphics();
+  holdRing.visible = false;
+
   const marker = new Graphics();
   marker.circle(0, 0, 9).stroke({ width: 2, color: INK_COLOR });
   marker.moveTo(-14, 0).lineTo(-7, 0).stroke({ width: 2, color: INK_COLOR });
@@ -567,6 +575,7 @@ async function start(): Promise<void> {
     liveHalo,
     liveMapLayer,
     liveMask,
+    holdRing,
     routeLayer,
     portLayer,
     lastSeenLayer,
@@ -669,6 +678,16 @@ async function start(): Promise<void> {
   let takenOver = false;
   let bordersVisible = false;
   let suspectsVisible = false;
+  const tapStorage = browserStorage("localStorage");
+  let tapToSail = readTapToSail(tapStorage);
+  let moveArmed = false;
+  let holdPointerId: number | null = null;
+  let holdStartAt = 0;
+  let holdAt = { x: 0, y: 0 };
+  let holdTimer = 0;
+  let holdFrame = 0;
+  let holdActive = false;
+  let holdSent = false;
   let suspectSegments = 0;
   let noticeTimer = 0;
   let noticeHideTimer = 0;
@@ -3103,6 +3122,128 @@ async function start(): Promise<void> {
   let pinchStartDistance = 0;
   let pinchStartKm = view.kmAcross;
 
+  function refreshTapUi(): void {
+    tapButton.setAttribute("aria-pressed", String(tapToSail));
+    tapButton.classList.toggle("is-off", !tapToSail);
+    tapModeLabel.textContent = tapToSail ? "On" : "Off";
+    tapButton.title = tapToSail
+      ? "A quick tap on the sea sends a move order"
+      : "Press and hold the sea, or use Move, to send an order";
+    moveButton.hidden = tapToSail;
+    moveButton.setAttribute("aria-pressed", String(moveArmed));
+    moveButton.classList.toggle("is-armed", moveArmed);
+  }
+
+  function disarmMove(): void {
+    moveArmed = false;
+    refreshTapUi();
+  }
+
+  function drawHoldRing(progress: number): void {
+    const radius = settings.client.tapHoldRingPx;
+    const width = settings.client.tapHoldRingWidthPx;
+    holdRing.clear();
+    holdRing
+      .circle(holdAt.x, holdAt.y, radius)
+      .stroke({ width: 1, color: INK_COLOR, alpha: 0.35 });
+    if (progress <= 0) return;
+    holdRing
+      .arc(
+        holdAt.x,
+        holdAt.y,
+        radius,
+        -Math.PI / 2,
+        -Math.PI / 2 + Math.PI * 2 * Math.min(1, progress),
+      )
+      .stroke({ width, color: 0x8c1d1d, alpha: 0.95, cap: "round" });
+  }
+
+  function cancelTapHold(): void {
+    window.clearTimeout(holdTimer);
+    holdTimer = 0;
+    if (holdFrame) cancelAnimationFrame(holdFrame);
+    holdFrame = 0;
+    holdActive = false;
+    holdPointerId = null;
+    holdRing.clear();
+    holdRing.visible = false;
+  }
+
+  function finishTapHold(): void {
+    if (!holdActive) return;
+    holdActive = false;
+    holdSent = true;
+    drawHoldRing(1);
+    const world = toWorld(holdAt.x, holdAt.y);
+    sendOrder(world.x, world.y);
+    disarmMove();
+    window.clearTimeout(holdTimer);
+    holdTimer = 0;
+  }
+
+  function beginTapHold(event: PointerEvent): void {
+    if (tapToSail || pointers.size !== 1) return;
+    const rect = app.canvas.getBoundingClientRect();
+    const screenX = event.clientX - rect.left;
+    const screenY = event.clientY - rect.top;
+    if (shipAt(screenX, screenY) || portAt(screenX, screenY)) return;
+
+    cancelTapHold();
+    holdPointerId = event.pointerId;
+    holdStartAt = performance.now();
+    holdAt = { x: screenX, y: screenY };
+    holdActive = true;
+    holdSent = false;
+    holdRing.visible = true;
+    drawHoldRing(0);
+
+    const animate = (): void => {
+      if (!holdActive) return;
+      drawHoldRing((performance.now() - holdStartAt) / settings.client.tapHoldMs);
+      holdFrame = requestAnimationFrame(animate);
+    };
+    holdFrame = requestAnimationFrame(animate);
+    holdTimer = window.setTimeout(finishTapHold, settings.client.tapHoldMs);
+  }
+
+  function mapTapAction(screenX: number, screenY: number): void {
+    const ownShip = shipAt(screenX, screenY);
+    if (ownShip) {
+      if (multiSelect) {
+        toggleGroupShip(ownShip.id);
+        return;
+      }
+      const row = fleetShips.find((ship) => ship.id === ownShip.id);
+      if (row?.status === "docked" && openShipActions(ownShip.id)) return;
+      updateSelectedShip(ownShip.id, false);
+      return;
+    }
+    const port = portAt(screenX, screenY);
+    if (port) {
+      const docked = fleetShips.find(
+        (ship) => ship.status === "docked" && ship.portId === port.id,
+      );
+      if (docked && !multiSelect && openShipActions(docked.id)) return;
+      openPortPanel(port.id);
+      return;
+    }
+
+    const decision = resolveTap({ tapToSail, moveArmed, heldMs: 0 });
+    moveArmed = decision.moveArmed;
+    refreshTapUi();
+    if (!decision.sendOrder) {
+      closePortPanel();
+      closeTradePanel();
+      closeFleetPanel();
+      closeShipyardPanel();
+      closeHirePanel();
+      knownPortsPanel.hidden = true;
+      return;
+    }
+    const world = toWorld(screenX, screenY);
+    sendOrder(world.x, world.y);
+  }
+
   function zoomTo(kmAcross: number): void {
     view.kmAcross = clamp(kmAcross, minViewKmAcross(), maxViewKmAcross());
   }
@@ -3115,9 +3256,11 @@ async function start(): Promise<void> {
       dragDistance = 0;
       downAt = performance.now();
       multiTouch = false;
+      beginTapHold(event);
     }
     if (pointers.size === 2) {
       multiTouch = true;
+      cancelTapHold();
       const [a, b] = [...pointers.values()];
       if (a && b) pinchStartDistance = Math.hypot(a.x - b.x, a.y - b.y);
       pinchStartKm = view.kmAcross;
@@ -3144,6 +3287,14 @@ async function start(): Promise<void> {
     const dy = next.y - previous.y;
     dragDistance += Math.hypot(dx, dy);
 
+    if (
+      holdActive &&
+      holdPointerId === event.pointerId &&
+      Math.hypot(event.clientX - holdAt.x, event.clientY - holdAt.y) > 8
+    ) {
+      cancelTapHold();
+    }
+
     if (dragDistance > 6) {
       view.x -= dx / scale();
       view.y -= dy / scale();
@@ -3153,39 +3304,23 @@ async function start(): Promise<void> {
 
   function endPointer(event: PointerEvent): void {
     const wasSingle = pointers.size === 1;
+    const wasHeld = holdSent;
+    cancelTapHold();
+    holdSent = false;
     pointers.delete(event.pointerId);
 
-    if (wasSingle && !multiTouch && dragDistance < 10 && performance.now() - downAt < 600) {
-      const rect = app.canvas.getBoundingClientRect();
-      const screenX = event.clientX - rect.left;
-      const screenY = event.clientY - rect.top;
-      const ownShip = shipAt(screenX, screenY);
-      if (ownShip) {
-        if (multiSelect) {
-          toggleGroupShip(ownShip.id);
-          return;
-        }
-        const row = fleetShips.find((ship) => ship.id === ownShip.id);
-        if (row?.status === "docked" && openShipActions(ownShip.id)) return;
-        updateSelectedShip(ownShip.id, false);
-        return;
-      }
-      const port = portAt(screenX, screenY);
-      if (port) {
-        const docked = fleetShips.find(
-          (ship) => ship.status === "docked" && ship.portId === port.id,
-        );
-        if (docked && !multiSelect && openShipActions(docked.id)) return;
-        openPortPanel(port.id);
-        return;
-      }
-      const world = toWorld(screenX, screenY);
-      sendOrder(world.x, world.y);
-    }
+    if (!wasSingle || multiTouch || dragDistance >= 10) return;
+    if (wasHeld) return;
+    if (performance.now() - downAt >= 600) return;
+
+    const rect = app.canvas.getBoundingClientRect();
+    mapTapAction(event.clientX - rect.left, event.clientY - rect.top);
   }
 
   app.canvas.addEventListener("pointerup", endPointer);
   app.canvas.addEventListener("pointercancel", (event) => {
+    cancelTapHold();
+    holdSent = false;
     pointers.delete(event.pointerId);
   });
 
@@ -3197,6 +3332,25 @@ async function start(): Promise<void> {
     },
     { passive: false },
   );
+
+  tapButton.addEventListener("click", () => {
+    tapToSail = !tapToSail;
+    writeTapToSail(tapStorage, tapToSail);
+    if (tapToSail) cancelTapHold();
+    if (!tapToSail) disarmMove();
+    refreshTapUi();
+  });
+
+  moveButton.addEventListener("click", () => {
+    if (tapToSail) return;
+    moveArmed = !moveArmed;
+    if (moveArmed) {
+      showNotice("Move armed: tap the sea once.");
+    }
+    refreshTapUi();
+  });
+
+  refreshTapUi();
 
   followButton.addEventListener("click", () => {
     if (mode === "chart") {

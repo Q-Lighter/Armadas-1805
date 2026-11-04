@@ -133,6 +133,10 @@
     "./trade": {
       "types": "./dist/trade.d.ts",
       "default": "./dist/trade.js"
+    },
+    "./tap-to-sail": {
+      "types": "./dist/tapToSail.d.ts",
+      "default": "./dist/tapToSail.js"
     }
   },
   "files": [

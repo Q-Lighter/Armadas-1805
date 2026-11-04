@@ -40,6 +40,8 @@ export interface SailToOrder {
 /** A planned route being followed one leg at a time. */
 export interface ShipRoute {
   waypoints: Array<{ x: number; y: number }>;
+  /** Dense, land-checked curve for drawing and look-ahead steering. */
+  curve?: Array<{ x: number; y: number }>;
   index: number;
   /** The final destination, which may differ from the last waypoint. */
   goal: { x: number; y: number };
@@ -112,6 +114,48 @@ export function angleOffWindDeg(headingRad: number, windFromDeg: number): number
 /** Turn rate in degrees per game second for a ship class. */
 export function turnRateDegPerSecond(spec: ShipSpec): number {
   return 90 / (spec.turn90GameMinutes * 60);
+}
+
+/**
+ * Choose the first tack that points into the larger pocket of free water.
+ * The probes include the same clearance used by the planner, so a lee shore
+ * is not counted as free water just because the exact point is sea.
+ */
+export function chooseTackSide(
+  ship: Ship,
+  spec: ShipSpec,
+  target: { x: number; y: number },
+  windFromDeg: number,
+  knownLand: (x: number, y: number) => boolean,
+  clearanceKm: number = settings.route.clearanceKm,
+): TackSide {
+  const bearing = Math.atan2(target.x - ship.x, -(target.y - ship.y));
+  if (angleOffWindDeg(bearing, windFromDeg) >= spec.closestAngleDeg - 1e-9) {
+    return ship.tackSide;
+  }
+  const wind = windFromDeg * DEG;
+  const limit = Math.max(18, settings.sailing.tackHalfWidthKm * 2 + clearanceKm);
+  const freeDistance = (side: TackSide): number => {
+    const heading = wind + side * spec.closestAngleDeg * DEG;
+    const dx = Math.sin(heading);
+    const dy = -Math.cos(heading);
+    for (let distance = 2; distance <= limit; distance += 2) {
+      const x = ship.x + dx * distance;
+      const y = ship.y + dy * distance;
+      if (knownLand(x, y)) return distance - 2;
+      for (let probe = 0; probe < 8; probe += 1) {
+        const angle = (probe / 8) * Math.PI * 2;
+        if (knownLand(x + Math.cos(angle) * clearanceKm, y + Math.sin(angle) * clearanceKm)) {
+          return distance - 2;
+        }
+      }
+    }
+    return limit;
+  };
+  const left = freeDistance(1);
+  const right = freeDistance(-1);
+  if (left === right) return ship.tackSide;
+  return left > right ? 1 : -1;
 }
 
 /** Speed factor from the settings curve, smoothly joined between key values. */

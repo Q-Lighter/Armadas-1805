@@ -38,6 +38,7 @@ import type {
 import { orderedChartBlocks } from "@naval/shared/chart-draw";
 import { buildBlockCommands, findChartSuspects } from "@naval/shared/chart-paint";
 import { isLandAt } from "@naval/shared/land";
+import { smoothRoute } from "@naval/shared/route";
 import { fogDebugLine, type FogDebugInfo } from "@naval/shared/fog-view";
 import { GRAPHICS_RESET_NOTICE, GraphicsRecovery } from "@naval/shared/graphics-safety";
 import { formatGameClock, gameClockAt } from "@naval/shared/time";
@@ -1353,41 +1354,51 @@ async function start(): Promise<void> {
     updateKnownPortsButton();
   }
 
-  /** Dotted ink route for the selected ship only, on either screen. */
+  /** Dotted smooth ink for every selected ship, on either screen. */
   function drawSelectedRoute(): void {
     routeInk.clear();
-    const own = selectedFleetShip();
-    const route = own?.route;
-    if (!own || !route || route.length === 0) {
-      routeLayer.visible = false;
-      return;
-    }
-
-    const points = [{ x: own.x, y: own.y }, ...route.map(([x, y]) => ({ x, y }))];
+    const selected = fleetShips.filter((ship) =>
+      multiSelect && selectedShipIds.size > 0
+        ? selectedShipIds.has(ship.id)
+        : ship.id === selectedFleetShip()?.id,
+    );
+    let drew = false;
     const dashPx = 4;
     const gapPx = 3;
-    for (let index = 1; index < points.length; index += 1) {
-      const from = points[index - 1]!;
-      const to = points[index]!;
-      const a = toScreen(from.x, from.y);
-      const b = toScreen(to.x, to.y);
-      const lengthPx = Math.hypot(b.x - a.x, b.y - a.y);
-      if (lengthPx < 0.5) continue;
-      for (let at = 0; at < lengthPx; at += dashPx + gapPx) {
-        const t0 = at / lengthPx;
-        const t1 = Math.min(lengthPx, at + dashPx) / lengthPx;
-        routeInk
-          .moveTo(a.x + (b.x - a.x) * t0, a.y + (b.y - a.y) * t0)
-          .lineTo(a.x + (b.x - a.x) * t1, a.y + (b.y - a.y) * t1);
+
+    for (const own of selected) {
+      const route = own.route;
+      if (!route || route.length === 0) continue;
+      const points = smoothRoute(
+        { x: own.x, y: own.y },
+        route.map(([x, y]) => ({ x, y })),
+        () => false,
+        1,
+      );
+      for (let index = 1; index < points.length; index += 1) {
+        const from = points[index - 1]!;
+        const to = points[index]!;
+        const a = toScreen(from.x, from.y);
+        const b = toScreen(to.x, to.y);
+        const lengthPx = Math.hypot(b.x - a.x, b.y - a.y);
+        if (lengthPx < 0.5) continue;
+        for (let at = 0; at < lengthPx; at += dashPx + gapPx) {
+          const t0 = at / lengthPx;
+          const t1 = Math.min(lengthPx, at + dashPx) / lengthPx;
+          routeInk
+            .moveTo(a.x + (b.x - a.x) * t0, a.y + (b.y - a.y) * t0)
+            .lineTo(a.x + (b.x - a.x) * t1, a.y + (b.y - a.y) * t1);
+        }
       }
+
+      for (const point of route) {
+        const screen = toScreen(point[0], point[1]);
+        routeInk.circle(screen.x, screen.y, 2).fill({ color: INK_COLOR, alpha: 0.82 });
+      }
+      drew = true;
     }
     routeInk.stroke({ width: 1.2, color: INK_COLOR, alpha: 0.78 });
-
-    for (const point of route) {
-      const screen = toScreen(point[0], point[1]);
-      routeInk.circle(screen.x, screen.y, 2).fill({ color: INK_COLOR, alpha: 0.82 });
-    }
-    routeLayer.visible = true;
+    routeLayer.visible = drew;
   }
 
   function portAt(screenX: number, screenY: number): PortMarkerPlan | null {

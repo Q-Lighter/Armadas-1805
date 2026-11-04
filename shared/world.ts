@@ -8,6 +8,7 @@
 import { settings } from "./settings.js";
 import {
   angleOffWindDeg,
+  chooseTackSide,
   createShip,
   sailTo,
   shipSpecFor,
@@ -38,11 +39,14 @@ import {
 } from "./fog.js";
 import { addBots, refreshBotOrders } from "./bots.js";
 import {
+  hasRouteClearance,
   nearestSeaPoint,
   planRoute,
   ROUTE_LAND,
   ROUTE_NEAREST_SEA,
   routeSegmentClear,
+  routeSegmentHasClearance,
+  smoothRoute,
 } from "./route.js";
 import type { DebugStats } from "./loadMetrics.js";
 import type { NavyId } from "./navies.js";
@@ -685,10 +689,11 @@ function installRoute(
   portId: string | null,
 ): boolean {
   ship.route = null;
+  const knownLand = routeKnownLand(world, playerId);
   const plan = planRoute({
     start: { x: ship.x, y: ship.y },
     goal,
-    knownLand: routeKnownLand(world, playerId),
+    knownLand,
     isInside: isInsideMapFrame,
   });
 
@@ -703,8 +708,20 @@ function installRoute(
     return false;
   }
 
+  const spec = shipSpecFor(ship);
+  const turnRateRad = (90 / (spec.turn90GameMinutes * 60)) * (Math.PI / 180);
+  const cruiseKmPerSecond = (spec.cruiseKnots * 1.852) / 3600;
+  const minRadiusKm =
+    (cruiseKmPerSecond / turnRateRad) * settings.route.curveRadiusFactor;
+  const curve = smoothRoute(
+    { x: ship.x, y: ship.y },
+    plan.waypoints,
+    (x, y) => !hasRouteClearance({ x, y }, knownLand, settings.route.clearanceKm),
+    minRadiusKm,
+  );
   const route: ShipRoute = {
     waypoints: plan.waypoints.map((point) => ({ x: point.x, y: point.y })),
+    curve: curve.map((point) => ({ x: point.x, y: point.y })),
     index: 0,
     goal: { x: goal.x, y: goal.y },
     kind,
@@ -750,6 +767,13 @@ function routeAheadBlocked(world: World, playerId: string, ship: Ship): boolean 
       y: from.y + (to.y - from.y) * share,
     };
     if (!routeSegmentClear(from, end, knownLand)) return true;
+    if (!routeSegmentHasClearance(
+      from,
+      end,
+      knownLand,
+      settings.route.clearanceKm,
+      10,
+    )) return true;
     if (share < 1) break;
     from = to;
     remaining -= length;
@@ -1864,6 +1888,15 @@ function stepOwnerShip(
         }
       } else if (routeAheadBlocked(world, ownerId, ship)) {
         replanRoute(world, ownerId, ship);
+      } else if (
+        distanceKm(ship, activeRoute.goal) > 16 &&
+        !hasRouteClearance(
+          { x: ship.x, y: ship.y },
+          knownLand,
+          settings.route.clearanceKm,
+        )
+      ) {
+        replanRoute(world, ownerId, ship);
       }
     }
   }
@@ -1882,11 +1915,23 @@ function stepOwnerShip(
 
   const fromX = ship.x;
   const fromY = ship.y;
+  let preferredTackSide: 1 | -1 | undefined;
+  if (ship.order && ship.route) {
+    const knownLand = routeKnownLand(world, ownerId);
+    preferredTackSide = chooseTackSide(
+      ship,
+      shipSpecFor(ship),
+      { x: ship.order.x, y: ship.order.y },
+      windFromDeg,
+      knownLand,
+      settings.route.clearanceKm,
+    );
+  }
   stepShip(
     ship,
     dtGameSeconds,
     windFromDeg,
-    undefined,
+    preferredTackSide,
     ship.coastEscapeHeadingRad ?? undefined,
   );
   resolveMovement(world, ownerId, ship, fromX, fromY);

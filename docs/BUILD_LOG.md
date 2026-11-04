@@ -1650,3 +1650,35 @@ winding`):
   risk that only a browser can confirm.
 - `build-chart-blocks.mjs` still takes several minutes because it now checks
   every coast segment against the lookup.
+
+## 2F-b: smoother, safer routes
+
+- `shared/settings.ts` now prefers 8 km of clearance (with a 4 km hard fallback
+  where a channel is narrower), applies a soft cost from 8 km to 20 km, uses a
+  40 km re-plan look-ahead, and limits curve radius to 1.5 times the turning
+  radius.
+- A* penalises the clearance band instead of merely accepting land-free nodes;
+  terminal ports and destinations keep their small approach allowance. Path
+  simplification and reversal removal re-check the segment, not only its ends.
+- Routes are rounded with circular fillets, checked against known land, and the
+  resulting curve is sent to the client. Re-planning runs earlier when new land
+  enters the 40 km look-ahead or the ship is within 8 km of known land. Tacking
+  first chooses the leg pointing into the wider pocket of free water.
+- The ship and chart draw a thin dotted route for every selected ship; original
+  waypoints remain as small marks. Routes use discovered land only.
+
+### Checks
+
+- `npm test`: **174/174 passing**, including the new clearance, reversal, curve
+  radius, tack-side and Windward Passage cases.
+- `npm run build`: passing.
+- A 500 km open-sea plan had a median 0.18 ms in this run; the full Windward
+  Passage search took about 50 ms. The worst new-land re-plan test took about
+  1.4 s.
+
+### Broken or unfinished
+
+- The planned clearance is enforced against sixteen sampled bearings and 1 km
+  segment steps; very thin land features can still sit between those samples.
+- Browser/WebGL is unavailable, so the dotted curve and waypoint marks have not
+  been seen on screen.

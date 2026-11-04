@@ -184,12 +184,22 @@ export const settings = {
     gridKm: 2,
     /** Fallback grid if the first search hits its node limit. */
     coarseGridKm: 4,
-    /** Preferred open-water clearance from known land. */
-    clearanceKm: 3,
+    /** Preferred clearance from known land. */
+    clearanceKm: 8,
+    /** Hard fallback where the eight-kilometre channel is too narrow. */
+    minimumClearanceKm: 4,
+    /** Routes pay a soft cost in this band, preferring open water. */
+    softClearanceKm: 20,
+    /** Weight of the soft clearance cost relative to distance. */
+    softClearanceWeight: 0.8,
     /** Start and destination may be this close to land. */
     terminalClearanceKm: 5,
     /** How far ahead to look for newly discovered land across the route. */
-    lookAheadKm: 30,
+    lookAheadKm: 40,
+    /** Minimum curve radius as a multiple of the ship's turning radius. */
+    curveRadiusFactor: 1.5,
+    /** Look-ahead distance when steering along a smooth route curve. */
+    steerLookAheadKm: 6,
     /** Search boxes grow by this much when no route is found. */
     searchMarginKm: 80,
     /** Never grow a single search beyond this margin. */

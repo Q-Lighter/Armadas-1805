@@ -31,6 +31,11 @@ export interface RouteOptions {
   isInside?: (x: number, y: number) => boolean;
   gridKm?: number;
   clearanceKm?: number;
+  minimumClearanceKm?: number;
+  /** Upper edge of the soft clearance band. */
+  softClearanceKm?: number;
+  /** Multiplier on the soft-band cost. */
+  softClearanceWeight?: number;
   marginKm?: number;
   maxNodes?: number;
   maxWaypoints?: number;
@@ -43,6 +48,9 @@ interface SearchOptions extends RouteOptions {
   marginKm: number;
   maxNodes: number;
   clearanceKm: number;
+  minimumClearanceKm: number;
+  softClearanceKm: number;
+  softClearanceWeight: number;
   terminalClearanceKm: number;
   maxWaypoints: number;
   isInside: (x: number, y: number) => boolean;
@@ -140,11 +148,163 @@ export function routeSegmentClear(
   return true;
 }
 
-// Clearance probes are computed once; these run for every A* node. Eight
-// compass directions keep the 3 km clearance check cheap; the exact segment
-// check below still rejects every land crossing on the route itself.
-const CLEARANCE_PROBES = Array.from({ length: 8 }, (_, index) => {
-  const angle = (index / 8) * Math.PI * 2;
+/** True when a segment keeps the preferred clearance, except at its ends. */
+export function routeSegmentHasClearance(
+  from: MapPoint,
+  to: MapPoint,
+  knownLand: (x: number, y: number) => boolean,
+  clearanceKm: number,
+  terminalKm = 0,
+): boolean {
+  const length = distance(from, to);
+  const steps = Math.max(1, Math.ceil(length / 1));
+  for (let index = 0; index <= steps; index += 1) {
+    const along = (index / steps) * length;
+    if (along <= terminalKm || length - along <= terminalKm) continue;
+    const t = index / steps;
+    if (!hasRouteClearance(
+      { x: from.x + (to.x - from.x) * t, y: from.y + (to.y - from.y) * t },
+      knownLand,
+      clearanceKm,
+    )) return false;
+  }
+  return true;
+}
+
+/** A turn that is sharper than 120 degrees inside a ten-kilometre window. */
+export function routeHasReversal(
+  start: MapPoint,
+  points: readonly MapPoint[],
+  windowKm = 10,
+  maxTurnDeg = 120,
+): boolean {
+  let previous = start;
+  for (let index = 0; index + 1 < points.length; index += 1) {
+    const a = previous;
+    const b = points[index]!;
+    const c = points[index + 1]!;
+    const first = { x: b.x - a.x, y: b.y - a.y };
+    const second = { x: c.x - b.x, y: c.y - b.y };
+    const firstLength = Math.hypot(first.x, first.y);
+    const secondLength = Math.hypot(second.x, second.y);
+    if (firstLength + secondLength <= windowKm && firstLength > 1e-6 && secondLength > 1e-6) {
+      const dot = (first.x * second.x + first.y * second.y) / (firstLength * secondLength);
+      const angle = (Math.acos(Math.max(-1, Math.min(1, dot))) * 180) / Math.PI;
+      if (angle > maxTurnDeg) return true;
+    }
+    previous = b;
+  }
+  return false;
+}
+
+/** Remove sharp little dog-legs when a direct replacement keeps clearance. */
+function removeReversals(
+  start: MapPoint,
+  points: readonly MapPoint[],
+  knownLand: (x: number, y: number) => boolean,
+  clearanceKm: number,
+): MapPoint[] {
+  const out = [...points];
+  let changed = true;
+  while (changed && out.length > 2) {
+    changed = false;
+    for (let index = 0; index + 1 < out.length; index += 1) {
+      const a = index === 0 ? start : out[index - 1]!;
+      const b = out[index]!;
+      const c = out[index + 1]!;
+      const first = { x: b.x - a.x, y: b.y - a.y };
+      const second = { x: c.x - b.x, y: c.y - b.y };
+      const firstLength = Math.hypot(first.x, first.y);
+      const secondLength = Math.hypot(second.x, second.y);
+      if (firstLength + secondLength > 10 || firstLength < 1e-6 || secondLength < 1e-6) continue;
+      const dot = (first.x * second.x + first.y * second.y) / (firstLength * secondLength);
+      const angle = (Math.acos(Math.max(-1, Math.min(1, dot))) * 180) / Math.PI;
+      if (angle <= 120) continue;
+      if (!routeSegmentClear(a, c, knownLand)) continue;
+      if (!routeSegmentHasClearance(a, c, knownLand, clearanceKm, 0)) continue;
+      out.splice(index, 1);
+      changed = true;
+      break;
+    }
+  }
+  return out;
+}
+
+/**
+ * Round every waypoint with a circular fillet of at least the requested
+ * radius. A blocked fillet falls back to the original corner, so the caller
+ * can still see and re-plan it rather than cutting across land.
+ */
+export function smoothRoute(
+  start: MapPoint,
+  waypoints: readonly MapPoint[],
+  blocked: (x: number, y: number) => boolean = () => false,
+  minRadiusKm = 1,
+): MapPoint[] {
+  const points = [start, ...waypoints];
+  if (points.length < 3) return points;
+  const out: MapPoint[] = [points[0]!];
+
+  for (let index = 1; index + 1 < points.length; index += 1) {
+    const a = points[index - 1]!;
+    const b = points[index]!;
+    const c = points[index + 1]!;
+    const u = { x: b.x - a.x, y: b.y - a.y };
+    const v = { x: c.x - b.x, y: c.y - b.y };
+    const firstLength = Math.hypot(u.x, u.y);
+    const secondLength = Math.hypot(v.x, v.y);
+    if (firstLength < 1e-6 || secondLength < 1e-6) continue;
+    u.x /= firstLength;
+    u.y /= firstLength;
+    v.x /= secondLength;
+    v.y /= secondLength;
+    const cross = u.x * v.y - u.y * v.x;
+    const dot = Math.max(-1, Math.min(1, u.x * v.x + u.y * v.y));
+    const turn = Math.atan2(cross, dot);
+    if (Math.abs(turn) < 1e-3) {
+      out.push(b);
+      continue;
+    }
+
+    const radius = Math.max(0.25, minRadiusKm);
+    const tangent = Math.min(radius * Math.tan(Math.abs(turn) / 2), firstLength * 0.45, secondLength * 0.45);
+    const actualRadius = tangent / Math.tan(Math.abs(turn) / 2);
+    const p1 = { x: b.x - u.x * tangent, y: b.y - u.y * tangent };
+    const p2 = { x: b.x + v.x * tangent, y: b.y + v.y * tangent };
+    const left = { x: -u.y, y: u.x };
+    const direction = Math.sign(turn);
+    const centre = {
+      x: p1.x + left.x * actualRadius * direction,
+      y: p1.y + left.y * actualRadius * direction,
+    };
+    const startAngle = Math.atan2(p1.y - centre.y, p1.x - centre.x);
+    const samples = Math.max(2, Math.ceil((actualRadius * Math.abs(turn)) / 0.75));
+    const arc: MapPoint[] = [];
+    for (let sample = 0; sample <= samples; sample += 1) {
+      const angle = startAngle + turn * (sample / samples);
+      arc.push({
+        x: centre.x + Math.cos(angle) * actualRadius,
+        y: centre.y + Math.sin(angle) * actualRadius,
+      });
+    }
+    if (arc.some((point) => blocked(point.x, point.y))) {
+      out.push(b);
+      continue;
+    }
+    out.push(...arc);
+  }
+
+  const last = points[points.length - 1]!;
+  const previous = out[out.length - 1]!;
+  if (distance(previous, last) > 1e-6) out.push(last);
+  return out;
+}
+
+// Clearance probes are computed once; these run for every A* node. Sixteen
+// directions catch narrow points between the old eight compass rays; the
+// exact segment check below still rejects every land crossing on the route.
+const CLEARANCE_PROBES = Array.from({ length: 16 }, (_, index) => {
+  const angle = (index / 16) * Math.PI * 2;
   return { dx: Math.sin(angle), dy: -Math.cos(angle) };
 });
 
@@ -163,6 +323,27 @@ export function hasRouteClearance(
   return true;
 }
 
+function routeClearancePenalty(
+  point: MapPoint,
+  knownLand: (x: number, y: number) => boolean,
+  clearanceKm: number,
+  softClearanceKm: number,
+  weight: number,
+): number {
+  if (softClearanceKm <= clearanceKm) return 0;
+  let penalty = 0;
+  const rings = 4;
+  for (let ring = 0; ring < rings; ring += 1) {
+    const radius = clearanceKm + ((softClearanceKm - clearanceKm) * (ring + 1)) / rings;
+    for (const probe of CLEARANCE_PROBES) {
+      if (!knownLand(point.x + probe.dx * radius, point.y + probe.dy * radius)) continue;
+      const closeness = 1 - (radius - clearanceKm) / (softClearanceKm - clearanceKm);
+      penalty = Math.max(penalty, weight * closeness);
+    }
+  }
+  return penalty;
+}
+
 function safePoint(
   point: MapPoint,
   search: SearchOptions,
@@ -173,7 +354,11 @@ function safePoint(
   if (distance(point, search.start) <= terminalRadius || distance(point, search.goal) <= terminalRadius) {
     return true;
   }
-  return hasRouteClearance(point, search.knownLand, search.clearanceKm);
+  return hasRouteClearance(
+    point,
+    search.knownLand,
+    Math.min(search.clearanceKm, search.minimumClearanceKm),
+  );
 }
 
 /** The nearest safe grid intersection, with a small terminal exemption. */
@@ -326,7 +511,15 @@ function searchGrid(search: SearchOptions): SearchResult {
       const key = nodeKey(column, row);
       const existing = nodes.get(key);
       const step = distance(current, point);
-      const g = current.g + step;
+      const g = current.g +
+        step *
+          (1 + routeClearancePenalty(
+            point,
+            search.knownLand,
+            search.clearanceKm,
+            search.softClearanceKm,
+            search.softClearanceWeight,
+          ));
       if (existing && existing.g <= g) continue;
 
       const next: GridNode = existing ?? {
@@ -383,6 +576,8 @@ function simplifyPath(
   points: readonly MapPoint[],
   knownLand: (x: number, y: number) => boolean,
   maxWaypoints: number,
+  clearanceKm: number,
+  terminalClearanceKm: number,
 ): MapPoint[] {
   if (points.length <= 2) return points.slice(1);
   const result: MapPoint[] = [];
@@ -391,7 +586,14 @@ function simplifyPath(
     let next = points.length - 1;
     while (
       next > anchor + 1 &&
-      !routeSegmentClear(points[anchor]!, points[next]!, knownLand)
+      (!routeSegmentClear(points[anchor]!, points[next]!, knownLand) ||
+        !routeSegmentHasClearance(
+          points[anchor]!,
+          points[next]!,
+          knownLand,
+          clearanceKm,
+          terminalClearanceKm,
+        ))
     ) {
       next -= 1;
     }
@@ -418,6 +620,12 @@ function withGoal(
 export function planRoute(options: RouteOptions): RoutePlan {
   const baseGrid = options.gridKm ?? settings.route.gridKm;
   const clearanceKm = options.clearanceKm ?? settings.route.clearanceKm;
+  const minimumClearanceKm =
+    options.minimumClearanceKm ?? settings.route.minimumClearanceKm;
+  const softClearanceKm =
+    options.softClearanceKm ?? settings.route.softClearanceKm;
+  const softClearanceWeight =
+    options.softClearanceWeight ?? settings.route.softClearanceWeight;
   const terminalClearanceKm =
     options.terminalClearanceKm ?? settings.route.terminalClearanceKm;
   const maxWaypoints = options.maxWaypoints ?? settings.route.maxWaypoints;
@@ -432,7 +640,16 @@ export function planRoute(options: RouteOptions): RoutePlan {
   if (options.knownLand(options.goal.x, options.goal.y)) {
     return { status: "land", waypoints: [], message: ROUTE_LAND, gridKm: baseGrid, nodes: 0 };
   }
-  if (routeSegmentClear(options.start, options.goal, options.knownLand)) {
+  if (
+    routeSegmentClear(options.start, options.goal, options.knownLand) &&
+    routeSegmentHasClearance(
+      options.start,
+      options.goal,
+      options.knownLand,
+      Math.min(clearanceKm, minimumClearanceKm),
+      terminalClearanceKm,
+    )
+  ) {
     return {
       status: "ok",
       waypoints: [{ x: options.goal.x, y: options.goal.y }],
@@ -459,15 +676,30 @@ export function planRoute(options: RouteOptions): RoutePlan {
         marginKm: margin,
         maxNodes,
         clearanceKm,
+        minimumClearanceKm,
+        softClearanceKm,
+        softClearanceWeight,
         terminalClearanceKm,
         maxWaypoints,
       });
       nodes += result.nodes;
       if (result.reachedGoal) {
         const path = withGoal(result.path, options.goal, options.knownLand);
+        const simplified = simplifyPath(
+          path,
+          options.knownLand,
+          maxWaypoints,
+          Math.min(clearanceKm, minimumClearanceKm),
+          terminalClearanceKm,
+        );
         return {
           status: "ok",
-          waypoints: simplifyPath(path, options.knownLand, maxWaypoints),
+          waypoints: removeReversals(
+            options.start,
+            simplified,
+            options.knownLand,
+            Math.min(clearanceKm, minimumClearanceKm),
+          ),
           message: null,
           gridKm,
           nodes,
@@ -488,7 +720,18 @@ export function planRoute(options: RouteOptions): RoutePlan {
   }
 
   const waypoints = bestPartial.length > 1
-    ? simplifyPath(withGoal(bestPartial, options.goal, options.knownLand), options.knownLand, maxWaypoints)
+    ? removeReversals(
+        options.start,
+        simplifyPath(
+          withGoal(bestPartial, options.goal, options.knownLand),
+          options.knownLand,
+          maxWaypoints,
+          Math.min(clearanceKm, minimumClearanceKm),
+          terminalClearanceKm,
+        ),
+        options.knownLand,
+        Math.min(clearanceKm, minimumClearanceKm),
+      )
     : [];
   return {
     status: "partial",

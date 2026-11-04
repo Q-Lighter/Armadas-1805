@@ -1772,3 +1772,29 @@ winding`):
 - No browser is available: the mock-page alignment screenshots and live zoom
   gestures could not be run. Port-coast alignment is only covered indirectly by
   the shared-transform tests.
+
+## 2G-c: responsive layout
+
+- Rebuilt the HUD as three fixed regions. The top bar is one non-wrapping grid:
+  money, game clock, Fleet count, Chart and a three-line Menu button. The bottom
+  action bar is a four-column grid: Tap-to-sail, Move, Multi-select count and
+  Follow, each at least 44 px.
+- The Menu holds Known ports, S/M/L text size, Show borders and a collapsed
+  Debug info section. The old floating TEMP-DEBUG line is now inside that
+  section, so it cannot cover the HUD.
+- The selected-ship panel is a compact strip above the action bar on phones,
+  showing name, speed, heading, crew and provisions. Tapping it expands a
+  full-height paper sheet. Tablets and desktops use a collapsible side panel no
+  wider than 320 px.
+- Fleet, port, shipyard, trade, crew, Known ports and Menu become full-screen
+  sheets on phones, with sticky headings and sticky trade/naming footers. The
+  root font size now carries S/M/L, and landscape phone layouts use shorter
+  bars and scrolling sheets.
+
+### Checks
+
+- `npm test`: **195/195 passing**; `npm run build`: passing.
+- Browser and DOM layout measurement are still unavailable here. The runtime
+  audit (2G-a) is wired to report overlaps, clipping, off-screen boxes and
+  sub-44 px targets in test/dev rooms, but its viewport table has not been
+  produced and the layout has not been visually checked.

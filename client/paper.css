@@ -1667,3 +1667,610 @@ h2 {
     flex: 1 1 30%;
   }
 }
+
+/* --- 2G-c: responsive command layout ---------------------------------- */
+/* Root font size carries the S/M/L choice; --ui-scale stays at 1 so the
+   existing rem-based rules do not scale twice. */
+html[data-ui-size="small"] {
+  font-size: 88%;
+  --ui-scale: 1;
+}
+
+html[data-ui-size="medium"] {
+  font-size: 100%;
+  --ui-scale: 1;
+}
+
+html[data-ui-size="large"] {
+  font-size: 118%;
+  --ui-scale: 1;
+}
+
+body.game {
+  height: 100dvh;
+  min-height: 100dvh;
+  overflow: hidden;
+}
+
+.hud-top {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto auto auto;
+  flex-wrap: nowrap;
+  gap: 0.35rem;
+  align-items: center;
+  padding: 0.3rem 0.4rem;
+  min-height: 3.25rem;
+}
+
+.hud-top .money {
+  min-width: 0;
+  padding: 0.15rem 0.25rem;
+  border: 0;
+  background: none;
+}
+
+.money-value {
+  font-size: 1rem;
+}
+
+.top-clock {
+  min-width: 0;
+  margin: 0;
+  justify-content: center;
+  font-size: 0.92rem;
+}
+
+.top-clock #game-clock {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.top-action {
+  min-width: var(--tap);
+  min-height: var(--tap);
+  padding: 0.2rem 0.4rem;
+  font-size: 0.82rem;
+  white-space: nowrap;
+}
+
+.menu-toggle {
+  gap: 0.2rem;
+}
+
+.menu-lines {
+  font-size: 1.45rem;
+  line-height: 0.8;
+}
+
+/* Bottom action bar: four equal targets, never a wrapping row. */
+.action-bar {
+  left: max(0.4rem, env(safe-area-inset-left));
+  right: max(0.4rem, env(safe-area-inset-right));
+  bottom: max(0.4rem, env(safe-area-inset-bottom));
+  z-index: 9;
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 0.25rem;
+  margin: 0;
+  padding: 0.3rem;
+}
+
+.action-button {
+  flex-direction: column;
+  gap: 0.05rem;
+  min-width: 0;
+  min-height: 48px;
+  padding: 0.2rem;
+  font-size: 0.72rem;
+  line-height: 1.1;
+  white-space: nowrap;
+}
+
+.action-icon {
+  font-size: 1.1rem;
+  line-height: 1;
+}
+
+.action-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Selected ship: a compact strip by default, a detail sheet when expanded. */
+.hud-ship {
+  left: max(0.5rem, env(safe-area-inset-left));
+  bottom: calc(max(0.4rem, env(safe-area-inset-bottom)) + 4.4rem);
+  width: min(320px, calc(100% - 1rem));
+  max-height: calc(100dvh - 8.5rem);
+  padding: 0;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  z-index: 8;
+}
+
+.hud-ship.is-collapsed {
+  max-height: 30dvh;
+}
+
+.ship-strip {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  width: 100%;
+  min-height: 52px;
+  padding: 0.45rem 0.65rem;
+  border: 0;
+  border-bottom: 1px solid var(--rule);
+  background: transparent;
+  color: var(--ink);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.ship-strip-copy {
+  display: grid;
+  min-width: 0;
+  gap: 0.1rem;
+}
+
+.ship-name {
+  overflow: hidden;
+  font-family: "IM Fell English", Georgia, serif;
+  font-size: 1.1rem;
+  font-weight: 400;
+  line-height: 1.15;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ship-strip-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.1rem 0.35rem;
+  color: var(--ink-faded);
+  font-size: 0.74rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.ship-strip-meta span + span::before {
+  content: "·";
+  margin-right: 0.3rem;
+  color: var(--rule);
+}
+
+.ship-chevron {
+  flex: 0 0 auto;
+  font-size: 1.1rem;
+  line-height: 1;
+  transition: transform 0.15s ease;
+}
+
+.hud-ship.is-expanded .ship-chevron {
+  transform: rotate(180deg);
+}
+
+.ship-detail {
+  min-height: 0;
+  padding: 0 0.8rem 0.7rem;
+  overflow: auto;
+  overflow-x: hidden;
+}
+
+.hud-ship.is-collapsed .ship-detail {
+  display: none;
+}
+
+.hud-ship .readout {
+  margin-top: 0.2rem;
+}
+
+.hud-ship .compass {
+  width: 3.4rem;
+  height: 3.4rem;
+}
+
+/* The Menu holds every former top-bar extra and the debug tools. */
+.menu-panel {
+  position: fixed;
+  z-index: 31;
+  top: max(4.1rem, calc(env(safe-area-inset-top) + 3.6rem));
+  right: max(0.5rem, env(safe-area-inset-right));
+  width: min(24rem, calc(100% - 1rem));
+  max-height: calc(100dvh - 4.8rem);
+  overflow: auto;
+  overflow-x: hidden;
+  padding: calc(0.9rem * var(--ui-scale));
+}
+
+.menu-panel[hidden] {
+  display: none;
+}
+
+.menu-room {
+  margin: 0.1rem 0 0.35rem;
+  color: var(--ink-faded);
+  font-size: 0.86rem;
+}
+
+.menu-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+  margin: 0.6rem 0;
+}
+
+.menu-actions .btn {
+  flex: 1 1 8rem;
+}
+
+.size-label {
+  flex: 1 1 100%;
+  color: var(--ink-faded);
+  font-size: 0.9rem;
+  font-weight: 600;
+}
+
+.menu-panel .size-picker {
+  margin: 0.5rem 0 0.7rem;
+}
+
+.debug-info {
+  margin-top: 0.8rem;
+  padding-top: 0.5rem;
+  border-top: 1px solid var(--rule);
+}
+
+.debug-info[hidden] {
+  display: none;
+}
+
+.debug-info > summary {
+  display: flex;
+  align-items: center;
+  min-height: var(--tap);
+  cursor: pointer;
+  font-weight: 600;
+}
+
+/* Inside the Menu, debug output must never float over the game. */
+.fog-debug {
+  position: static;
+  max-width: none;
+  margin: 0.35rem 0;
+  padding: 0.35rem 0.5rem;
+  font-size: 0.76rem;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.layout-audit {
+  position: static;
+  width: auto;
+  max-height: 18rem;
+  margin: 0.5rem 0 0;
+  padding: 0.35rem 0.5rem;
+}
+
+.chart-notice {
+  bottom: calc(max(0.4rem, env(safe-area-inset-bottom)) + 5rem);
+}
+
+.hint {
+  bottom: calc(max(0.4rem, env(safe-area-inset-bottom)) + 5rem);
+  display: none;
+}
+
+.version-notice {
+  top: max(4.2rem, calc(env(safe-area-inset-top) + 3.7rem));
+}
+
+.panel-close {
+  min-width: var(--tap);
+  min-height: var(--tap);
+}
+
+.hire-quick .btn {
+  min-height: var(--tap);
+}
+
+.port-panel,
+.known-ports-panel,
+.fleet-panel,
+.wide-panel,
+.action-sheet,
+.menu-panel {
+  max-width: calc(100% - 1rem);
+  overflow-x: hidden;
+}
+
+.trade-footer,
+.naming-actions {
+  position: sticky;
+  bottom: 0;
+  z-index: 3;
+  background: var(--paper);
+  padding-bottom: max(0.35rem, env(safe-area-inset-bottom));
+}
+
+@media (max-width: 640px) {
+  .hud-top {
+    gap: 0.25rem;
+    padding: 0.25rem 0.3rem;
+    min-height: 3rem;
+  }
+
+  .top-action {
+    padding: 0.15rem 0.3rem;
+    font-size: 0.76rem;
+  }
+
+  .top-clock {
+    font-size: 0.82rem;
+  }
+
+  .top-clock .clock-icon {
+    width: 1rem;
+    height: 1rem;
+  }
+
+  .action-bar {
+    left: max(0.3rem, env(safe-area-inset-left));
+    right: max(0.3rem, env(safe-area-inset-right));
+    bottom: max(0.3rem, env(safe-area-inset-bottom));
+    padding: 0.25rem;
+  }
+
+  .action-button {
+    font-size: 0.68rem;
+    min-height: 46px;
+  }
+
+  /* A collapsed strip sits above the action bar and stays under one third
+     of the phone height; expanding turns the same paper into a full sheet. */
+  .hud-ship {
+    left: max(0.3rem, env(safe-area-inset-left));
+    right: max(0.3rem, env(safe-area-inset-right));
+    bottom: calc(max(0.3rem, env(safe-area-inset-bottom)) + 4.3rem);
+    width: auto;
+    max-height: 32dvh;
+  }
+
+  .hud-ship.is-expanded {
+    top: max(0.4rem, env(safe-area-inset-top));
+    bottom: max(0.4rem, env(safe-area-inset-bottom));
+    left: max(0.4rem, env(safe-area-inset-left));
+    right: max(0.4rem, env(safe-area-inset-right));
+    max-height: none;
+    z-index: 30;
+  }
+
+  .hud-ship.is-expanded .ship-strip {
+    position: sticky;
+    top: 0;
+    z-index: 2;
+    background: var(--paper);
+  }
+
+  .ship-strip {
+    min-height: 56px;
+    padding: 0.4rem 0.55rem;
+  }
+
+  .ship-name {
+    font-size: 1rem;
+  }
+
+  .ship-strip-meta {
+    gap: 0.05rem 0.25rem;
+    font-size: 0.7rem;
+  }
+
+  .ship-strip-meta span + span::before {
+    margin-right: 0.2rem;
+  }
+
+  /* Full-screen paper sheets on a phone. The panel scrolls, never the page. */
+  .port-panel,
+  .known-ports-panel,
+  .fleet-panel,
+  .wide-panel,
+  .action-sheet,
+  .menu-panel {
+    position: fixed;
+    top: max(0.4rem, env(safe-area-inset-top));
+    right: max(0.4rem, env(safe-area-inset-right));
+    bottom: max(0.4rem, env(safe-area-inset-bottom));
+    left: max(0.4rem, env(safe-area-inset-left));
+    width: auto;
+    max-width: none;
+    max-height: none;
+    height: auto;
+    transform: none;
+    overflow-y: auto;
+    overflow-x: hidden;
+    padding: calc(0.8rem * var(--ui-scale));
+  }
+
+  .panel-head {
+    position: sticky;
+    top: 0;
+    z-index: 4;
+    margin: -0.1rem 0 0.5rem;
+    padding: 0.1rem 0 0.4rem;
+    background: var(--paper);
+  }
+
+  .panel-head h2 {
+    font-size: 1.35rem;
+  }
+
+  .chart-notice {
+    left: max(0.5rem, env(safe-area-inset-left));
+    right: max(0.5rem, env(safe-area-inset-right));
+    bottom: calc(max(0.3rem, env(safe-area-inset-bottom)) + 4.6rem);
+    max-width: none;
+    transform: none;
+  }
+
+  .fog-debug {
+    top: auto;
+    right: auto;
+    left: auto;
+  }
+
+  .shipyard-cards {
+    grid-template-columns: 1fr;
+  }
+
+  .trade-tabs {
+    position: sticky;
+    top: 2.6rem;
+  }
+
+  .trade-stepper .btn,
+  .trade-fill,
+  .trade-actions .btn,
+  .fleet-tools .btn {
+    flex: 1 1 auto;
+  }
+
+  .trade-amount {
+    flex: 1 1 4rem;
+  }
+
+  .hint {
+    display: none;
+  }
+}
+
+/* Landscape phones have little height: keep both bars and let sheets scroll. */
+@media (max-height: 440px) and (orientation: landscape) {
+  .hud-top {
+    min-height: 2.75rem;
+    padding-block: 0.15rem;
+  }
+
+  .action-bar {
+    bottom: max(0.25rem, env(safe-area-inset-bottom));
+    padding-block: 0.15rem;
+  }
+
+  .action-button {
+    min-height: 44px;
+  }
+
+  .hud-ship {
+    bottom: calc(max(0.25rem, env(safe-area-inset-bottom)) + 3.9rem);
+    max-height: 38dvh;
+  }
+
+  .hud-ship.is-expanded {
+    top: max(0.3rem, env(safe-area-inset-top));
+    bottom: max(0.3rem, env(safe-area-inset-bottom));
+  }
+
+  .port-panel,
+  .known-ports-panel,
+  .fleet-panel,
+  .wide-panel,
+  .action-sheet,
+  .menu-panel {
+    top: max(0.3rem, env(safe-area-inset-top));
+    bottom: max(0.3rem, env(safe-area-inset-bottom));
+  }
+
+  .panel-head {
+    position: static;
+  }
+}
+
+@media (min-width: 641px) {
+  .hint {
+    display: block;
+  }
+}
+
+@media (max-width: 420px) {
+  .hud-top {
+    gap: 0.2rem;
+    padding-inline: 0.25rem;
+  }
+
+  .top-action {
+    padding: 0.1rem 0.2rem;
+    font-size: 0.7rem;
+  }
+
+  .money-value {
+    font-size: 0.86rem;
+  }
+
+  .coin-icon {
+    width: 0.95rem;
+    height: 0.95rem;
+  }
+
+  .top-clock {
+    gap: 0.2rem;
+    font-size: 0.72rem;
+  }
+
+  .top-clock .clock-icon {
+    width: 0.9rem;
+    height: 0.9rem;
+  }
+
+  .menu-toggle > span:last-child {
+    display: none;
+  }
+
+  .menu-lines {
+    font-size: 1.35rem;
+  }
+
+  .fleet-count {
+    min-width: 1.1rem;
+    min-height: 1.1rem;
+    font-size: 0.66rem;
+  }
+}
+
+/* Landscape phones: use the whole short screen for open pages. */
+@media (max-height: 440px) and (orientation: landscape) {
+  .port-panel,
+  .known-ports-panel,
+  .fleet-panel,
+  .wide-panel,
+  .action-sheet,
+  .menu-panel {
+    left: max(0.3rem, env(safe-area-inset-left));
+    right: max(0.3rem, env(safe-area-inset-right));
+    width: auto;
+    max-width: none;
+    height: auto;
+    max-height: none;
+    transform: none;
+    overflow-y: auto;
+    overflow-x: hidden;
+  }
+
+  .trade-footer,
+  .naming-actions {
+    position: sticky;
+  }
+}
+
+/* Transient server notices sit below the top bar, clear of the action bar,
+   ship strip and open sheets. */
+.chart-notice {
+  top: max(4.3rem, calc(env(safe-area-inset-top) + 3.8rem));
+  bottom: auto;
+}
+
+.hint {
+  display: none;
+}

@@ -454,6 +454,16 @@ async function start(): Promise<void> {
   const knownPortsEmpty = element<HTMLElement>("known-ports-empty");
   const knownPortsClose = element<HTMLButtonElement>("known-ports-close");
   const bordersButton = element<HTMLButtonElement>("borders-btn");
+  const menuButton = element<HTMLButtonElement>("menu-btn");
+  const menuPanel = element<HTMLElement>("menu-panel");
+  const menuClose = element<HTMLButtonElement>("menu-close");
+  const debugSection = element<HTMLDetailsElement>("debug-info");
+  const shipPanel = element<HTMLElement>("ship-panel");
+  const shipExpand = element<HTMLButtonElement>("ship-expand");
+  const shipStripSpeed = element<HTMLElement>("ship-strip-speed");
+  const shipStripHeading = element<HTMLElement>("ship-strip-heading");
+  const shipStripCrew = element<HTMLElement>("ship-strip-crew");
+  const shipStripProvisions = element<HTMLElement>("ship-strip-provisions");
   const clockPanel = element<HTMLElement>("game-clock-panel");
   const clockOut = element<HTMLElement>("game-clock");
   const roomOut = element<HTMLElement>("room-code");
@@ -1372,7 +1382,8 @@ async function start(): Promise<void> {
   }
 
   function updateKnownPortsButton(): void {
-    knownPortsButton.hidden = mode !== "chart" || portData.size === 0;
+    // Known ports belongs to the Menu at every view, not only the chart.
+    knownPortsButton.hidden = false;
     if (mode !== "chart") knownPortsPanel.hidden = true;
   }
 
@@ -2642,6 +2653,10 @@ async function start(): Promise<void> {
       speedOut.textContent = "–";
       headingOut.textContent = "–";
     }
+    shipStripSpeed.textContent = speedOut.textContent;
+    shipStripHeading.textContent = headingOut.textContent;
+    shipStripCrew.textContent = viewRow?.crewText ?? "–";
+    shipStripProvisions.textContent = viewRow?.provisionsText ?? "–";
     shipUndock.hidden = row?.status !== "docked";
   }
 
@@ -2836,6 +2851,7 @@ async function start(): Promise<void> {
     windFrom = Number.isFinite(state.w) ? state.w : settings.weather.windFromDeg;
     roomKind = validRoomKind(state.k) ? state.k : "normal";
     bordersButton.hidden = roomKind === "normal";
+    debugSection.hidden = roomKind === "normal";
     layoutAudit.hidden = roomKind === "normal";
     if (roomKind === "normal") {
       bordersVisible = false;
@@ -3596,8 +3612,32 @@ async function start(): Promise<void> {
     }
   }
 
+  menuButton.addEventListener("click", () => {
+    menuPanel.hidden = !menuPanel.hidden;
+    menuButton.setAttribute("aria-expanded", String(!menuPanel.hidden));
+  });
+  menuClose.addEventListener("click", () => {
+    menuPanel.hidden = true;
+    menuButton.setAttribute("aria-expanded", "false");
+  });
+
+  let shipExpanded = !window.matchMedia("(max-width: 640px)").matches;
+  function setShipExpanded(expanded: boolean): void {
+    shipExpanded = expanded;
+    shipPanel.classList.toggle("is-expanded", expanded);
+    shipPanel.classList.toggle("is-collapsed", !expanded);
+    shipExpand.setAttribute("aria-expanded", String(expanded));
+  }
+  setShipExpanded(shipExpanded);
+  shipExpand.addEventListener("click", () => setShipExpanded(!shipExpanded));
+  window.matchMedia("(max-width: 640px)").addEventListener("change", (event) => {
+    setShipExpanded(!event.matches);
+  });
+
   knownPortsButton.addEventListener("click", () => {
-    if (mode !== "chart") return;
+    if (mode !== "chart") setMode("chart");
+    menuPanel.hidden = true;
+    menuButton.setAttribute("aria-expanded", "false");
     closePortPanel();
     closeFleetPanel();
     closeShipyardPanel();
@@ -3668,6 +3708,8 @@ async function start(): Promise<void> {
   });
   document.addEventListener("keydown", (event) => {
     if (event.key !== "Escape") return;
+    menuPanel.hidden = true;
+    menuButton.setAttribute("aria-expanded", "false");
     closePortPanel();
     closeTradePanel();
     knownPortsPanel.hidden = true;

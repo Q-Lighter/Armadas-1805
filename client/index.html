@@ -12,11 +12,6 @@
     <div id="game-root"></div>
 
     <header class="hud hud-top paper">
-      <div class="room-label">
-        <p class="kicker">Armada's 1805</p>
-        <p class="room">Room <strong id="room-code">test</strong></p>
-      </div>
-
       <div class="money" id="money-panel" title="Pieces of eight">
         <svg class="coin-icon" viewBox="0 0 24 24" aria-hidden="true">
           <circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="1.6" />
@@ -24,63 +19,9 @@
           <path d="M12 7.5v9M9.5 9.5h4a1.6 1.6 0 0 1 0 3.2h-3a1.6 1.6 0 0 0 0 3.2h4" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" />
         </svg>
         <span class="money-value" id="money">0</span>
-        <span class="money-label">pieces</span>
       </div>
 
-      <button class="btn" id="fleet-btn" type="button">
-        Fleet <span class="fleet-count" id="fleet-count">1</span>
-      </button>
-
-      <button class="btn" id="multi-btn" type="button" aria-pressed="false">
-        Multi-select <span class="multi-count" id="multi-count" hidden>0</span>
-      </button>
-
-      <button class="btn" id="tap-btn" type="button" aria-pressed="true">
-        <span class="tap-icon" aria-hidden="true">◉</span>
-        Tap-to-sail: <span id="tap-mode-label">On</span>
-      </button>
-
-      <button class="btn" id="move-btn" type="button" aria-pressed="false" hidden>
-        Move
-      </button>
-
-      <button class="btn" id="follow-btn" type="button" aria-pressed="true">
-        Follow my ship
-      </button>
-
-      <button class="btn" id="chart-btn" type="button" aria-pressed="false">
-        Chart
-      </button>
-
-      <button class="btn" id="known-ports-btn" type="button" hidden>
-        Known ports
-      </button>
-
-      <!-- TEMP-DEBUG: test and dev rooms only. -->
-      <button class="btn" id="borders-btn" type="button" aria-pressed="false" hidden>
-        Show borders
-      </button>
-
-      <div class="size-picker" role="group" aria-label="UI size">
-        <button class="btn size-option" type="button" data-size="small" aria-pressed="false">
-          S
-        </button>
-        <button class="btn size-option" type="button" data-size="medium" aria-pressed="true">
-          M
-        </button>
-        <button class="btn size-option" type="button" data-size="large" aria-pressed="false">
-          L
-        </button>
-      </div>
-
-      <p class="status" id="status" data-state="loading">Connecting…</p>
-    </header>
-
-    <section class="hud hud-ship paper" aria-label="Your ship">
-      <p class="kicker">Selected ship</p>
-      <h2 id="ship-name">Your ship</h2>
-      <p class="ship-type" id="ship-type">–</p>
-      <div class="game-clock" id="game-clock-panel" data-night="false">
+      <div class="game-clock top-clock" id="game-clock-panel" data-night="false">
         <svg class="clock-icon" viewBox="0 0 24 24" aria-hidden="true">
           <g class="clock-sun">
             <circle cx="12" cy="12" r="4.5" fill="currentColor" />
@@ -100,58 +41,139 @@
         </svg>
         <span id="game-clock">Day 1, 08:00</span>
       </div>
-      <dl class="readout">
-        <dt>Crew</dt>
-        <dd id="ship-crew">–</dd>
-        <dt>State</dt>
-        <dd id="ship-state">–</dd>
-        <dt>Speed</dt>
-        <dd id="speed">–</dd>
-        <dt>Heading</dt>
-        <dd id="heading">–</dd>
-      </dl>
 
-      <div class="ship-stores" id="ship-stores" aria-label="Selected ship stores"></div>
-      <p class="ship-starving" id="ship-starving" role="status" hidden>
-        Starving — the crew is dying without provisions.
-      </p>
-      <button class="btn ship-undock" id="ship-undock" type="button" hidden>
-        Undock
+      <button class="btn top-action" id="fleet-btn" type="button">
+        Fleet <span class="fleet-count" id="fleet-count">1</span>
       </button>
 
-      <div class="wind-row">
-        <svg class="wind-arrow" viewBox="0 0 24 24" aria-hidden="true">
-          <g id="wind-arrow">
-            <path d="M12 3 L18 15 L12 12 L6 15 Z" fill="currentColor" />
-          </g>
-        </svg>
-        <span id="wind-label">Wind –</span>
+      <button class="btn top-action" id="chart-btn" type="button" aria-pressed="false">
+        Chart
+      </button>
 
-        <svg
-          class="compass"
-          viewBox="0 0 72 72"
-          role="img"
-          aria-label="Compass rose showing your heading"
-        >
-          <circle cx="36" cy="36" r="32" fill="none" stroke="currentColor" stroke-width="1" />
-          <circle
-            cx="36"
-            cy="36"
-            r="25"
-            fill="none"
-            stroke="currentColor"
-            stroke-width="0.6"
-            stroke-dasharray="2 4"
-          />
-          <g id="compass-needle">
-            <path d="M36 10 L41 37 L36 33 L31 37 Z" fill="#8c1d1d" />
-          </g>
-          <text x="36" y="8" text-anchor="middle">N</text>
-          <text x="65" y="39" text-anchor="middle">E</text>
-          <text x="36" y="70" text-anchor="middle">S</text>
-          <text x="7" y="39" text-anchor="middle">W</text>
-        </svg>
+      <button class="btn top-action menu-toggle" id="menu-btn" type="button" aria-expanded="false" aria-controls="menu-panel">
+        <span class="menu-lines" aria-hidden="true">≡</span>
+        <span>Menu</span>
+      </button>
+    </header>
+
+    <nav class="hud action-bar paper" aria-label="Sailing actions">
+      <button class="btn action-button" id="tap-btn" type="button" aria-pressed="true">
+        <span class="action-icon tap-icon" aria-hidden="true">◉</span>
+        <span class="action-label">Tap <span id="tap-mode-label">On</span></span>
+      </button>
+      <button class="btn action-button" id="move-btn" type="button" aria-pressed="false" hidden>
+        <span class="action-icon" aria-hidden="true">✥</span>
+        <span class="action-label">Move</span>
+      </button>
+      <button class="btn action-button" id="multi-btn" type="button" aria-pressed="false">
+        <span class="action-icon" aria-hidden="true">▣</span>
+        <span class="action-label">Multi <span class="multi-count" id="multi-count" hidden>0</span></span>
+      </button>
+      <button class="btn action-button" id="follow-btn" type="button" aria-pressed="true">
+        <span class="action-icon" aria-hidden="true">⌖</span>
+        <span class="action-label">Follow</span>
+      </button>
+    </nav>
+
+    <section class="hud hud-ship paper" id="ship-panel" aria-label="Your ship">
+      <button class="ship-strip" id="ship-expand" type="button" aria-expanded="false" aria-controls="ship-detail">
+        <span class="ship-strip-copy">
+          <strong class="ship-name" id="ship-name">Your ship</strong>
+          <span class="ship-strip-meta">
+            <span id="ship-strip-speed">–</span>
+            <span id="ship-strip-heading">–</span>
+            <span id="ship-strip-crew">–</span>
+            <span id="ship-strip-provisions">–</span>
+          </span>
+        </span>
+        <span class="ship-chevron" aria-hidden="true">⌃</span>
+      </button>
+
+      <div class="ship-detail" id="ship-detail">
+        <p class="ship-type" id="ship-type">–</p>
+        <dl class="readout">
+          <dt>Crew</dt>
+          <dd id="ship-crew">–</dd>
+          <dt>State</dt>
+          <dd id="ship-state">–</dd>
+          <dt>Speed</dt>
+          <dd id="speed">–</dd>
+          <dt>Heading</dt>
+          <dd id="heading">–</dd>
+        </dl>
+
+        <div class="ship-stores" id="ship-stores" aria-label="Selected ship stores"></div>
+        <p class="ship-starving" id="ship-starving" role="status" hidden>
+          Starving — the crew is dying without provisions.
+        </p>
+        <button class="btn ship-undock" id="ship-undock" type="button" hidden>
+          Undock
+        </button>
+
+        <div class="wind-row">
+          <svg class="wind-arrow" viewBox="0 0 24 24" aria-hidden="true">
+            <g id="wind-arrow">
+              <path d="M12 3 L18 15 L12 12 L6 15 Z" fill="currentColor" />
+            </g>
+          </svg>
+          <span id="wind-label">Wind –</span>
+
+          <svg
+            class="compass"
+            viewBox="0 0 72 72"
+            role="img"
+            aria-label="Compass rose showing your heading"
+          >
+            <circle cx="36" cy="36" r="32" fill="none" stroke="currentColor" stroke-width="1" />
+            <circle
+              cx="36"
+              cy="36"
+              r="25"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="0.6"
+              stroke-dasharray="2 4"
+            />
+            <g id="compass-needle">
+              <path d="M36 10 L41 37 L36 33 L31 37 Z" fill="#8c1d1d" />
+            </g>
+            <text x="36" y="8" text-anchor="middle">N</text>
+            <text x="65" y="39" text-anchor="middle">E</text>
+            <text x="36" y="70" text-anchor="middle">S</text>
+            <text x="7" y="39" text-anchor="middle">W</text>
+          </svg>
+        </div>
       </div>
+    </section>
+
+    <section class="menu-panel paper" id="menu-panel" role="dialog" aria-labelledby="menu-title" hidden>
+      <div class="panel-head">
+        <div>
+          <p class="kicker">Armada's 1805</p>
+          <h2 id="menu-title">Menu</h2>
+        </div>
+        <button class="btn panel-close" id="menu-close" type="button">Close</button>
+      </div>
+      <p class="menu-room">Room <strong id="room-code">test</strong></p>
+      <p class="status" id="status" data-state="loading">Connecting…</p>
+      <div class="menu-actions">
+        <button class="btn" id="known-ports-btn" type="button" hidden>Known ports</button>
+        <button class="btn" id="borders-btn" type="button" aria-pressed="false" hidden>Show borders</button>
+      </div>
+      <div class="size-picker" role="group" aria-label="UI size">
+        <span class="size-label">Text size</span>
+        <button class="btn size-option" type="button" data-size="small" aria-pressed="false">S</button>
+        <button class="btn size-option" type="button" data-size="medium" aria-pressed="true">M</button>
+        <button class="btn size-option" type="button" data-size="large" aria-pressed="false">L</button>
+      </div>
+      <details class="debug-info" id="debug-info" hidden>
+        <summary>Debug info</summary>
+        <p class="fog-debug" id="fog-debug" hidden></p>
+        <details class="layout-audit" id="layout-audit" hidden>
+          <summary id="layout-audit-summary">Layout audit</summary>
+          <ul id="layout-audit-list"></ul>
+        </details>
+      </details>
     </section>
 
     <p class="chart-notice" id="notice" role="status" aria-live="polite" hidden></p>
@@ -381,13 +403,6 @@
     <button class="version-notice paper" id="version-notice" type="button" hidden>
       A new version is available: tap to reload
     </button>
-
-    <!-- TEMP-DEBUG: test and dev rooms only. The client reveals nothing extra. -->
-    <p class="hud fog-debug" id="fog-debug" hidden></p>
-    <details class="hud layout-audit paper" id="layout-audit" hidden>
-      <summary id="layout-audit-summary">Layout audit</summary>
-      <ul id="layout-audit-list"></ul>
-    </details>
 
     <p class="hud charting" id="charting" hidden>Charting…</p>
 

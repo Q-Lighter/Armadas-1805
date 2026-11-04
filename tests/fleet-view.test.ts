@@ -16,8 +16,14 @@ import {
 } from "@naval/shared/fleet-view";
 import type { OwnShipSnapshot } from "@naval/shared/world";
 import { buildPortPanelModel, type PortInfo } from "@naval/shared/port-view";
+import { shipTypeFor } from "@naval/shared/ships";
+import {
+  fullStores,
+  shipStoreCapacities,
+} from "@naval/shared/trade";
 
 function ship(overrides: Partial<OwnShipSnapshot> = {}): OwnShipSnapshot {
+  const type = shipTypeFor("British", "frigate");
   return {
     id: "alpha",
     name: "Agamemnon",
@@ -30,6 +36,11 @@ function ship(overrides: Partial<OwnShipSnapshot> = {}): OwnShipSnapshot {
     deliveryLeftMs: 0,
     x: 10,
     y: 20,
+    stores: fullStores(type),
+    capacities: shipStoreCapacities(type),
+    cargoUsed: 0,
+    provisionsDays: type.storesDays,
+    starving: false,
     ...overrides,
   };
 }

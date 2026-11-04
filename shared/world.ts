@@ -54,6 +54,46 @@ import {
   refillCrewPool,
   shipPrice,
 } from "./shipRules.js";
+import {
+  isCargoGoodId,
+  isGoodId,
+  isResourceId,
+  goodName,
+  type GoodId,
+} from "./data/goods.js";
+import {
+  addGoodToStores,
+  addLimitedProduction,
+  advanceProvisions,
+  cargoTotal,
+  cloneStores,
+  createPriceState,
+  emptyGoods,
+  freeSpaceForGood,
+  fullStores,
+  goodAmount,
+  initialNpcStock,
+  initialPortStorage,
+  portProduction,
+  portStorageLimit,
+  postedPrice,
+  priceList,
+  provisionsDaysLeft,
+  quoteBuy,
+  quoteSell,
+  quoteTransfer,
+  refillNpcStock,
+  removeGoodFromStores,
+  shipIsStarving,
+  shipStoreCapacities,
+  shiftPrices,
+  totalGoods,
+  type GoodsAmounts,
+  type PriceState,
+  type ShipStoreCapacities,
+  type ShipStores,
+  type TransferDirection,
+} from "./trade.js";
 
 const DEG = Math.PI / 180;
 const RAD = 180 / Math.PI;
@@ -113,6 +153,18 @@ export interface World {
   charts: Map<string, ChartState>;
   /** Short messages waiting for each player; never part of the world state. */
   notices: Map<string, string[]>;
+  /** Shared storage at every capturable port, all goods together. */
+  portStorage: Map<string, GoodsAmounts>;
+  /** Resource stock held by NPC merchants, by port. */
+  npcStocks: Map<string, GoodsAmounts>;
+  /** The current regional trends and per-port price factors. */
+  priceState: PriceState;
+  /** Game time of the next production cycle. */
+  nextProductionGameMs: number;
+  /** Game time of the next regional/port price shift. */
+  nextPriceShiftGameMs: number;
+  /** Provisions multiplier; normal rooms always use one. */
+  hungerMultiplier: number;
 }
 
 /**
@@ -131,9 +183,18 @@ export type ShipSnapshot = [
   waitingPortId: string | null,
 ];
 
+/** What a player may see of one port's trade. */
+export interface PortTradeSnapshot {
+  /** Prices in pieces of eight per tonne, only when this player may know them. */
+  prices: Record<GoodId, number> | null;
+  /** Shared storage, only for a port this player may use. */
+  storage: GoodsAmounts | null;
+  storageLimit: number;
+}
+
 /**
  * A found port: [id, name, size, npc 0/1, x, y, region, good,
- * free places or null, shipyard open 0/1, crew pool].
+ * free places or null, shipyard open 0/1, crew pool, trade or null].
  */
 export type PortSnapshot = [
   id: string,
@@ -147,6 +208,7 @@ export type PortSnapshot = [
   freePlaces: number | null,
   buyable: 0 | 1,
   crewAvailable: number,
+  trade: PortTradeSnapshot | null,
 ];
 
 /** A short event message, separate from world state. */
@@ -174,6 +236,11 @@ export interface OwnShipSnapshot {
   deliveryLeftMs: number;
   x: number;
   y: number;
+  stores: ShipStores;
+  capacities: ShipStoreCapacities;
+  cargoUsed: number;
+  provisionsDays: number;
+  starving: boolean;
 }
 
 /**
@@ -206,6 +273,8 @@ export interface StateMessage {
   sel: string | null;
   /** Full private detail for this player's own fleet only. */
   fleet: OwnShipSnapshot[];
+  /** Test/dev provisions multiplier, shown by TEMP-DEBUG only. */
+  h?: number;
   /** TEMP-DEBUG: dev-room load-test counters. */
   d?: DebugStats;
 }
@@ -215,6 +284,40 @@ export interface WorldOptions {
   startPort?: PlacedPort | null;
   shipClass?: ShipClassId;
   startMoney?: number;
+  /** Test/dev only; normal rooms force one. */
+  hungerMultiplier?: number;
+  /** Fixed room seed for repeatable prices. */
+  priceSeed?: number;
+}
+
+function hashText(text: string): number {
+  let hash = 2166136261;
+  for (let index = 0; index < text.length; index += 1) {
+    hash ^= text.charCodeAt(index);
+    hash = Math.imul(hash, 16777619);
+  }
+  return hash >>> 0;
+}
+
+function gameCycleMs(gameDays: number): number {
+  return gameDays * settings.time.hoursPerDay * 60 * 60 * 1_000;
+}
+
+/** All port economies start with local production in their stores. */
+function startingPortStorage(): Map<string, GoodsAmounts> {
+  const storage = new Map<string, GoodsAmounts>();
+  for (const port of PLACED_PORTS) {
+    if (!port.npc) storage.set(port.id, initialPortStorage(port));
+  }
+  return storage;
+}
+
+function startingNpcStocks(): Map<string, GoodsAmounts> {
+  const stocks = new Map<string, GoodsAmounts>();
+  for (const port of PLACED_PORTS) {
+    if (port.npc) stocks.set(port.id, initialNpcStock(port));
+  }
+  return stocks;
 }
 
 export function createWorld(roomCode = "main", options: WorldOptions = {}): World {
@@ -232,6 +335,10 @@ export function createWorld(roomCode = "main", options: WorldOptions = {}): Worl
   const startMoney = kind === "normal"
     ? settings.ships.startMoney.normal
     : options.startMoney ?? settings.ships.startMoney[kind];
+  const hungerMultiplier = kind === "normal"
+    ? settings.trade.normalHungerMultiplier
+    : options.hungerMultiplier ?? settings.trade.testHungerMultiplier;
+  const priceSeed = options.priceSeed ?? hashText(roomCode);
 
   return {
     tick: 0,
@@ -253,6 +360,12 @@ export function createWorld(roomCode = "main", options: WorldOptions = {}): Worl
     botFleets: new Map(),
     charts: new Map(),
     notices: new Map(),
+    portStorage: startingPortStorage(),
+    npcStocks: startingNpcStocks(),
+    priceState: createPriceState(priceSeed),
+    nextProductionGameMs: gameCycleMs(settings.trade.production.cycleGameDays),
+    nextPriceShiftGameMs: gameCycleMs(settings.trade.pricesCycle.shiftGameDays),
+    hungerMultiplier: Math.max(0, hungerMultiplier),
   };
 }
 
@@ -433,6 +546,7 @@ export function addPlayer(
   );
   // Starting ships are ready for sea at once. Only bought ships arrive empty.
   ship.crew = ship.fullCrew;
+  ship.stores = fullStores(shipTypeFor(world.navy, classId));
   world.players.set(playerId, ship);
   world.fleets.set(playerId, [ship]);
   world.owners.set(playerId, { money: startMoney, selectedShipId: ship.id });
@@ -817,6 +931,336 @@ export function hireCrew(
   ship.crew = wanted;
   pushNotice(world, playerId, `Hired ${count} sailors for ${cost} pieces of eight.`);
   return true;
+}
+
+/** The shared storage at one capturable port. It starts half full. */
+export function portStorageFor(world: World, port: PlacedPort): GoodsAmounts {
+  let storage = world.portStorage.get(port.id);
+  if (!storage) {
+    storage = initialPortStorage(port);
+    world.portStorage.set(port.id, storage);
+  }
+  return storage;
+}
+
+/** The five resource amounts an NPC merchant has for sale. */
+export function npcStockFor(world: World, port: PlacedPort): GoodsAmounts {
+  let stock = world.npcStocks.get(port.id);
+  if (!stock) {
+    stock = initialNpcStock(port);
+    world.npcStocks.set(port.id, stock);
+  }
+  return stock;
+}
+
+function localPrice(world: World, port: PlacedPort, good: GoodId): number {
+  return postedPrice(good, port, world.priceState);
+}
+
+function tonnesText(tonnes: number): string {
+  const rounded = Math.round(tonnes * 100) / 100;
+  return `${rounded} t`;
+}
+
+function refreshStarving(ship: Ship): void {
+  ship.starving = shipIsStarving(ship.stores, ship.crew);
+}
+
+/** Resolve the ship and port for an order, requiring a berth at that port. */
+function shipDockedAt(
+  world: World,
+  playerId: string,
+  shipId: unknown,
+  portId: unknown,
+): { ship: Ship; port: PlacedPort; owner: OwnerState } | null {
+  if (typeof portId !== "string") return null;
+  const ship = shipForOrder(world, playerId, shipId);
+  const port = world.ports.get(portId);
+  const owner = world.owners.get(playerId);
+  if (!ship || !port || !owner || ship.deliveryPortId) return null;
+  if (ship.dockedPortId !== port.id) return null;
+  if (!world.charts.get(playerId)?.foundPorts.has(port.id)) return null;
+  return { ship, port, owner };
+}
+
+/**
+ * Buy a resource from an NPC merchant. Stock, money and the right ship store
+ * all limit the trade; a partial purchase is allowed and reported.
+ */
+export function buyGoods(
+  world: World,
+  playerId: string,
+  shipId: unknown,
+  portId: unknown,
+  rawGood: unknown,
+  requested: unknown,
+): boolean {
+  const found = shipDockedAt(world, playerId, shipId, portId);
+  if (!found) return false;
+  const { ship, port, owner } = found;
+  if (!isResourceId(rawGood)) return false;
+  const good = rawGood;
+  if (!port.npc) {
+    pushNotice(world, playerId, "This port does not sell supplies.");
+    return false;
+  }
+  if (typeof requested !== "number" || !Number.isFinite(requested)) return false;
+
+  const stock = npcStockFor(world, port);
+  const unitPrice = localPrice(world, port, good);
+  const quote = quoteBuy({
+    good,
+    requested,
+    stock: stock[good],
+    money: owner.money,
+    stores: ship.stores,
+    capacities: shipStoreCapacities(shipSpecFor(ship)),
+    unitPrice,
+  });
+  if (quote.amount <= 0) {
+    if (quote.reason) pushNotice(world, playerId, quote.reason);
+    return false;
+  }
+
+  stock[good] = Math.max(0, stock[good] - quote.amount);
+  owner.money -= quote.total;
+  addGoodToStores(ship.stores, good, quote.amount);
+  refreshStarving(ship);
+  pushNotice(
+    world,
+    playerId,
+    `Bought ${tonnesText(quote.amount)} of ${goodName(good)} for ${quote.total} pieces of eight.`,
+  );
+  return true;
+}
+
+/** Sell cargo at an NPC, or into a usable port's shared storage. */
+export function sellGoods(
+  world: World,
+  playerId: string,
+  shipId: unknown,
+  portId: unknown,
+  rawGood: unknown,
+  requested: unknown,
+): boolean {
+  const found = shipDockedAt(world, playerId, shipId, portId);
+  if (!found) return false;
+  const { ship, port, owner } = found;
+  if (!isCargoGoodId(rawGood) || typeof requested !== "number" || !Number.isFinite(requested)) {
+    return false;
+  }
+  const good = rawGood;
+  const usable = portUsableForBuying(world, port, playerId);
+  if (!port.npc && !usable) {
+    pushNotice(world, playerId, "You cannot trade at this port.");
+    return false;
+  }
+
+  const storage = usable ? portStorageFor(world, port) : null;
+  const portFree = storage
+    ? Math.max(0, portStorageLimit(port) - totalGoods(storage))
+    : null;
+  const unitPrice = localPrice(world, port, good);
+  const quote = quoteSell({
+    good,
+    requested,
+    hold: goodAmount(ship.stores, good),
+    unitPrice,
+    portFreeSpace: portFree,
+  });
+  if (quote.amount <= 0) {
+    if (quote.reason) pushNotice(world, playerId, quote.reason);
+    return false;
+  }
+
+  removeGoodFromStores(ship.stores, good, quote.amount);
+  if (storage) storage[good] += quote.amount;
+  owner.money += quote.total;
+  pushNotice(
+    world,
+    playerId,
+    `Sold ${tonnesText(quote.amount)} of ${goodName(good)} for ${quote.total} pieces of eight.`,
+  );
+  return true;
+}
+
+/** Load from a usable port's storage, or unload into it. This is free. */
+export function transferGoods(
+  world: World,
+  playerId: string,
+  shipId: unknown,
+  portId: unknown,
+  rawGood: unknown,
+  requested: unknown,
+  direction: TransferDirection,
+): boolean {
+  const found = shipDockedAt(world, playerId, shipId, portId);
+  if (!found) return false;
+  const { ship, port } = found;
+  if (!isGoodId(rawGood) || typeof requested !== "number" || !Number.isFinite(requested)) {
+    return false;
+  }
+  if (direction !== "load" && direction !== "unload") return false;
+  if (!portUsableForBuying(world, port, playerId)) {
+    pushNotice(world, playerId, "You cannot use this port's storage.");
+    return false;
+  }
+  const good = rawGood;
+  const storage = portStorageFor(world, port);
+  const capacities = shipStoreCapacities(shipSpecFor(ship));
+  const portFree = Math.max(0, portStorageLimit(port) - totalGoods(storage));
+  const quote = quoteTransfer({
+    direction,
+    good,
+    requested,
+    shipAmount: goodAmount(ship.stores, good),
+    portAmount: storage[good],
+    shipFree: freeSpaceForGood(ship.stores, capacities, good),
+    portFree,
+  });
+  if (quote.amount <= 0) {
+    if (quote.reason) pushNotice(world, playerId, quote.reason);
+    return false;
+  }
+
+  if (direction === "load") {
+    storage[good] = Math.max(0, storage[good] - quote.amount);
+    addGoodToStores(ship.stores, good, quote.amount);
+  } else {
+    removeGoodFromStores(ship.stores, good, quote.amount);
+    storage[good] += quote.amount;
+  }
+  refreshStarving(ship);
+  pushNotice(
+    world,
+    playerId,
+    `${direction === "load" ? "Loaded" : "Unloaded"} ${tonnesText(quote.amount)} of ${goodName(good)}.`,
+  );
+  return true;
+}
+
+/**
+ * Fill provisions, repair materials and ammunition from the docked port. NPC
+ * ports sell them at posted prices; usable ports give them from storage. The
+ * summary says what moved and, at an NPC, what it cost.
+ */
+export function resupplyShip(
+  world: World,
+  playerId: string,
+  shipId: unknown,
+  portId: unknown,
+): boolean {
+  const found = shipDockedAt(world, playerId, shipId, portId);
+  if (!found) return false;
+  const { ship, port, owner } = found;
+  const usable = portUsableForBuying(world, port, playerId);
+  if (!port.npc && !usable) {
+    pushNotice(world, playerId, "You cannot resupply at this port.");
+    return false;
+  }
+
+  const capacities = shipStoreCapacities(shipSpecFor(ship));
+  const stock = npcStockFor(world, port);
+  const storage = usable ? portStorageFor(world, port) : null;
+  const taken: string[] = [];
+  let cost = 0;
+
+  for (const good of ["provisions", "repairMaterials", "ammunition"] as const) {
+    const cap = capacities[good];
+    const needed = Math.max(0, cap - goodAmount(ship.stores, good));
+    if (needed <= 0) continue;
+    if (port.npc) {
+      const quote = quoteBuy({
+        good,
+        requested: needed,
+        stock: stock[good],
+        money: owner.money,
+        stores: ship.stores,
+        capacities,
+        unitPrice: localPrice(world, port, good),
+      });
+      if (quote.amount <= 0) continue;
+      stock[good] -= quote.amount;
+      owner.money -= quote.total;
+      addGoodToStores(ship.stores, good, quote.amount);
+      cost += quote.total;
+      taken.push(`${tonnesText(quote.amount)} ${goodName(good).toLowerCase()}`);
+    } else if (storage) {
+      const amount = Math.min(needed, storage[good]);
+      if (amount <= 0) continue;
+      storage[good] -= amount;
+      addGoodToStores(ship.stores, good, amount);
+      taken.push(`${tonnesText(amount)} ${goodName(good).toLowerCase()}`);
+    }
+  }
+
+  refreshStarving(ship);
+  if (taken.length === 0) {
+    pushNotice(world, playerId, "No supplies available.");
+    return false;
+  }
+  const costText = cost > 0 ? ` for ${cost} pieces of eight` : " free";
+  pushNotice(world, playerId, `Resupplied: ${taken.join(", ")}${costText}.`);
+  return true;
+}
+
+/** One production cycle for every port and NPC merchant in the room. */
+function runProductionCycle(world: World): void {
+  for (const port of PLACED_PORTS) {
+    if (port.npc) {
+      refillNpcStock(npcStockFor(world, port), port);
+    } else {
+      addLimitedProduction(
+        portStorageFor(world, port),
+        portStorageLimit(port),
+        portProduction(port),
+      );
+    }
+  }
+}
+
+/** Advance production and price shifts to the new game time. */
+function updatePortEconomy(world: World): void {
+  const productionEvery = gameCycleMs(settings.trade.production.cycleGameDays);
+  while (world.gameMs >= world.nextProductionGameMs) {
+    runProductionCycle(world);
+    world.nextProductionGameMs += productionEvery;
+  }
+
+  const pricesEvery = gameCycleMs(settings.trade.pricesCycle.shiftGameDays);
+  while (world.gameMs >= world.nextPriceShiftGameMs) {
+    world.priceState = shiftPrices(world.priceState, PLACED_PORTS);
+    world.nextPriceShiftGameMs += pricesEvery;
+  }
+}
+
+/** Consume human crews' provisions. Bots keep their full larder untouched. */
+function updateHunger(world: World, dtGameSeconds: number): void {
+  const gameDays = dtGameSeconds /
+    (settings.time.hoursPerDay * 60 * 60);
+  if (!(gameDays > 0)) return;
+
+  for (const [ownerId, fleet] of world.fleets) {
+    for (const ship of fleet) {
+      if (ship.crew <= 0) {
+        ship.starving = false;
+        continue;
+      }
+      const wasStarving = ship.starving;
+      const result = advanceProvisions(
+        ship.stores.provisions,
+        ship.crew,
+        gameDays,
+        world.hungerMultiplier,
+      );
+      ship.stores.provisions = result.provisions;
+      ship.crew = result.crew;
+      ship.starving = result.starving && ship.crew > 0;
+      if (ship.starving && !wasStarving) {
+        pushNotice(world, ownerId, "Starving: no provisions left.");
+      }
+    }
+  }
 }
 
 /** Refill every pool that has been used, from real time while occupied. */
@@ -1252,6 +1696,8 @@ export function stepWorld(
     : 0;
   world.gameMs += elapsedMs;
   world.gameSeconds = world.gameMs / 1000;
+  updateHunger(world, dtGameSeconds);
+  updatePortEconomy(world);
   updateCrewPools(world, dtGameSeconds);
   deliverReadyShips(world);
   updateFog(world);
@@ -1359,11 +1805,21 @@ export function visibleStateFor(
   }
 
   // Free places are only for a port where this player already has a berth.
+  // Prices need a berth or a usable port. Storage needs a usable port.
   const ports: PortSnapshot[] = [];
   for (const port of PLACED_PORTS) {
     if (!chart.foundPorts.has(port.id)) continue;
     const dockedHere = own.some((ship) => ship.dockedPortId === port.id);
+    const usable = portUsableForBuying(world, port, playerId);
     const pool = portCrewPool(world, port);
+    const storage = usable ? roundedGoods(portStorageFor(world, port)) : null;
+    const trade: PortTradeSnapshot = {
+      prices: dockedHere || usable
+        ? priceList(port, world.priceState)
+        : null,
+      storage,
+      storageLimit: portStorageLimit(port),
+    };
     const snapshot: PortSnapshot = [
       port.id,
       port.name,
@@ -1374,30 +1830,46 @@ export function visibleStateFor(
       port.region,
       port.good,
       dockedHere ? Math.max(0, portCapacity(port) - dockedCount(world, port.id)) : null,
-      portUsableForBuying(world, port, playerId) ? 1 : 0,
+      usable ? 1 : 0,
       Math.floor(pool.crew),
+      trade,
     ];
     ports.push(snapshot);
   }
 
   const owner = world.owners.get(playerId);
-  const fleet: OwnShipSnapshot[] = own.map((ship) => ({
-    id: ship.id,
-    name: ship.name,
-    classId: ship.classId,
-    navy: ship.navy,
-    crew: ship.crew,
-    fullCrew: ship.fullCrew,
-    status: shipStatus(ship),
-    portId: ship.deliveryPortId ?? ship.dockedPortId ?? ship.waitingPortId,
-    deliveryLeftMs: ship.deliveryPortId
-      ? Math.max(0, Math.round(ship.deliveryReadyGameMs - world.gameMs))
-      : 0,
-    x: Number(ship.x.toFixed(2)),
-    y: Number(ship.y.toFixed(2)),
-  }));
+  const fleet: OwnShipSnapshot[] = own.map((ship) => {
+    const capacities = shipStoreCapacities(shipSpecFor(ship));
+    const days = provisionsDaysLeft(
+      ship.stores.provisions,
+      ship.crew,
+      world.hungerMultiplier,
+    );
+    return {
+      id: ship.id,
+      name: ship.name,
+      classId: ship.classId,
+      navy: ship.navy,
+      crew: ship.crew,
+      fullCrew: ship.fullCrew,
+      status: shipStatus(ship),
+      portId: ship.deliveryPortId ?? ship.dockedPortId ?? ship.waitingPortId,
+      deliveryLeftMs: ship.deliveryPortId
+        ? Math.max(0, Math.round(ship.deliveryReadyGameMs - world.gameMs))
+        : 0,
+      x: Number(ship.x.toFixed(2)),
+      y: Number(ship.y.toFixed(2)),
+      stores: cloneStores(ship.stores),
+      capacities,
+      cargoUsed: Number(cargoTotal(ship.stores.cargo).toFixed(2)),
+      provisionsDays: Number.isFinite(days)
+        ? Number(days.toFixed(2))
+        : 9_999,
+      starving: ship.starving,
+    };
+  });
 
-  return {
+  const state: StateMessage = {
     t: "s",
     tick: world.tick,
     you: playerId,
@@ -1412,4 +1884,14 @@ export function visibleStateFor(
     sel: owner?.selectedShipId ?? null,
     fleet,
   };
+  if (world.kind !== "normal") state.h = world.hungerMultiplier;
+  return state;
+}
+
+function roundedGoods(goods: Readonly<GoodsAmounts>): GoodsAmounts {
+  const out = emptyGoods();
+  for (const good of Object.keys(goods) as GoodId[]) {
+    out[good] = Number(Math.max(0, goods[good]).toFixed(3));
+  }
+  return out;
 }

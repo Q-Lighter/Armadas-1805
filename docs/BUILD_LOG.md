@@ -1321,3 +1321,39 @@ and short docking notices.
 - No world storage yet, no server commands and no trade screens. Those are
   Parts B and C.
 - No browser is available; this part is pure data and rules only.
+
+## Session 2D-b: server trading and stores
+
+**Date:** 2026-11-04
+**Branch:** main
+
+### What was built
+
+- Starting ships now carry full provisions, ammunition and repair materials.
+  Bought and delivered hulls stay empty, and bots get a full larder without
+  hunger simulation.
+- Added shared port storage, full NPC resource stock, production every three
+  game days, NPC refills and price shifts every sixty game days. All of it
+  advances only while the room is occupied.
+- Added server-checked buying at NPC ports, selling at NPC or usable ports,
+  free loading and unloading against usable storage, and the resupply command.
+- Added provisions consumption and starvation, the test/dev hunger multiplier,
+  `&hunger=` on test/dev joins, and the starving flag in private ship state.
+- Port snapshots now carry a filtered trade record: prices only for a docked or
+  usable port, storage only for a usable port. Other players' stores are never
+  sent; foreign ship tuples still carry only navy and class.
+
+### Checks
+
+- `npm test`: **137/137 passing**, including buying/selling/space/stock/money,
+  storage limits, non-usable ports, production, NPC refill, starvation, hunger
+  scaling, price shifts and privacy.
+- `npm run build`: passing.
+- `npm run test:server`: passing (`SIMULATION PASSED`, 118 ticks, 63 updates,
+  809-byte typical update).
+
+### Broken or unfinished
+
+- No trade screens yet; the client ignores the new trade and store fields until
+  Part C.
+- No browser is available, so none of the trading UI has been visually tested.

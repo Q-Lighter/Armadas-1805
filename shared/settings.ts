@@ -276,6 +276,8 @@ export const settings = {
     testHungerMultiplier: 10,
     /** Normal rooms consume provisions at the ordinary rate. */
     normalHungerMultiplier: 1,
+    /** The largest &hunger= multiplier a test/dev room accepts. */
+    maxTestHungerMultiplier: 1_000,
   },
 
   /** The four navies, their real starts and their draft hull colours. */

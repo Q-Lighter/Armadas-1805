@@ -5,7 +5,8 @@
 // and uses the same sailing, coast and fog rules as it does for players.
 
 import { settings } from "./settings.js";
-import { createShip, sailTo, type Ship } from "./sailing.js";
+import { createShip, sailTo, shipSpecFor, type Ship } from "./sailing.js";
+import { shipStoreCapacities } from "./trade.js";
 import { isSeaAt } from "./land.js";
 import { lonLatToMap } from "./map.js";
 import { createChart, revealCircle } from "./fog.js";
@@ -203,6 +204,8 @@ export function addBots(
       spawn.y,
       random() * Math.PI * 2,
     );
+    // Bots never starve; they carry a full larder and no hunger is simulated.
+    ship.stores.provisions = shipStoreCapacities(shipSpecFor(ship)).provisions;
     sendBotToSea(ship, random);
 
     const fleet = world.botFleets.get(owner) ?? [];

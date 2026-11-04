@@ -48,6 +48,8 @@ export interface Ship {
   readonly fullCrew: number;
   /** Provisions, ammunition, repair materials and cargo, in tonnes. */
   stores: ShipStores;
+  /** True while the ship has no provisions and still has crew. */
+  starving: boolean;
   /** A ship under construction has a port and a game-time delivery moment. */
   deliveryPortId: string | null;
   deliveryReadyGameMs: number;
@@ -149,6 +151,7 @@ export function createShip(
     crew: crew ?? type.crew,
     fullCrew: type.crew,
     stores: emptyStores(),
+    starving: false,
     deliveryPortId: null,
     deliveryReadyGameMs: 0,
     x,

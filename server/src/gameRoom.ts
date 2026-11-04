@@ -11,14 +11,18 @@ import {
   addPlayer,
   applyOrder,
   applyPortOrder,
+  buyGoods,
   buyShip,
   createWorld,
   hireCrew,
   removePlayer,
+  resupplyShip,
   selectShip,
+  sellGoods,
   shipClassForRoom,
   stepWorld,
   takeNotice,
+  transferGoods,
   undock,
   visibleStateFor,
   type NoticeMessage,
@@ -78,6 +82,7 @@ export class GameRoom {
     let startPort: PlacedPort | null = null;
     let shipClass: ShipClassId | null = null;
     let startMoney: number | undefined;
+    let hungerMultiplier: number | undefined;
     if (kind !== "normal") {
       const rawNavy = url.searchParams.get("navy");
       if (rawNavy !== null) {
@@ -117,11 +122,35 @@ export class GameRoom {
         }
         startMoney = Number(rawCash);
       }
+
+      const rawHunger = url.searchParams.get("hunger");
+      if (rawHunger !== null) {
+        if (!/^\d{1,4}(?:\.\d{1,3})?$/.test(rawHunger)) {
+          return new Response(
+            `Hunger must be a number from 0 to ${settings.trade.maxTestHungerMultiplier}.`,
+            { status: 400 },
+          );
+        }
+        const parsed = Number(rawHunger);
+        if (!Number.isFinite(parsed) || parsed < 0 || parsed > settings.trade.maxTestHungerMultiplier) {
+          return new Response(
+            `Hunger must be a number from 0 to ${settings.trade.maxTestHungerMultiplier}.`,
+            { status: 400 },
+          );
+        }
+        hungerMultiplier = parsed;
+      }
     }
 
     if (room !== this.world.roomCode) {
       this.ghosts.clear();
-      this.world = createWorld(room, { navy, startPort, shipClass: shipClass ?? undefined, startMoney });
+      this.world = createWorld(room, {
+        navy,
+        startPort,
+        shipClass: shipClass ?? undefined,
+        startMoney,
+        hungerMultiplier,
+      });
     }
 
     const playerId = url.searchParams.get("player") ?? "";
@@ -276,6 +305,8 @@ export class GameRoom {
       type?: unknown;
       name?: unknown;
       count?: unknown;
+      good?: unknown;
+      amount?: unknown;
     };
 
     if (order.t === "o") {
@@ -290,6 +321,16 @@ export class GameRoom {
       buyShip(this.world, playerId, order.port, order.type, order.name);
     } else if (order.t === "hire") {
       hireCrew(this.world, playerId, order.ship, order.port, order.count);
+    } else if (order.t === "buyGoods") {
+      buyGoods(this.world, playerId, order.ship, order.port, order.good, order.amount);
+    } else if (order.t === "sellGoods") {
+      sellGoods(this.world, playerId, order.ship, order.port, order.good, order.amount);
+    } else if (order.t === "load") {
+      transferGoods(this.world, playerId, order.ship, order.port, order.good, order.amount, "load");
+    } else if (order.t === "unload") {
+      transferGoods(this.world, playerId, order.ship, order.port, order.good, order.amount, "unload");
+    } else if (order.t === "resupply") {
+      resupplyShip(this.world, playerId, order.ship, order.port);
     }
   }
 }

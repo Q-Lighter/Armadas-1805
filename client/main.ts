@@ -30,11 +30,26 @@ import {
 } from "@naval/shared/player-identity";
 import { TAKEN_OVER_CLOSE_CODE } from "@naval/shared/player-sessions";
 import type {
+  FleetMemberSnapshot,
+  FleetSnapshot,
   LastSeenSnapshot,
+  OrderLineSnapshot,
   OwnShipSnapshot,
   ShipSnapshot,
   StateMessage,
 } from "@naval/shared/world";
+import type { FleetOrder } from "@naval/shared/fleet-orders";
+import {
+  FORMATION_OPTIONS,
+  controlGroupSlotForKey,
+  fleetMemberStateText,
+  orderMenuItems,
+  responsiveFleetLayout,
+  selectedShipIdsInBox,
+  stanceLabel,
+  stanceOptionIds,
+} from "@naval/shared/fleet-ui";
+import { headingTarget } from "@naval/shared/fleet-orders";
 import { orderedChartBlocks } from "@naval/shared/chart-draw";
 import { chartTextureSize, planChartDetail } from "@naval/shared/chart-detail";
 import {
@@ -263,6 +278,64 @@ function parseCapacities(raw: unknown): ShipStoreCapacities | null {
   return { provisions, ammunition, repairMaterials, cargo };
 }
 
+function parseOrderLines(raw: unknown): OrderLineSnapshot[] {
+  if (!Array.isArray(raw)) return [];
+  const lines: OrderLineSnapshot[] = [];
+  for (const entry of raw.slice(0, 12)) {
+    if (!entry || typeof entry !== "object") continue;
+    const source = entry as Record<string, unknown>;
+    if (typeof source.kind !== "string" || !Array.isArray(source.points)) continue;
+    const points: Array<[number, number]> = [];
+    for (const point of source.points.slice(0, 200)) {
+      if (!Array.isArray(point) || point.length !== 2) continue;
+      const x = finiteNumber(point[0]);
+      const y = finiteNumber(point[1]);
+      if (x !== null && y !== null) points.push([x, y]);
+    }
+    if (points.length > 0) {
+      lines.push({
+        kind: source.kind as OrderLineSnapshot["kind"],
+        points,
+        label: typeof source.label === "string" ? source.label.slice(0, 80) : "",
+        queueNumber: finiteNumber(source.queueNumber) ?? undefined,
+      });
+    }
+  }
+  return lines;
+}
+
+/** Validate a private fleet card without trusting the socket. */
+function parseFleet(raw: unknown): FleetSnapshot | null {
+  if (!raw || typeof raw !== "object") return null;
+  const source = raw as Record<string, unknown>;
+  if (
+    typeof source.id !== "string" ||
+    typeof source.name !== "string" ||
+    typeof source.leaderId !== "string" ||
+    !Array.isArray(source.members) ||
+    source.members.length === 0
+  ) return null;
+  const members: FleetMemberSnapshot[] = [];
+  for (const entry of source.members.slice(0, settings.fleets.maxShipsPerFleet)) {
+    if (!entry || typeof entry !== "object") continue;
+    const member = entry as Record<string, unknown>;
+    if (typeof member.id !== "string" || typeof member.state !== "string") continue;
+    members.push({
+      id: member.id,
+      state: member.state as FleetMemberSnapshot["state"],
+    });
+  }
+  if (members.length === 0) return null;
+  return {
+    id: source.id,
+    name: source.name.slice(0, 80),
+    leaderId: source.leaderId,
+    formation: (typeof source.formation === "string" ? source.formation : "lineAhead") as FleetSnapshot["formation"],
+    stance: (typeof source.stance === "string" ? source.stance : "fightIfAttacked") as FleetSnapshot["stance"],
+    members,
+  };
+}
+
 /** Validate one private fleet row without trusting the socket. */
 function parseOwnShip(raw: unknown): OwnShipSnapshot | null {
   if (!raw || typeof raw !== "object") return null;
@@ -329,6 +402,12 @@ function parseOwnShip(raw: unknown): OwnShipSnapshot | null {
         ? points
         : null;
     })(),
+    fleetId: typeof source.fleetId === "string" ? source.fleetId : null,
+    detached: source.detached === true,
+    stance: typeof source.stance === "string"
+      ? source.stance as OwnShipSnapshot["stance"]
+      : undefined,
+    orderLines: parseOrderLines(source.orderLines),
   };
 }
 
@@ -410,7 +489,25 @@ async function start(): Promise<void> {
   const fleetPanel = element<HTMLElement>("fleet-panel");
   const fleetSummary = element<HTMLElement>("fleet-summary");
   const fleetList = element<HTMLUListElement>("fleet-list");
+  const fleetCards = element<HTMLElement>("fleet-cards");
+  const fleetCreate = element<HTMLButtonElement>("fleet-create");
+  const fleetQueue = element<HTMLButtonElement>("fleet-queue");
+  const fleetSaveGroup = element<HTMLButtonElement>("fleet-save-group");
   const fleetEmpty = element<HTMLElement>("fleet-empty");
+  const orderMenu = element<HTMLElement>("order-menu");
+  const orderMenuTitle = element<HTMLElement>("order-menu-title");
+  const orderMenuWhere = element<HTMLElement>("order-menu-where");
+  const orderMenuActions = element<HTMLElement>("order-menu-actions");
+  const orderMenuClose = element<HTMLButtonElement>("order-menu-close");
+  const headingSheet = element<HTMLElement>("heading-sheet");
+  const headingDegrees = element<HTMLInputElement>("heading-degrees");
+  const headingDial = element<HTMLInputElement>("heading-dial");
+  const headingDistance = element<HTMLInputElement>("heading-distance");
+  const headingPreview = element<HTMLElement>("heading-preview");
+  const headingClose = element<HTMLButtonElement>("heading-close");
+  const headingCancel = element<HTMLButtonElement>("heading-cancel");
+  const headingConfirm = element<HTMLButtonElement>("heading-confirm");
+  const groupBar = element<HTMLElement>("group-bar");
   const fleetClose = element<HTMLButtonElement>("fleet-close");
   const multiButton = element<HTMLButtonElement>("multi-btn");
   const multiCount = element<HTMLElement>("multi-count");
@@ -565,12 +662,19 @@ async function start(): Promise<void> {
   // The selected ship's planned route sits above the map and below ports.
   const routeLayer = new Container();
   const routeInk = new Graphics();
-  routeLayer.addChild(routeInk);
+  const routeLabels = new Container();
+  routeLayer.addChild(routeInk, routeLabels);
   routeLayer.visible = false;
 
   // Screen-space progress ring for the press-and-hold order gesture.
   const holdRing = new Graphics();
   holdRing.visible = false;
+  const headingPreviewInk = new Graphics();
+  routeLayer.addChild(headingPreviewInk);
+
+  // A rubber-band box for multi-select drags, in screen pixels.
+  const selectionBoxInk = new Graphics();
+  selectionBoxInk.visible = false;
 
   const marker = new Graphics();
   marker.circle(0, 0, 9).stroke({ width: 2, color: INK_COLOR });
@@ -604,6 +708,7 @@ async function start(): Promise<void> {
     liveMapLayer,
     liveMask,
     holdRing,
+    selectionBoxInk,
     routeLayer,
     portLayer,
     lastSeenLayer,
@@ -647,8 +752,27 @@ async function start(): Promise<void> {
   let laidOutPorts: PortMarkerPlan[] = [];
   let ownSnapshot: ShipSnapshot | null = null;
   let fleetShips: OwnShipSnapshot[] = [];
+  let playerFleets: FleetSnapshot[] = [];
+  let controlGroups: Record<number, string[]> = {};
   let selectedShipId = "";
+  let selectedFleetId: string | null = null;
   let multiSelect = false;
+  let queueOrders = false;
+  let orderMenuPoint: { x: number; y: number } | null = null;
+  let orderMenuTarget: { kind: "ship" | "port"; id: string } | null = null;
+  let pendingPatrolFrom: { x: number; y: number } | null = null;
+  let pendingPatrolFleetId: string | null = null;
+  let pendingRendezvous = false;
+  let headingForFleet: string | null = null;
+  let headingPreviewOn = false;
+  let lastOwnTap = { id: "", at: 0 };
+  let boxPointer: number | null = null;
+  let boxStart = { x: 0, y: 0 };
+  let boxCurrent = { x: 0, y: 0 };
+  let boxDragged = false;
+  let groupHoldTimer = 0;
+  let groupHoldSlot = 0;
+  let groupHoldFired = false;
   const selectedShipIds = new Set<string>();
   let actionShipId: string | null = null;
   let actionPortId: string | null = null;
@@ -1624,28 +1748,44 @@ async function start(): Promise<void> {
   }
 
   /** Dotted route ink for every selected ship, on either screen. */
+  function drawDotted(points: Array<[number, number]>, colour = INK_COLOR): number {
+    if (points.length < 2) return 0;
+    const dots = dotsAlongPath(points.map(([x, y]) => toScreen(x, y)), settings.view.routeDotSpacingPx);
+    for (const dot of dots) {
+      routeInk.circle(dot.x, dot.y, settings.view.routeDotRadiusPx).fill({ color: colour, alpha: 0.82 });
+    }
+    return dots.length;
+  }
+
+  /** Every selected ship keeps all of its active order geometry on screen. */
   function drawSelectedRoute(): void {
     routeInk.clear();
+    for (const label of routeLabels.removeChildren()) label.destroy();
     const selected = fleetShips.filter((ship) =>
       multiSelect && selectedShipIds.size > 0
         ? selectedShipIds.has(ship.id)
         : ship.id === selectedFleetShip()?.id,
     );
     let drew = false;
-
     for (const own of selected) {
-      const route = own.route;
-      if (!route || route.length === 0) continue;
-      const screenPoints = route.map(([x, y]) => toScreen(x, y));
-      const dots = dotsAlongPath(screenPoints, settings.view.routeDotSpacingPx);
-      for (const dot of dots) {
-        routeInk
-          .circle(dot.x, dot.y, settings.view.routeDotRadiusPx)
-          .fill({ color: INK_COLOR, alpha: 0.78 });
+      if (own.route && own.route.length > 1) {
+        drew = drawDotted(own.route) > 0 || drew;
       }
-      drew = dots.length > 0;
+      for (const line of own.orderLines ?? []) {
+        drew = drawDotted(line.points) > 0 || drew;
+        if (line.queueNumber && line.points.length > 0) {
+          const point = toScreen(line.points[0]![0], line.points[0]![1]);
+          const label = new Text({
+            text: String(line.queueNumber),
+            style: { fontFamily: "Source Sans 3", fontSize: 11, fill: 0x8c1d1d, fontWeight: "600" },
+          });
+          label.position.set(point.x + 7, point.y - 15);
+          routeLabels.addChild(label);
+        }
+      }
     }
     routeLayer.visible = drew;
+    drawHeadingPreview();
   }
 
   function portAt(screenX: number, screenY: number): PortMarkerPlan | null {
@@ -1807,15 +1947,481 @@ async function start(): Promise<void> {
     fleetPanel.hidden = true;
   }
 
+  function fleetById(id: string | null): FleetSnapshot | null {
+    return id ? playerFleets.find((fleet) => fleet.id === id) ?? null : null;
+  }
+
+  function shipById(id: string): OwnShipSnapshot | null {
+    return fleetShips.find((ship) => ship.id === id) ?? null;
+  }
+
+  function fleetOfShip(id: string): FleetSnapshot | null {
+    return playerFleets.find((fleet) => fleet.members.some((member) => member.id === id)) ?? null;
+  }
+
+  function selectedFleetIds(): string[] {
+    const ids = new Set<string>();
+    for (const fleet of playerFleets) {
+      if (fleet.members.some((member) => selectedShipIds.has(member.id))) ids.add(fleet.id);
+    }
+    if (ids.size === 0 && selectedShipId) {
+      const fleet = fleetOfShip(selectedShipId);
+      if (fleet) ids.add(fleet.id);
+    }
+    return [...ids];
+  }
+
+  function selectWholeFleet(fleetId: string): void {
+    const fleet = fleetById(fleetId);
+    if (!fleet) return;
+    selectedShipIds.clear();
+    for (const member of fleet.members) {
+      const ship = shipById(member.id);
+      if (ship && ship.status !== "delivery") selectedShipIds.add(member.id);
+    }
+    if (selectedShipIds.size === 0) return;
+    selectedFleetId = fleet.id;
+    selectedShipId = fleet.members.find((member) => member.id === fleet.leaderId)?.id
+      ?? [...selectedShipIds][0]!;
+    multiSelect = true;
+    updateMultiUi();
+    drawSelectedRoute();
+  }
+
+  function selectControlGroup(slot: number): void {
+    const ids = controlGroups[slot];
+    if (!ids) return;
+    selectedShipIds.clear();
+    for (const id of ids) {
+      const ship = shipById(id);
+      if (ship && ship.status !== "delivery") selectedShipIds.add(id);
+    }
+    if (selectedShipIds.size === 0) return;
+    selectedShipId = [...selectedShipIds][0]!;
+    selectedFleetId = fleetOfShip(selectedShipId)?.id ?? null;
+    multiSelect = true;
+    updateMultiUi();
+    drawSelectedRoute();
+  }
+
+  function saveControlGroup(slot: number): void {
+    const ids = groupShipIds();
+    if (ids.length === 0) {
+      showNotice("Select ships before saving a control group.");
+      return;
+    }
+    sendCommand({ t: "saveGroup", slot, ids });
+    showNotice(`Control group ${slot} saved.`);
+  }
+
+  function renderGroupBar(): void {
+    groupBar.replaceChildren();
+    const slots = Object.keys(controlGroups).map(Number).filter((slot) => slot >= 1 && slot <= 9).sort();
+    groupBar.hidden = slots.length === 0;
+    for (const slot of slots) {
+      const count = controlGroups[slot]?.length ?? 0;
+      if (count === 0) continue;
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = "group-chip";
+      button.textContent = `${slot} · ${count}`;
+      button.setAttribute("aria-label", `Select control group ${slot}, ${count} ships`);
+      button.addEventListener("pointerdown", () => {
+        groupHoldSlot = slot;
+        groupHoldFired = false;
+        window.clearTimeout(groupHoldTimer);
+        groupHoldTimer = window.setTimeout(() => {
+          if (groupHoldSlot !== slot) return;
+          groupHoldFired = true;
+          saveControlGroup(slot);
+        }, 650);
+      });
+      const stopHold = (): void => {
+        window.clearTimeout(groupHoldTimer);
+        groupHoldTimer = 0;
+      };
+      button.addEventListener("pointerup", stopHold);
+      button.addEventListener("pointercancel", stopHold);
+      button.addEventListener("pointerleave", stopHold);
+      button.addEventListener("click", () => {
+        stopHold();
+        if (groupHoldFired) {
+          groupHoldFired = false;
+          return;
+        }
+        selectControlGroup(slot);
+      });
+      groupBar.append(button);
+    }
+    groupBar.hidden = groupBar.childElementCount === 0;
+  }
+
+  function sendFleetOrder(fleetId: string, order: FleetOrder): void {
+    sendCommand({ t: "fleetOrder", fleet: fleetId, order, queue: queueOrders });
+  }
+
+  function sendSelectedSpecial(order: FleetOrder): void {
+    const fleets = selectedFleetIds();
+    for (const fleetId of fleets) sendFleetOrder(fleetId, order);
+    for (const id of groupShipIds()) {
+      if (fleetOfShip(id)) continue;
+      sendCommand({ t: "shipOrder", ship: id, order });
+    }
+    if (fleets.length === 0 && groupShipIds().length === 0) {
+      showNotice("Select a ship or fleet first.");
+    }
+  }
+
+  function updateQueueButton(): void {
+    fleetQueue.textContent = queueOrders ? "Queue on" : "Queue off";
+    fleetQueue.setAttribute("aria-pressed", String(queueOrders));
+    fleetQueue.classList.toggle("is-active", queueOrders);
+  }
+
+  function renderFleetCards(): void {
+    fleetCards.replaceChildren();
+    for (const fleet of playerFleets) {
+      const card = document.createElement("section");
+      card.className = "fleet-card";
+      card.dataset.fleetCard = fleet.id;
+
+      const head = document.createElement("div");
+      head.className = "fleet-card-head";
+      const name = document.createElement("input");
+      name.className = "fleet-card-name";
+      name.value = fleet.name;
+      name.maxLength = 40;
+      name.setAttribute("aria-label", "Fleet name");
+      name.addEventListener("change", () => {
+        const clean = name.value.trim().slice(0, 40);
+        if (clean && clean !== fleet.name) {
+          sendCommand({ t: "fleetUpdate", fleet: fleet.id, name: clean });
+        } else {
+          name.value = fleet.name;
+        }
+      });
+      name.addEventListener("keydown", (event) => {
+        if (event.key === "Enter") {
+          event.preventDefault();
+          name.blur();
+        }
+      });
+      const leader = document.createElement("span");
+      leader.className = "fleet-card-leader";
+      leader.textContent = `⚑ ${shipById(fleet.leaderId)?.name ?? "Leader"}`;
+      head.append(name, leader);
+
+      const selects = document.createElement("div");
+      selects.className = "fleet-selects";
+      const formationLabel = document.createElement("label");
+      formationLabel.textContent = "Formation";
+      const formation = document.createElement("select");
+      formation.setAttribute("aria-label", "Fleet formation");
+      for (const option of FORMATION_OPTIONS) {
+        const item = document.createElement("option");
+        item.value = option.id;
+        item.textContent = `${option.icon} ${option.label}`;
+        item.selected = option.id === fleet.formation;
+        formation.append(item);
+      }
+      formation.addEventListener("change", () => {
+        sendCommand({ t: "fleetUpdate", fleet: fleet.id, formation: formation.value });
+      });
+      formationLabel.append(formation);
+      const stanceLabelEl = document.createElement("label");
+      stanceLabelEl.textContent = "Stance";
+      const stance = document.createElement("select");
+      stance.setAttribute("aria-label", "Fleet stance");
+      for (const id of stanceOptionIds()) {
+        const item = document.createElement("option");
+        item.value = id;
+        item.textContent = stanceLabel(id);
+        item.selected = id === fleet.stance;
+        stance.append(item);
+      }
+      stance.addEventListener("change", () => {
+        sendCommand({ t: "fleetUpdate", fleet: fleet.id, stance: stance.value });
+      });
+      stanceLabelEl.append(stance);
+      selects.append(formationLabel, stanceLabelEl);
+
+      const members = document.createElement("ul");
+      members.className = "fleet-member-list";
+      const ordered = [...fleet.members].sort((a, b) =>
+        a.id === fleet.leaderId ? -1 : b.id === fleet.leaderId ? 1 : 0,
+      );
+      for (const member of ordered) {
+        const item = document.createElement("li");
+        item.className = "fleet-member-row";
+        const memberName = document.createElement("button");
+        memberName.type = "button";
+        memberName.className = "fleet-member-name btn-link";
+        memberName.textContent = shipById(member.id)?.name ?? member.id;
+        memberName.addEventListener("click", () => {
+          const ship = shipById(member.id);
+          if (!ship || ship.status === "delivery") return;
+          selectedShipId = member.id;
+          selectedFleetId = fleet.id;
+          updateMultiUi();
+        });
+        const state = document.createElement("span");
+        state.className = "fleet-member-state";
+        state.textContent = fleetMemberStateText(member.state);
+        item.append(memberName, state);
+        if (member.state === "detached") {
+          const rejoin = document.createElement("button");
+          rejoin.type = "button";
+          rejoin.className = "btn";
+          rejoin.textContent = "Rejoin";
+          rejoin.addEventListener("click", () => {
+            sendCommand({ t: "fleetRejoin", ship: member.id });
+          });
+          item.append(rejoin);
+        } else {
+          item.append(document.createElement("span"));
+        }
+        members.append(item);
+      }
+
+      const actions = document.createElement("div");
+      actions.className = "fleet-card-actions";
+      const action = (label: string, run: () => void): void => {
+        const button = document.createElement("button");
+        button.type = "button";
+        button.className = "btn";
+        button.textContent = label;
+        button.addEventListener("click", run);
+        actions.append(button);
+      };
+      action("Hold", () => sendFleetOrder(fleet.id, { type: "hold" }));
+      action("Heading", () => openHeading(fleet.id));
+      action("Patrol", () => beginPatrol(fleet.id, null));
+      action("Rendezvous", () => {
+        selectWholeFleet(fleet.id);
+        pendingRendezvous = true;
+        closeOrderMenu();
+        showNotice("Tap the chart to place the rendezvous point.");
+      });
+      action("Return to port", () => sendFleetOrder(fleet.id, { type: "returnToPort" }));
+      action("Change leader", () => {
+        const selected = fleet.members.find((member) => member.id === selectedShipId);
+        if (!selected) {
+          showNotice("Select a member of this fleet first.");
+          return;
+        }
+        if (selected.id === fleet.leaderId) {
+          showNotice("That ship is already the leader.");
+          return;
+        }
+        sendCommand({ t: "fleetUpdate", fleet: fleet.id, leader: selected.id });
+      });
+      action("Detach ship", () => {
+        const selected = fleet.members.find((member) => member.id === selectedShipId);
+        if (!selected) {
+          showNotice("Select a member of this fleet first.");
+          return;
+        }
+        sendCommand({ t: "fleetDetach", ship: selected.id });
+      });
+      action("Disband", () => {
+        sendCommand({ t: "fleetDisband", fleet: fleet.id });
+        if (selectedFleetId === fleet.id) selectedFleetId = null;
+      });
+
+      card.append(head, selects, members, actions);
+      fleetCards.append(card);
+    }
+  }
+
+  function closeOrderMenu(): void {
+    orderMenu.hidden = true;
+    orderMenuPoint = null;
+    orderMenuTarget = null;
+  }
+
+  function openOrderMenu(screenX: number, screenY: number): void {
+    const world = toWorld(screenX, screenY);
+    orderMenuPoint = world;
+    orderMenuTarget = null;
+    orderMenuTitle.textContent = "Orders";
+    orderMenuWhere.textContent = `${world.x.toFixed(1)} km E · ${world.y.toFixed(1)} km S`;
+    let kind: "sea" | "ship" | "port" = "sea";
+    const ownShip = shipAt(screenX, screenY);
+    const port = portAt(screenX, screenY);
+    if (ownShip) {
+      kind = "ship";
+      orderMenuTarget = { kind: "ship", id: ownShip.id };
+      orderMenuTitle.textContent = shipById(ownShip.id)?.name ?? "Ship";
+      orderMenuWhere.textContent = "Orders for the selected ships";
+    } else if (port) {
+      kind = "port";
+      orderMenuTarget = { kind: "port", id: port.id };
+      orderMenuTitle.textContent = port.name;
+      orderMenuWhere.textContent = "Sail the selected ships to this port";
+    }
+
+    orderMenuActions.replaceChildren();
+    for (const item of orderMenuItems(kind)) {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = item.primary ? "btn btn-seal" : "btn";
+      button.textContent = item.label;
+      button.addEventListener("click", () => runOrderMenu(item.id, kind));
+      orderMenuActions.append(button);
+    }
+
+    const layout = responsiveFleetLayout(window.innerWidth, window.innerHeight);
+    if (layout.bottomSheet) {
+      orderMenu.style.left = "";
+      orderMenu.style.top = "";
+      orderMenu.style.bottom = "";
+      orderMenu.style.transform = "";
+    } else {
+      const x = Math.min(window.innerWidth - 360, Math.max(8, screenX + 12));
+      const y = Math.min(window.innerHeight - 380, Math.max(8, screenY + 12));
+      orderMenu.style.left = `${x}px`;
+      orderMenu.style.top = `${y}px`;
+      orderMenu.style.bottom = "auto";
+      orderMenu.style.transform = "none";
+    }
+    orderMenu.hidden = false;
+  }
+
+  function runOrderMenu(id: string, kind: "sea" | "ship" | "port"): void {
+    const point = orderMenuPoint;
+    const target = orderMenuTarget;
+    if (id === "close") {
+      closeOrderMenu();
+      return;
+    }
+    if (kind === "ship" && target?.kind === "ship" && (id === "follow" || id === "escort")) {
+      closeOrderMenu();
+      sendSelectedSpecial({ type: id, shipId: target.id });
+      return;
+    }
+    if (kind === "port" && target?.kind === "port" && id === "sailToPort") {
+      closeOrderMenu();
+      sendPortOrder(target.id);
+      return;
+    }
+    if (!point) return;
+    if (id === "sailHere") {
+      closeOrderMenu();
+      sendOrder(point.x, point.y);
+    } else if (id === "heading") {
+      closeOrderMenu();
+      openHeading(null);
+    } else if (id === "patrol") {
+      closeOrderMenu();
+      beginPatrol(selectedFleetIds()[0] ?? null, point);
+    } else if (id === "rendezvous") {
+      closeOrderMenu();
+      pendingRendezvous = true;
+      showNotice("Tap the chart to place the rendezvous point.");
+    } else if (id === "returnPort") {
+      closeOrderMenu();
+      sendSelectedSpecial({ type: "returnToPort" });
+    } else if (id === "hold") {
+      closeOrderMenu();
+      sendSelectedSpecial({ type: "hold" });
+    }
+  }
+
+  function beginPatrol(fleetId: string | null, from: { x: number; y: number } | null): void {
+    const chosen = fleetId ?? selectedFleetIds()[0] ?? null;
+    if (!chosen) {
+      showNotice("Create a fleet before setting a patrol.");
+      return;
+    }
+    pendingPatrolFleetId = chosen;
+    pendingPatrolFrom = from;
+    showNotice(from ? "Tap the second patrol point." : "Tap the first patrol point.");
+  }
+
+  function placePatrolPoint(point: { x: number; y: number }): boolean {
+    if (!pendingPatrolFleetId) return false;
+    if (!pendingPatrolFrom) {
+      pendingPatrolFrom = point;
+      showNotice("Tap the second patrol point.");
+      return true;
+    }
+    sendFleetOrder(pendingPatrolFleetId, {
+      type: "patrol",
+      a: pendingPatrolFrom,
+      b: point,
+    });
+    pendingPatrolFleetId = null;
+    pendingPatrolFrom = null;
+    showNotice("Patrol ordered.");
+    return true;
+  }
+
+  function openHeading(fleetId: string | null): void {
+    headingForFleet = fleetId ?? selectedFleetIds()[0] ?? null;
+    headingPreviewOn = true;
+    headingSheet.hidden = false;
+    headingDegrees.value = "0";
+    headingDial.value = "0";
+    headingDistance.value = "10";
+    closeOrderMenu();
+    drawHeadingPreview();
+  }
+
+  function closeHeadingSheet(): void {
+    headingSheet.hidden = true;
+    headingPreviewOn = false;
+    headingForFleet = null;
+    headingPreviewInk.clear();
+    drawSelectedRoute();
+  }
+
+  function headingValues(): { heading: number; distance: number } {
+    const degrees = Number(headingDegrees.value);
+    const km = Number(headingDistance.value);
+    return {
+      heading: Number.isFinite(degrees) ? ((degrees % 360) + 360) % 360 : 0,
+      distance: Number.isFinite(km) ? Math.max(0.2, Math.min(800, km)) : 10,
+    };
+  }
+
+  function drawHeadingPreview(): void {
+    headingPreviewInk.clear();
+    if (!headingPreviewOn || headingSheet.hidden) return;
+    const { heading, distance } = headingValues();
+    const fleet = fleetById(headingForFleet);
+    const from = fleet ? shipById(fleet.leaderId) : selectedFleetShip();
+    if (!from) return;
+    const target = headingTarget(from, heading, distance);
+    const points = [toScreen(from.x, from.y), toScreen(target.x, target.y)];
+    const dots = dotsAlongPath(points, settings.view.routeDotSpacingPx);
+    for (const dot of dots) {
+      headingPreviewInk.circle(dot.x, dot.y, settings.view.routeDotRadiusPx).fill({ color: 0x8c1d1d, alpha: 0.9 });
+    }
+    headingPreview.textContent = `${heading.toFixed(0)}° · ${distance.toFixed(1)} km`;
+    routeLayer.visible = true;
+  }
+
+  function confirmHeading(): void {
+    const { heading, distance } = headingValues();
+    const order: FleetOrder = { type: "heading", headingDeg: heading, distanceKm: distance };
+    if (headingForFleet) sendFleetOrder(headingForFleet, order);
+    else sendSelectedSpecial(order);
+    closeHeadingSheet();
+    showNotice(`Heading ${heading.toFixed(0)}° for ${distance.toFixed(1)} km.`);
+  }
+
   function renderFleetPanel(): void {
     fleetCountOut.textContent = String(fleetShips.length);
     fleetSummary.textContent = `${fleetCountText(fleetShips.length)} ships · ${formatMoney(money)} pieces`;
     fleetSelectedCount.textContent = `${selectedShipIds.size} selected`;
     fleetSelectAll.disabled = fleetShips.every((ship) => ship.status === "delivery");
+    if (!fleetCards.contains(document.activeElement)) renderFleetCards();
+    const looseShips = fleetShips.filter((ship) => !ship.fleetId);
     fleetList.replaceChildren();
-    fleetEmpty.hidden = fleetShips.length > 0;
+    fleetEmpty.hidden = looseShips.length > 0;
+    fleetEmpty.textContent = playerFleets.length > 0 ? "All ships are in fleets." : "No ships yet.";
 
-    for (const ship of fleetShips) {
+    for (const ship of looseShips) {
       const row = buildFleetRow(ship, portName(ship.portId));
       const item = document.createElement("li");
       const pick = document.createElement("label");
@@ -2987,6 +3593,25 @@ async function start(): Promise<void> {
       }
     }
     fleetShips = incomingFleet;
+    playerFleets = Array.isArray(state.fleets)
+      ? state.fleets.map(parseFleet).filter((fleet): fleet is FleetSnapshot => fleet !== null)
+      : [];
+    controlGroups = {};
+    if (state.groups && typeof state.groups === "object") {
+      for (const [rawSlot, ids] of Object.entries(state.groups)) {
+        const slot = Number(rawSlot);
+        if (!Number.isInteger(slot) || slot < 1 || slot > 9 || !Array.isArray(ids)) continue;
+        controlGroups[slot] = ids.filter((id): id is string => typeof id === "string");
+      }
+    }
+    if (selectedFleetId && !playerFleets.some((fleet) => fleet.id === selectedFleetId)) {
+      selectedFleetId = null;
+    }
+    if (!selectedFleetId) {
+      selectedFleetId = playerFleets.find((fleet) =>
+        fleet.members.some((member) => member.id === selectedShipId),
+      )?.id ?? null;
+    }
     hungerMultiplier = finiteNumber(state.h) ?? undefined;
     money = Number.isFinite(state.m) ? Math.max(0, Math.floor(state.m)) : 0;
     playerNavy = fleetShips[0]?.navy ?? playerNavy;
@@ -3187,6 +3812,8 @@ async function start(): Promise<void> {
     }
 
     if (!fleetPanel.hidden) renderFleetPanel();
+    renderGroupBar();
+    if (!headingSheet.hidden) drawHeadingPreview();
     if (!shipyardPanel.hidden) refreshShipyardSummary();
     if (!hirePanel.hidden && !hirePanel.contains(document.activeElement)) {
       renderHirePanel();
@@ -3258,6 +3885,14 @@ async function start(): Promise<void> {
     const screen = toScreen(x, y);
     marker.position.set(screen.x, screen.y);
     marker.visible = true;
+
+    const fleets = selectedFleetIds();
+    if (fleets.length > 0) {
+      for (const fleetId of fleets) {
+        sendFleetOrder(fleetId, { type: "goTo", x, y });
+      }
+      return;
+    }
 
     for (let index = 0; index < ids.length; index += 1) {
       let tx = x;
@@ -3410,19 +4045,16 @@ async function start(): Promise<void> {
     holdActive = false;
     holdSent = true;
     drawHoldRing(1);
-    const world = toWorld(holdAt.x, holdAt.y);
-    sendOrder(world.x, world.y);
-    disarmMove();
+    openOrderMenu(holdAt.x, holdAt.y);
     window.clearTimeout(holdTimer);
     holdTimer = 0;
   }
 
   function beginTapHold(event: PointerEvent): void {
-    if (tapToSail || pointers.size !== 1) return;
+    if (pointers.size !== 1) return;
     const rect = app.canvas.getBoundingClientRect();
     const screenX = event.clientX - rect.left;
     const screenY = event.clientY - rect.top;
-    if (shipAt(screenX, screenY) || portAt(screenX, screenY)) return;
 
     cancelTapHold();
     holdPointerId = event.pointerId;
@@ -3444,7 +4076,17 @@ async function start(): Promise<void> {
 
   function mapTapAction(screenX: number, screenY: number): void {
     const ownShip = shipAt(screenX, screenY);
+    const portHit = portAt(screenX, screenY);
+    const worldPoint = toWorld(screenX, screenY);
     if (ownShip) {
+      const now = performance.now();
+      const fleet = fleetOfShip(ownShip.id);
+      if (fleet && lastOwnTap.id === ownShip.id && now - lastOwnTap.at < 350) {
+        lastOwnTap = { id: "", at: 0 };
+        selectWholeFleet(fleet.id);
+        return;
+      }
+      lastOwnTap = { id: ownShip.id, at: now };
       if (multiSelect) {
         toggleGroupShip(ownShip.id);
         return;
@@ -3452,15 +4094,37 @@ async function start(): Promise<void> {
       const row = fleetShips.find((ship) => ship.id === ownShip.id);
       if (row?.status === "docked" && openShipActions(ownShip.id)) return;
       updateSelectedShip(ownShip.id, false);
+      selectedFleetId = fleet?.id ?? null;
       return;
     }
-    const port = portAt(screenX, screenY);
+    const port = portHit;
     if (port) {
       const docked = fleetShips.find(
         (ship) => ship.status === "docked" && ship.portId === port.id,
       );
       if (docked && !multiSelect && openShipActions(docked.id)) return;
       openPortPanel(port.id);
+      return;
+    }
+
+    if (pendingPatrolFleetId && placePatrolPoint(worldPoint)) return;
+    if (pendingRendezvous) {
+      pendingRendezvous = false;
+      const fleets = selectedFleetIds();
+      for (const fleetId of fleets) {
+        const fleet = fleetById(fleetId);
+        sendFleetOrder(fleetId, {
+          type: "rendezvous",
+          point: worldPoint,
+          memberIds: fleet?.members.map((member) => member.id) ?? [],
+        });
+      }
+      if (fleets.length === 0) {
+        for (const id of groupShipIds()) {
+          sendCommand({ t: "o", x: worldPoint.x, y: worldPoint.y, ship: id });
+        }
+      }
+      showNotice("Rendezvous ordered.");
       return;
     }
 
@@ -3476,8 +4140,32 @@ async function start(): Promise<void> {
       knownPortsPanel.hidden = true;
       return;
     }
-    const world = toWorld(screenX, screenY);
-    sendOrder(world.x, world.y);
+    sendOrder(worldPoint.x, worldPoint.y);
+  }
+
+  function drawSelectionBox(): void {
+    selectionBoxInk.clear();
+    const left = Math.min(boxStart.x, boxCurrent.x);
+    const top = Math.min(boxStart.y, boxCurrent.y);
+    const width = Math.abs(boxCurrent.x - boxStart.x);
+    const height = Math.abs(boxCurrent.y - boxStart.y);
+    selectionBoxInk.rect(left, top, width, height).fill({ color: PAPER_COLOR, alpha: 0.12 }).stroke({ width: 1.5, color: 0x8c1d1d });
+    selectionBoxInk.visible = true;
+  }
+
+  function selectShipsInBox(start: { x: number; y: number }, end: { x: number; y: number }): void {
+    const points = fleetShips
+      .filter((ship) => ship.status !== "delivery")
+      .map((ship) => ({ id: ship.id, ...toScreen(ship.x, ship.y) }));
+    const ids = selectedShipIdsInBox(points, start, end);
+    if (ids.length === 0) return;
+    selectedShipIds.clear();
+    for (const id of ids) selectedShipIds.add(id);
+    selectedShipId = ids[0]!;
+    selectedFleetId = fleetOfShip(selectedShipId)?.id ?? null;
+    multiSelect = true;
+    updateMultiUi();
+    drawSelectedRoute();
   }
 
   function zoomTo(kmAcross: number): void {
@@ -3493,6 +4181,16 @@ async function start(): Promise<void> {
       downAt = performance.now();
       multiTouch = false;
       beginTapHold(event);
+      const rect = app.canvas.getBoundingClientRect();
+      const sx = event.clientX - rect.left;
+      const sy = event.clientY - rect.top;
+      if (multiSelect && !shipAt(sx, sy) && !portAt(sx, sy)) {
+        cancelTapHold();
+        boxPointer = event.pointerId;
+        boxStart = { x: sx, y: sy };
+        boxCurrent = { x: sx, y: sy };
+        boxDragged = false;
+      }
     }
     if (pointers.size === 2) {
       multiTouch = true;
@@ -3516,6 +4214,16 @@ async function start(): Promise<void> {
       if (pinchStartDistance > 0 && distance > 0) {
         zoomTo((pinchStartKm * pinchStartDistance) / distance);
       }
+      return;
+    }
+
+    if (boxPointer === event.pointerId) {
+      const rect = app.canvas.getBoundingClientRect();
+      boxCurrent = { x: event.clientX - rect.left, y: event.clientY - rect.top };
+      if (Math.hypot(boxCurrent.x - boxStart.x, boxCurrent.y - boxStart.y) > 6) {
+        boxDragged = true;
+      }
+      drawSelectionBox();
       return;
     }
 
@@ -3544,6 +4252,20 @@ async function start(): Promise<void> {
     cancelTapHold();
     holdSent = false;
     pointers.delete(event.pointerId);
+
+    if (boxPointer === event.pointerId) {
+      const didDrag = boxDragged;
+      boxPointer = null;
+      boxDragged = false;
+      selectionBoxInk.clear();
+      selectionBoxInk.visible = false;
+      if (didDrag) {
+        const rect = app.canvas.getBoundingClientRect();
+        const end = { x: event.clientX - rect.left, y: event.clientY - rect.top };
+        selectShipsInBox(boxStart, end);
+        return;
+      }
+    }
 
     if (!wasSingle || multiTouch || dragDistance >= 10) return;
     if (wasHeld) return;
@@ -3637,6 +4359,12 @@ async function start(): Promise<void> {
   actionClose.addEventListener("click", closeShipActions);
   document.addEventListener("keydown", (event) => {
     if (event.key === "Escape") closeShipActions();
+  });
+  document.addEventListener("keydown", (event) => {
+    const target = event.target;
+    if (target instanceof HTMLInputElement || target instanceof HTMLSelectElement || target instanceof HTMLTextAreaElement) return;
+    const slot = controlGroupSlotForKey(event.key);
+    if (slot !== null) selectControlGroup(slot);
   });
 
   // TEMP-DEBUG: block and cell outlines for screenshots in test/dev rooms.
@@ -3828,6 +4556,53 @@ async function start(): Promise<void> {
     else closeFleetPanel();
   });
   fleetClose.addEventListener("click", closeFleetPanel);
+  fleetCreate.addEventListener("click", () => {
+    const ids = groupShipIds().slice(0, settings.fleets.maxShipsPerFleet);
+    if (ids.length === 0) {
+      showNotice("Select ships before creating a fleet.");
+      return;
+    }
+    sendCommand({ t: "createFleet", ships: ids });
+    showNotice("Fleet created.");
+  });
+  fleetQueue.addEventListener("click", () => {
+    queueOrders = !queueOrders;
+    updateQueueButton();
+  });
+  fleetSaveGroup.addEventListener("click", () => {
+    let slot = 0;
+    for (let candidate = 1; candidate <= 9; candidate += 1) {
+      if (!controlGroups[candidate] || controlGroups[candidate]!.length === 0) {
+        slot = candidate;
+        break;
+      }
+    }
+    if (slot === 0) {
+      showNotice("All nine control groups are in use.");
+      return;
+    }
+    saveControlGroup(slot);
+  });
+  orderMenuClose.addEventListener("click", closeOrderMenu);
+  headingClose.addEventListener("click", closeHeadingSheet);
+  headingCancel.addEventListener("click", closeHeadingSheet);
+  headingConfirm.addEventListener("click", confirmHeading);
+  headingDegrees.addEventListener("input", () => {
+    const value = headingValues().heading;
+    headingDial.value = String(value);
+    drawHeadingPreview();
+  });
+  headingDial.addEventListener("input", () => {
+    headingDegrees.value = headingDial.value;
+    drawHeadingPreview();
+  });
+  headingDistance.addEventListener("input", drawHeadingPreview);
+  app.canvas.addEventListener("contextmenu", (event) => {
+    event.preventDefault();
+    const rect = app.canvas.getBoundingClientRect();
+    openOrderMenu(event.clientX - rect.left, event.clientY - rect.top);
+  });
+  updateQueueButton();
   portClose.addEventListener("click", closePortPanel);
   knownPortsClose.addEventListener("click", () => {
     knownPortsPanel.hidden = true;
@@ -3873,6 +4648,8 @@ async function start(): Promise<void> {
     closeFleetPanel();
     closeShipyardPanel();
     closeHirePanel();
+    closeOrderMenu();
+    closeHeadingSheet();
   });
 
   versionNotice.addEventListener("click", () => location.reload());

@@ -75,6 +75,8 @@
       </button>
     </nav>
 
+    <nav class="hud group-bar paper" id="group-bar" aria-label="Control groups" hidden></nav>
+
     <section class="hud hud-ship paper" id="ship-panel" aria-label="Your ship">
       <button class="ship-strip" id="ship-expand" type="button" aria-expanded="false" aria-controls="ship-detail">
         <span class="ship-strip-copy">
@@ -177,6 +179,43 @@
     </section>
 
     <p class="chart-notice" id="notice" role="status" aria-live="polite" hidden></p>
+
+    <!-- Long-press or right-click orders. On a phone it is a bottom sheet. -->
+    <section class="order-menu paper" id="order-menu" role="dialog" aria-labelledby="order-menu-title" hidden>
+      <div class="panel-head">
+        <div>
+          <p class="kicker">Orders</p>
+          <h2 id="order-menu-title">Orders</h2>
+        </div>
+        <button class="btn panel-close" id="order-menu-close" type="button">Close</button>
+      </div>
+      <p class="order-menu-where" id="order-menu-where"></p>
+      <div class="order-menu-actions" id="order-menu-actions"></div>
+    </section>
+
+    <!-- Heading and distance order. The preview line is drawn on the map. -->
+    <section class="heading-sheet paper" id="heading-sheet" role="dialog" aria-labelledby="heading-title" hidden>
+      <div class="panel-head">
+        <div>
+          <p class="kicker">New order</p>
+          <h2 id="heading-title">Heading and distance</h2>
+        </div>
+        <button class="btn panel-close" id="heading-close" type="button">Close</button>
+      </div>
+      <label class="heading-value" for="heading-degrees">Compass heading</label>
+      <div class="heading-row">
+        <input id="heading-degrees" type="number" min="0" max="359" step="1" value="0" inputmode="numeric" />
+        <span class="heading-degrees-mark">°</span>
+        <input id="heading-dial" type="range" min="0" max="359" step="1" value="0" aria-label="Compass heading dial" />
+      </div>
+      <label class="heading-value" for="heading-distance">Distance in km</label>
+      <input id="heading-distance" type="number" min="0.2" max="800" step="0.5" value="10" inputmode="decimal" />
+      <p class="heading-preview" id="heading-preview">0° · 10 km</p>
+      <div class="heading-actions">
+        <button class="btn" id="heading-cancel" type="button">Cancel</button>
+        <button class="btn btn-seal" id="heading-confirm" type="button">Send heading</button>
+      </div>
+    </section>
 
     <!-- A found port's paper folio. It is filled from the current port state. -->
     <section
@@ -305,12 +344,17 @@
       </div>
       <p class="fleet-summary" id="fleet-summary">1 of 30 ships</p>
       <div class="fleet-tools">
+        <button class="btn" id="fleet-create" type="button">Create fleet</button>
+        <button class="btn" id="fleet-queue" type="button" aria-pressed="false">Queue off</button>
+        <button class="btn" id="fleet-save-group" type="button">Save group</button>
         <button class="btn" id="fleet-select-all" type="button">Select all</button>
         <button class="btn" id="fleet-undock" type="button">Undock selected</button>
         <button class="btn" id="fleet-clear" type="button">Clear</button>
       </div>
       <p class="fleet-selected-count" id="fleet-selected-count">0 selected</p>
       <p class="fleet-hint">Tick ships, then tap the chart to sail them together.</p>
+      <div class="fleet-cards" id="fleet-cards"></div>
+      <h3 class="fleet-section-title">Ships not in a fleet</h3>
       <ul class="fleet-list" id="fleet-list"></ul>
       <p class="fleet-empty" id="fleet-empty" hidden>No ships yet.</p>
     </section>

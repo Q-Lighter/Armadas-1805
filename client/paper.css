@@ -2274,3 +2274,239 @@ body.game {
 .hint {
   display: none;
 }
+
+/* --- 3A-c: fleets, order sheets and control groups ---------------------- */
+.fleet-cards {
+  display: grid;
+  gap: 0.65rem;
+  margin: 0.35rem 0 0.8rem;
+}
+
+.fleet-section-title {
+  margin: 0.2rem 0 0.35rem;
+  font-size: 1rem;
+}
+
+.fleet-card {
+  border: 1px solid color-mix(in srgb, var(--ink) 35%, transparent);
+  border-radius: 0.25rem;
+  padding: 0.55rem;
+  background: color-mix(in srgb, var(--paper) 88%, white);
+}
+
+.fleet-card-head {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 0.35rem;
+  align-items: center;
+}
+
+.fleet-card-name {
+  width: 100%;
+  min-height: 44px;
+  border: 1px solid color-mix(in srgb, var(--ink) 35%, transparent);
+  background: transparent;
+  color: var(--ink);
+  font: inherit;
+  font-weight: 600;
+  padding: 0.35rem 0.45rem;
+}
+
+.fleet-card-leader {
+  font-size: 0.78rem;
+  white-space: nowrap;
+}
+
+.fleet-selects {
+  display: grid;
+  grid-template-columns: 1.2fr 1fr;
+  gap: 0.35rem;
+  margin: 0.4rem 0;
+}
+
+.fleet-selects label {
+  display: grid;
+  gap: 0.15rem;
+  font-size: 0.72rem;
+}
+
+.fleet-selects select,
+.fleet-card input,
+.fleet-card button,
+.heading-sheet input {
+  min-height: 44px;
+  font: inherit;
+}
+
+.fleet-selects select {
+  width: 100%;
+  background: var(--paper);
+  color: var(--ink);
+  border: 1px solid color-mix(in srgb, var(--ink) 35%, transparent);
+  padding: 0.25rem;
+}
+
+.fleet-member-list {
+  list-style: none;
+  margin: 0.35rem 0;
+  padding: 0;
+  display: grid;
+  gap: 0.2rem;
+}
+
+.fleet-member-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  gap: 0.35rem;
+  align-items: center;
+  min-height: 40px;
+  font-size: 0.8rem;
+  border-top: 1px dotted color-mix(in srgb, var(--ink) 25%, transparent);
+  padding-top: 0.2rem;
+}
+
+.fleet-member-state {
+  color: color-mix(in srgb, var(--ink) 70%, transparent);
+  font-size: 0.72rem;
+}
+
+.fleet-card-actions,
+.order-menu-actions,
+.heading-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+}
+
+.fleet-card-actions .btn,
+.order-menu-actions .btn,
+.heading-actions .btn {
+  flex: 1 1 30%;
+  min-height: 44px;
+}
+
+.order-menu,
+.heading-sheet {
+  position: fixed;
+  z-index: 35;
+  left: 50%;
+  bottom: max(0.5rem, env(safe-area-inset-bottom));
+  transform: translateX(-50%);
+  width: min(30rem, calc(100% - 1rem));
+  max-height: min(70dvh, 34rem);
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: 0.8rem;
+}
+
+.order-menu-where {
+  margin: 0.1rem 0 0.6rem;
+  font-size: 0.82rem;
+}
+
+.order-menu-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+}
+
+.order-menu-actions .btn {
+  min-height: 44px;
+}
+
+.order-menu-actions .btn:first-child {
+  grid-column: 1 / -1;
+}
+
+.heading-row {
+  display: grid;
+  grid-template-columns: 5rem auto minmax(0, 1fr);
+  gap: 0.35rem;
+  align-items: center;
+}
+
+.heading-row input[type="number"],
+.heading-sheet input[type="number"] {
+  width: 100%;
+  border: 1px solid color-mix(in srgb, var(--ink) 35%, transparent);
+  background: transparent;
+  color: var(--ink);
+  padding: 0.35rem;
+}
+
+.heading-degrees-mark {
+  font-weight: 600;
+}
+
+.heading-sheet > label,
+.heading-value {
+  display: block;
+  margin-top: 0.5rem;
+  font-size: 0.82rem;
+}
+
+.heading-preview {
+  font-size: 0.82rem;
+  margin: 0.6rem 0;
+}
+
+.heading-actions {
+  justify-content: flex-end;
+}
+
+.group-bar {
+  position: fixed;
+  z-index: 9;
+  left: 50%;
+  bottom: calc(max(0.3rem, env(safe-area-inset-bottom)) + 4.35rem);
+  transform: translateX(-50%);
+  display: flex;
+  gap: 0.3rem;
+  padding: 0.2rem;
+  max-width: calc(100% - 1rem);
+  overflow-x: auto;
+}
+
+.group-bar[hidden] {
+  display: none;
+}
+
+.group-chip {
+  min-width: 44px;
+  min-height: 44px;
+  padding: 0.2rem 0.45rem;
+  font: inherit;
+  font-weight: 600;
+  color: var(--ink);
+  background: transparent;
+  border: 1px solid color-mix(in srgb, var(--ink) 45%, transparent);
+}
+
+@media (max-width: 640px) {
+  .order-menu,
+  .heading-sheet {
+    left: max(0.4rem, env(safe-area-inset-left));
+    right: max(0.4rem, env(safe-area-inset-right));
+    bottom: max(0.4rem, env(safe-area-inset-bottom));
+    width: auto;
+    max-width: none;
+    transform: none;
+  }
+
+  /* The group row sits above the action bar, so lift the ship strip above it. */
+  .hud-ship {
+    bottom: calc(max(0.3rem, env(safe-area-inset-bottom)) + 9rem);
+  }
+
+  .hud-ship.is-expanded {
+    bottom: max(0.4rem, env(safe-area-inset-bottom));
+  }
+}
+
+@media (max-height: 440px) and (orientation: landscape) {
+  .order-menu,
+  .heading-sheet {
+    top: max(0.3rem, env(safe-area-inset-top));
+    bottom: max(0.3rem, env(safe-area-inset-bottom));
+    max-height: none;
+  }
+}

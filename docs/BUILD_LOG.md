@@ -1873,3 +1873,42 @@ winding`):
 
 - The Fleet panel and order controls are Part C. The server commands are in
   place, but the browser UI is not yet wired to them.
+
+## 3A-c: fleet screens and controls
+
+- The Fleet panel now lists saved fleets before loose ships. Each fleet card has
+  an editable name, marked leader, member states, Rejoin on detached members,
+  five formation presets with small icons, the four stances, and Hold, Heading,
+  Patrol, Rendezvous, Return to port, Change leader, Detach ship and Disband.
+- Selecting works by tap, double-tap for a whole fleet, the multi-select toggle
+  with a drag selection box, rings and a selected count. Control groups 1-9
+  can be saved from the selected ships and selected from the small group row or
+  with the number keys.
+- Long-press and right-click open the orders menu. On phones it is a bottom
+  sheet; on desktop it opens at the pointer. Sail here is first, followed by
+  heading/distance, patrol, rendezvous, return and hold. The heading sheet has
+  a dial, numeric heading and distance, and a live dotted preview. Tap-to-sail
+  Off now opens this menu on hold instead of sending an order; Move still arms
+  one tap.
+- The map draws dotted geometry for planned routes, heading, patrol, follow,
+  escort, rendezvous and queued waypoints, with queue numbers, for every
+  selected ship or fleet. Formation ships keep the existing true hull scale at
+  close zoom.
+- Added browser-free render plans and tests for the five viewports, order menu
+  contents, selection box, fleet-first ordering, member state text and number
+  keys (`shared/fleetUi.ts`, `tests/fleet-ui.test.ts`).
+
+### Checks
+
+- `npm test`: **236/236 passing**.
+- `npm run build`: passing.
+- `npm run benchmark:fleets`: 8 players, 96 ships, 100 steps: **6.39 ms per
+  world step**, 1.60 ms per update, 52,725 bytes average update. This is a
+  local Node proxy, not Cloudflare CPU time; the earlier Part B run measured
+  5.54 ms, so this is run-to-run variance rather than a code change.
+- `npm run ui-test` is not available in this project (`Missing script:
+  "ui-test"`), and there is no working headless Chromium in this image. The
+  responsive sheets, 44 px targets, dial dragging, long-press behaviour and
+  dotted lines have therefore not been checked in a browser or screenshotted.
+  The render-plan tests cover the viewport breakpoints and menu contents, not
+  rendered pixels.

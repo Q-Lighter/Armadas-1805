@@ -184,6 +184,35 @@ export const settings = {
     groupSpreadKm: 1.2,
   },
 
+  /** Fleets, formations and the first order rules. Draft values. */
+  fleets: {
+    /** A fleet never contains more than this many ships. */
+    maxShipsPerFleet: 12,
+    /** Traditional line-of-battle gap between neighbouring ships. Draft: 185 m. */
+    defaultGapM: 185,
+    /** Never close up below this gap. Draft: 60 m. */
+    minimumGapM: 60,
+    /** A follower may change speed by this share of the fleet speed to close up. */
+    stationSpeedShare: 0.15,
+    /** How far ahead of its slot a follower steers, in metres. Draft: 120 m. */
+    stationLookAheadM: 120,
+    /** A follower farther than this from its slot is out of station. Draft: 300 m. */
+    outOfStationM: 300,
+    /** A formation turns into line ahead this near the no-sail angle. Draft: 10 deg. */
+    upwindFormationMarginDeg: 10,
+    /** Follow keeps this distance behind its target. Draft: 1 km. */
+    followDistanceKm: 1,
+    /** Escort keeps this distance out alongside its target. Draft: 2 km. */
+    escortDistanceKm: 2,
+    /** A target unseen for this many game minutes ends a follow or escort. */
+    targetLostGameMinutes: 10,
+    /** A player may save this many numbered control groups. */
+    maxControlGroups: 9,
+    /** Breadcrumb spacing and history used by line ahead. */
+    breadcrumbSpacingM: 25,
+    maxBreadcrumbs: 160,
+  },
+
   /** Automatic route planning around discovered land. Draft values. */
   route: {
     /** Search grid around the ship and destination. */

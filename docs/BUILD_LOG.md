@@ -1822,3 +1822,22 @@ winding`):
 - `npm run build`: passing.
 - No browser is available: the zoom screenshots, edge smoothness and frame rate
   have not been measured on screen.
+
+## 3A-a: fleet and formation rules
+
+- Added `shared/fleets.ts`: fleets are capped at 12 ships, command passes to
+  the next member when the leader is lost or detached, and a ship can only be
+  assigned to one fleet. Line ahead follows the leader's breadcrumbs; line
+  abreast, wedge, convoy and free chase use the same 185 m default and 60 m
+  minimum gap. The upwind guard switches a formation to line ahead.
+- Added `shared/fleetOrders.ts`: order data for go-to, port, hold, heading and
+  distance, follow, escort, patrol, rendezvous, return to port and queues,
+  with pure progress and completion rules. Added the four stances and numbered
+  control groups in `shared/stances.ts` and `shared/fleets.ts`.
+- Every ship now carries its stance, fleet id and detached flag. New ships
+  default to Fight only if attacked.
+
+### Checks
+
+- `npm test`: **222/222 passing**, including 23 new fleet and order tests.
+- `npm run build`: checked with the 3A-b build; shared TypeScript compiles.

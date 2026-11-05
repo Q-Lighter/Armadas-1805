@@ -1841,3 +1841,35 @@ winding`):
 
 - `npm test`: **222/222 passing**, including 23 new fleet and order tests.
 - `npm run build`: checked with the 3A-b build; shared TypeScript compiles.
+
+## 3A-b: fleets, orders and test helper
+
+- The world now stores player fleets, their leader and members, detached ships,
+  stances, control groups, fleet commands, direct special orders and recent
+  leader paths. `visibleStateFor` includes only the receiving player's fleets
+  and groups; foreign ships still carry only navy and class.
+- Fleet orders are executed by the leader while followers steer to formation
+  slots with the 15% station speed cap. The existing route planner remains the
+  leader's path; followers use the normal sailing and coast rules. Direct
+  orders detach a member, a new fleet order brings detached members back, and
+  disbanding clears membership.
+- Order geometry is sent for my ships: heading lines, patrol paths, follow and
+  escort lines, rendezvous points, queued waypoints and the existing planned
+  curves. The test/dev `&fleet=frigate:4,trade:3,line:1` helper spawns fully
+  crewed and stocked ships near the start, unfleeted and inside the 30-ship
+  cap.
+
+### Checks
+
+- `npm test`: **230/230 passing**, including fleet creation/disband, leader
+  change, detach/rejoin, formation movement, direct heading/follow, helper
+  limits and cross-player privacy.
+- `npm run build`: passing.
+- `npm run benchmark:fleets`: 8 players, 96 ships, 100 steps: **5.54 ms per
+  world step**, 1.38 ms per update, 52,725 bytes average update. This is a
+  local Node proxy, not Cloudflare CPU time.
+
+### Still to do after B
+
+- The Fleet panel and order controls are Part C. The server commands are in
+  place, but the browser UI is not yet wired to them.

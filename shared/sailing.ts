@@ -82,6 +82,8 @@ export interface Ship {
   /** Fleet membership, if any, and whether a direct order detached it. */
   fleetId: string | null;
   detached: boolean;
+  /** Station keeping may not exceed this speed, in knots. */
+  stationSpeedLimit?: number;
   /** The planned route behind the current order, or null. */
   route: ShipRoute | null;
   /** The tack the ship will use the next time it has to beat upwind. */
@@ -371,6 +373,9 @@ export function stepShip(
   // Speed follows the angle to the wind, then a loaded cargo hold slows it.
   ship.speedKnots = speedForHeading(spec, ship.headingRad, windFromDeg) *
     cargoSpeedMultiplier(ship.stores, spec.cargoTonnes);
+  if (ship.stationSpeedLimit !== undefined) {
+    ship.speedKnots = Math.min(ship.speedKnots, ship.stationSpeedLimit);
+  }
   const travelKm = ship.speedKnots * KM_PER_HOUR_PER_KNOT * (dtGameSeconds / 3600);
   ship.x += Math.sin(ship.headingRad) * travelKm;
   ship.y -= Math.cos(ship.headingRad) * travelKm;

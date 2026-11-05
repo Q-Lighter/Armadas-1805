@@ -10,6 +10,7 @@ import {
   angleOffWindDeg,
   chooseTackSide,
   createShip,
+  holdPosition,
   sailTo,
   shipSpecFor,
   speedForHeading,
@@ -39,6 +40,36 @@ import {
 } from "./fog.js";
 import { addBots, refreshBotOrders } from "./bots.js";
 import {
+  DEFAULT_FLEET_STANCE,
+  FLEET_STANCES,
+  FORMATION_IDS,
+  addFleetMember,
+  changeFleetLeader,
+  createFleet,
+  detachFleetMember,
+  fleetHasShip,
+  formationForLeg,
+  formationSlots,
+  isOutOfStation,
+  nextFleetName,
+  rejoinFleetMember,
+  removeFleetMember,
+  type Fleet,
+  type FleetStance,
+  type FormationId,
+} from "./fleets.js";
+import {
+  advanceOrderProgress,
+  followStation,
+  groupSpreadPoint,
+  headingTarget,
+  initialOrderProgress,
+  patrolTarget,
+  withQueuedOrder,
+  type FleetOrder,
+  type OrderProgress,
+} from "./fleetOrders.js";
+import {
   hasRouteClearance,
   nearestSeaPoint,
   planRoute,
@@ -66,6 +97,7 @@ import {
   cleanShipName,
   crewHireCost,
   deliveryGameMs,
+  parseShipClass,
   portSellsShip,
   refillCrewPool,
   shipPrice,
@@ -151,6 +183,20 @@ export interface World {
   players: Map<string, Ship>;
   /** Every ship belonging to each human player. */
   fleets: Map<string, Ship[]>;
+  /** Player-created fleets, keyed by player then fleet id. */
+  fleetModels: Map<string, Map<string, Fleet>>;
+  /** Saved numbered control groups, by player. */
+  controlGroups: Map<string, Record<number, string[]>>;
+  /** A fleet order being carried out by its leader and followers. */
+  fleetCommands: Map<string, FleetCommand>;
+  /** Direct non-route orders for one ship, such as heading or follow. */
+  shipCommands: Map<string, ShipCommand>;
+  /** Recent leader paths used by line ahead. */
+  fleetPaths: Map<string, Array<{ x: number; y: number }>>;
+  /** Test/dev helper spawns only once per player id. */
+  testFleetsSpawned: Set<string>;
+  /** Next internal fleet id. */
+  nextFleetId: number;
   /** Money and selected ship, by human player id. */
   owners: Map<string, OwnerState>;
   /** Shared crew available at each port that has been used. */
@@ -263,6 +309,74 @@ export interface OwnShipSnapshot {
   starving: boolean;
   /** The selected ship's planned route, own ships only. */
   route?: Array<[number, number]> | null;
+  /** Fleet membership and direct-order route geometry, own ships only. */
+  fleetId?: string | null;
+  detached?: boolean;
+  stance?: FleetStance;
+  orderLines?: OrderLineSnapshot[];
+}
+
+/** One dotted order line for the selected ship or fleet. */
+export interface OrderLineSnapshot {
+  kind: "heading" | "patrol" | "follow" | "escort" | "rendezvous" | "queue";
+  points: Array<[number, number]>;
+  label: string;
+  /** One-based position in a queue, when this is a queued waypoint. */
+  queueNumber?: number;
+}
+
+/** A fleet member's card state. */
+export type FleetMemberState =
+  | "leader"
+  | "inStation"
+  | "outOfStation"
+  | "detached"
+  | "docked"
+  | "needsCrew";
+
+export interface FleetMemberSnapshot {
+  id: string;
+  state: FleetMemberState;
+}
+
+export interface FleetSnapshot {
+  id: string;
+  name: string;
+  leaderId: string;
+  formation: FormationId;
+  stance: FleetStance;
+  members: FleetMemberSnapshot[];
+}
+
+interface FleetCommand {
+  ownerId: string;
+  fleetId: string;
+  order: FleetOrder;
+  progress: OrderProgress;
+  queue: FleetOrder[];
+  startedX: number;
+  startedY: number;
+  lastX: number;
+  lastY: number;
+  targetX: number | null;
+  targetY: number | null;
+  memberIds: string[];
+  arrivedIds: Set<string>;
+  targetShipId: string | null;
+  targetMissingSinceGameMs: number;
+}
+
+interface ShipCommand {
+  ownerId: string;
+  shipId: string;
+  order: FleetOrder;
+  progress: OrderProgress;
+  startedX: number;
+  startedY: number;
+  targetX: number | null;
+  targetY: number | null;
+  targetShipId: string | null;
+  targetMissingSinceGameMs: number;
 }
 
 /**
@@ -295,6 +409,10 @@ export interface StateMessage {
   sel: string | null;
   /** Full private detail for this player's own fleet only. */
   fleet: OwnShipSnapshot[];
+  /** This player's saved fleets. Other players' fleets are never included. */
+  fleets: FleetSnapshot[];
+  /** This player's numbered control groups. */
+  groups: Record<number, string[]>;
   /** Test/dev provisions multiplier, shown by TEMP-DEBUG only. */
   h?: number;
   /** TEMP-DEBUG: dev-room load-test counters. */
@@ -373,6 +491,13 @@ export function createWorld(roomCode = "main", options: WorldOptions = {}): Worl
     ports: PORT_BY_ID,
     players: new Map(),
     fleets: new Map(),
+    fleetModels: new Map(),
+    controlGroups: new Map(),
+    fleetCommands: new Map(),
+    shipCommands: new Map(),
+    fleetPaths: new Map(),
+    testFleetsSpawned: new Set(),
+    nextFleetId: 1,
     owners: new Map(),
     crewPools: new Map(),
     portOwners: new Map(),
@@ -598,6 +723,15 @@ export function removePlayer(world: World, playerId: string): boolean {
   world.charts.delete(playerId);
   world.notices.delete(playerId);
   world.routePlans.delete(playerId);
+  world.fleetModels.delete(playerId);
+  world.controlGroups.delete(playerId);
+  world.testFleetsSpawned.delete(playerId);
+  for (const [fleetId, command] of [...world.fleetCommands]) {
+    if (command.ownerId === playerId) world.fleetCommands.delete(fleetId);
+  }
+  for (const [shipId, command] of [...world.shipCommands]) {
+    if (command.ownerId === playerId) world.shipCommands.delete(shipId);
+  }
   return removedShip;
 }
 
@@ -635,6 +769,903 @@ function shipForOrder(world: World, playerId: string, shipId?: unknown): Ship | 
   if (typeof shipId !== "string") return null;
   return shipsForOwner(world, playerId).find((ship) => ship.id === shipId) ?? null;
 }
+
+function fleetMapFor(world: World, playerId: string): Map<string, Fleet> {
+  let map = world.fleetModels.get(playerId);
+  if (!map) {
+    map = new Map();
+    world.fleetModels.set(playerId, map);
+  }
+  return map;
+}
+
+function fleetFor(world: World, playerId: string, fleetId: unknown): Fleet | null {
+  if (typeof fleetId !== "string") return null;
+  return fleetMapFor(world, playerId).get(fleetId) ?? null;
+}
+
+/** Update every fleet's member ids and leader after a ship is lost. */
+function syncPlayerFleets(world: World, playerId: string): void {
+  const ships = new Map(shipsForOwner(world, playerId).map((ship) => [ship.id, ship]));
+  const map = fleetMapFor(world, playerId);
+  for (const [fleetId, fleet] of [...map]) {
+    let next: Fleet | null = fleet;
+    for (const memberId of [...fleet.members]) {
+      if (ships.has(memberId)) continue;
+      next = next ? removeFleetMember(next, memberId) : null;
+    }
+    if (!next) {
+      map.delete(fleetId);
+      world.fleetCommands.delete(fleetId);
+      continue;
+    }
+    map.set(fleetId, next);
+    for (const ship of ships.values()) {
+      if (!next.members.includes(ship.id)) continue;
+      ship.fleetId = fleetId;
+      ship.detached = next.detached.includes(ship.id);
+    }
+  }
+}
+
+function detachForDirectOrder(world: World, playerId: string, ship: Ship): void {
+  if (!ship.fleetId || ship.detached) return;
+  const fleet = fleetFor(world, playerId, ship.fleetId);
+  if (!fleet) {
+    ship.fleetId = null;
+    return;
+  }
+  const next = detachFleetMember(fleet, ship.id);
+  fleetMapFor(world, playerId).set(next.id, next);
+  ship.detached = true;
+  // A direct order to the leader hands the formation to a new leader. The
+  // old fleet order is cancelled so it cannot steer the new leader by mistake.
+  if (fleet.leaderId === ship.id) world.fleetCommands.delete(fleet.id);
+}
+
+function clearShipOrder(ship: Ship): void {
+  ship.order = null;
+  ship.route = null;
+  ship.speedKnots = 0;
+  ship.stationSpeedLimit = undefined;
+}
+
+/** Create a player fleet from ships they own. Returns the new fleet, or null. */
+export function createPlayerFleet(
+  world: World,
+  playerId: string,
+  shipIds: unknown,
+  rawName?: unknown,
+): Fleet | null {
+  if (!Array.isArray(shipIds)) return null;
+  const own = shipsForOwner(world, playerId);
+  const wanted: Ship[] = [];
+  for (const rawId of shipIds) {
+    if (typeof rawId !== "string") return null;
+    const ship = own.find((candidate) => candidate.id === rawId);
+    if (!ship || ship.deliveryPortId || wanted.includes(ship)) return null;
+    wanted.push(ship);
+  }
+  if (wanted.length === 0) return null;
+  if (wanted.length > settings.fleets.maxShipsPerFleet) {
+    pushNotice(world, playerId, `A fleet may contain at most ${settings.fleets.maxShipsPerFleet} ships.`);
+    return null;
+  }
+  for (const ship of wanted) {
+    if (!fleetHasShip([...fleetMapFor(world, playerId).values()], ship.id)) continue;
+    pushNotice(world, playerId, "That ship is already in a fleet.");
+    return null;
+  }
+  const leader = wanted.find((ship) => ship.classId === "flagship") ?? wanted[0]!;
+  const name = typeof rawName === "string" && rawName.trim()
+    ? rawName.trim().slice(0, settings.ships.maxNameLength)
+    : nextFleetName([...fleetMapFor(world, playerId).values()]);
+  const fleet = createFleet({
+    id: `fleet-${world.nextFleetId++}`,
+    members: wanted.map((ship) => ship.id),
+    leaderId: leader.id,
+    name,
+    stance: DEFAULT_FLEET_STANCE,
+  });
+  fleetMapFor(world, playerId).set(fleet.id, fleet);
+  for (const ship of wanted) {
+    ship.fleetId = fleet.id;
+    ship.detached = false;
+  }
+  return fleet;
+}
+
+/** Rename, restyle or re-lead a fleet. */
+export function updatePlayerFleet(
+  world: World,
+  playerId: string,
+  fleetId: unknown,
+  patch: {
+    name?: unknown;
+    formation?: unknown;
+    stance?: unknown;
+    leaderId?: unknown;
+  },
+): boolean {
+  const fleet = fleetFor(world, playerId, fleetId);
+  if (!fleet) return false;
+  let next = fleet;
+  if (typeof patch.name === "string" && patch.name.trim()) {
+    next = { ...next, name: patch.name.trim().slice(0, settings.ships.maxNameLength) };
+  }
+  if (typeof patch.formation === "string" && FORMATION_IDS.includes(patch.formation as FormationId)) {
+    next = { ...next, formation: patch.formation as FormationId, revision: next.revision + 1 };
+  }
+  if (typeof patch.stance === "string" && FLEET_STANCES.includes(patch.stance as FleetStance)) {
+    next = { ...next, stance: patch.stance as FleetStance };
+  }
+  if (typeof patch.leaderId === "string") {
+    next = changeFleetLeader(next, patch.leaderId);
+  }
+  fleetMapFor(world, playerId).set(next.id, next);
+  return true;
+}
+
+/** Disband a fleet, leaving every ship independent. */
+export function disbandPlayerFleet(world: World, playerId: string, fleetId: unknown): boolean {
+  const fleet = fleetFor(world, playerId, fleetId);
+  if (!fleet) return false;
+  world.fleetCommands.delete(fleet.id);
+  for (const ship of shipsForOwner(world, playerId)) {
+    if (ship.fleetId !== fleet.id) continue;
+    ship.fleetId = null;
+    ship.detached = false;
+  }
+  fleetMapFor(world, playerId).delete(fleet.id);
+  return true;
+}
+
+/** Detach one member for an independent order. */
+export function detachPlayerShip(world: World, playerId: string, shipId: unknown): boolean {
+  if (typeof shipId !== "string") return false;
+  const ship = shipsForOwner(world, playerId).find((candidate) => candidate.id === shipId);
+  if (!ship || !ship.fleetId) return false;
+  const fleet = fleetFor(world, playerId, ship.fleetId);
+  if (!fleet) return false;
+  if (fleet.leaderId === ship.id) world.fleetCommands.delete(fleet.id);
+  const next = detachFleetMember(fleet, ship.id);
+  fleetMapFor(world, playerId).set(next.id, next);
+  ship.detached = true;
+  ship.stationSpeedLimit = undefined;
+  return true;
+}
+
+/** Rejoin a detached member to its fleet's formation. */
+export function rejoinPlayerShip(world: World, playerId: string, shipId: unknown): boolean {
+  if (typeof shipId !== "string") return false;
+  const ship = shipsForOwner(world, playerId).find((candidate) => candidate.id === shipId);
+  if (!ship || !ship.fleetId) return false;
+  const fleet = fleetFor(world, playerId, ship.fleetId);
+  if (!fleet || !fleet.detached.includes(ship.id)) return false;
+  fleetMapFor(world, playerId).set(fleet.id, rejoinFleetMember(fleet, ship.id));
+  ship.detached = false;
+  return true;
+}
+
+/** Save a numbered selection after checking every id belongs to the player. */
+export function savePlayerControlGroup(
+  world: World,
+  playerId: string,
+  slot: unknown,
+  ids: unknown,
+): boolean {
+  if (typeof slot !== "number" || !Array.isArray(ids)) return false;
+  if (!Number.isInteger(slot) || slot < 1 || slot > settings.fleets.maxControlGroups) return false;
+  const own = new Set(shipsForOwner(world, playerId).map((ship) => ship.id));
+  const chosen = [...new Set(ids.filter((id): id is string => typeof id === "string" && own.has(id)))];
+  const groups = { ...(world.controlGroups.get(playerId) ?? {}) };
+  if (chosen.length > 0) groups[slot] = chosen;
+  else delete groups[slot];
+  world.controlGroups.set(playerId, groups);
+  return true;
+}
+
+function nearestOwnPort(world: World, playerId: string, ship: Ship): PlacedPort | null {
+  const found = world.charts.get(playerId)?.foundPorts;
+  if (!found) return null;
+  const knownLand = routeKnownLand(world, playerId);
+  let best: PlacedPort | null = null;
+  let bestLength = Number.POSITIVE_INFINITY;
+  for (const portId of found) {
+    const port = world.ports.get(portId);
+    if (!port) continue;
+    const plan = planRoute({
+      start: { x: ship.x, y: ship.y },
+      goal: port.anchorage,
+      knownLand,
+      isInside: isInsideMapFrame,
+    });
+    if (plan.status === "none" || plan.status === "land") continue;
+    let length = 0;
+    let previous = { x: ship.x, y: ship.y };
+    for (const point of plan.waypoints) {
+      length += distanceKm(previous, point);
+      previous = point;
+    }
+    if (length < bestLength) {
+      bestLength = length;
+      best = port;
+    }
+  }
+  return best;
+}
+
+function isValidFleetOrder(order: unknown): order is FleetOrder {
+  if (!order || typeof order !== "object") return false;
+  const value = order as Record<string, unknown>;
+  if (typeof value.type !== "string") return false;
+  if (value.type === "goTo") return typeof value.x === "number" && typeof value.y === "number";
+  if (value.type === "sailToPort") return typeof value.portId === "string";
+  if (value.type === "hold" || value.type === "returnToPort") return true;
+  if (value.type === "heading") {
+    return typeof value.headingDeg === "number" && typeof value.distanceKm === "number";
+  }
+  if (value.type === "follow" || value.type === "escort") {
+    return typeof value.shipId === "string";
+  }
+  if (value.type === "patrol") {
+    return Boolean(value.a && value.b);
+  }
+  if (value.type === "rendezvous") {
+    return Boolean(value.point) && Array.isArray(value.memberIds);
+  }
+  return false;
+}
+
+function commandForShip(world: World, ship: Ship): FleetCommand | ShipCommand | null {
+  if (ship.fleetId) return world.fleetCommands.get(ship.fleetId) ?? null;
+  return world.shipCommands.get(ship.id) ?? null;
+}
+
+function issueShipDestination(
+  world: World,
+  playerId: string,
+  ship: Ship,
+  x: number,
+  y: number,
+  fleet: boolean,
+): boolean {
+  return applyOrder(world, playerId, x, y, ship.id, fleet);
+}
+
+function startFleetOrder(world: World, command: FleetCommand): boolean {
+  const fleet = fleetFor(world, command.ownerId, command.fleetId);
+  if (!fleet) return false;
+  const leader = shipsForOwner(world, command.ownerId).find((ship) => ship.id === fleet.leaderId);
+  if (!leader) return false;
+  command.progress = initialOrderProgress(command.order);
+  command.targetX = null;
+  command.targetY = null;
+  command.targetShipId = null;
+  command.targetMissingSinceGameMs = 0;
+  command.arrivedIds.clear();
+  command.memberIds = [...fleet.members];
+  const order = command.order;
+
+  if (order.type === "hold") {
+    for (const ship of shipsForOwner(world, command.ownerId)) {
+      if (fleet.members.includes(ship.id)) holdPosition(ship);
+    }
+    return true;
+  }
+
+  if (order.type === "rendezvous") {
+    const point = order.point;
+    command.targetX = point.x;
+    command.targetY = point.y;
+    for (const id of order.memberIds) {
+      const ship = shipsForOwner(world, command.ownerId).find((candidate) => candidate.id === id);
+      if (!ship || !fleet.members.includes(id)) continue;
+      if (!issueShipDestination(world, command.ownerId, ship, point.x, point.y, true)) return false;
+    }
+    return true;
+  }
+
+  if (order.type === "goTo" && fleet.formation === "freeChase") {
+    for (let index = 0; index < fleet.members.length; index += 1) {
+      const id = fleet.members[index]!;
+      const ship = shipsForOwner(world, command.ownerId).find((candidate) => candidate.id === id);
+      if (!ship || ship.detached) continue;
+      const point = groupSpreadPoint({ x: order.x, y: order.y }, index, fleet.members.length);
+      if (!issueShipDestination(world, command.ownerId, ship, point.x, point.y, true)) return false;
+    }
+    command.targetX = order.x;
+    command.targetY = order.y;
+    return true;
+  }
+
+  if (order.type === "goTo" || order.type === "patrol" || order.type === "returnToPort") {
+    let destination: { x: number; y: number } | null = null;
+    let portId: string | null = null;
+    if (order.type === "goTo") destination = { x: order.x, y: order.y };
+    if (order.type === "patrol") destination = patrolTarget(order, 0);
+    if (order.type === "returnToPort") {
+      const port = nearestOwnPort(world, command.ownerId, leader);
+      if (!port) return false;
+      destination = port.anchorage;
+      portId = port.id;
+    }
+    if (!destination) return false;
+    command.targetX = destination.x;
+    command.targetY = destination.y;
+    if (portId) {
+      if (!applyPortOrder(world, command.ownerId, portId, leader.id, true)) return false;
+    } else if (!issueShipDestination(world, command.ownerId, leader, destination.x, destination.y, true)) {
+      return false;
+    }
+    return true;
+  }
+
+  if (order.type === "sailToPort") {
+    command.targetX = null;
+    command.targetY = null;
+    return applyPortOrder(world, command.ownerId, order.portId, leader.id, true);
+  }
+
+  if (order.type === "heading") {
+    command.startedX = leader.x;
+    command.startedY = leader.y;
+    // Sail past the literal finish so the arrival radius cannot swallow a short
+    // heading order. Progress and completion still stop at exactly the order's
+    // distance; the line drawn to the client uses that literal finish.
+    const runTo = headingTarget(
+      { x: leader.x, y: leader.y },
+      order.headingDeg,
+      order.distanceKm + settings.sailing.arrivalRadiusKm,
+    );
+    command.targetX = runTo.x;
+    command.targetY = runTo.y;
+    leader.route = null;
+    return sailTo(leader, command.targetX, command.targetY);
+  }
+
+  if (order.type === "follow" || order.type === "escort") {
+    const target = shipsForOwner(world, command.ownerId).find((ship) => ship.id === order.shipId);
+    if (!target && !world.botFleets.has(command.ownerId)) return false;
+    command.targetShipId = order.shipId;
+    const station = target
+      ? followStation(target, target.headingRad, order.type)
+      : { x: leader.x, y: leader.y };
+    leader.route = null;
+    return sailTo(leader, station.x, station.y);
+  }
+
+  return false;
+}
+
+function startNextFleetOrder(world: World, command: FleetCommand): void {
+  const next = command.queue.shift();
+  if (!next) {
+    world.fleetCommands.delete(command.fleetId);
+    return;
+  }
+  command.order = next;
+  if (!startFleetOrder(world, command)) {
+    world.fleetCommands.delete(command.fleetId);
+    pushNotice(world, command.ownerId, "Order failed.");
+  }
+}
+
+function finishFleetOrder(world: World, command: FleetCommand, message: string | null = null): void {
+  if (message) pushNotice(world, command.ownerId, message);
+  startNextFleetOrder(world, command);
+}
+
+/** Give an order to a whole fleet, optionally appending it to the queue. */
+export function applyFleetOrder(
+  world: World,
+  playerId: string,
+  fleetId: unknown,
+  rawOrder: unknown,
+  queueing = false,
+): boolean {
+  const fleet = fleetFor(world, playerId, fleetId);
+  if (!fleet || !isValidFleetOrder(rawOrder)) return false;
+  const order = rawOrder;
+  const existing = world.fleetCommands.get(fleet.id);
+  if (queueing && existing) {
+    existing.queue.push(order);
+    return true;
+  }
+  // A new fleet order re-forms the fleet and brings detached members back.
+  let next = fleet;
+  for (const id of [...fleet.detached]) next = rejoinFleetMember(next, id);
+  fleetMapFor(world, playerId).set(next.id, next);
+  for (const ship of shipsForOwner(world, playerId)) {
+    if (next.members.includes(ship.id)) ship.detached = false;
+  }
+  const leader = shipsForOwner(world, playerId).find((ship) => ship.id === next.leaderId);
+  if (!leader) return false;
+  if (leader.dockedPortId) undock(world, playerId, leader.id);
+  const command: FleetCommand = {
+    ownerId: playerId,
+    fleetId: next.id,
+    order,
+    progress: initialOrderProgress(order),
+    queue: [],
+    startedX: leader.x,
+    startedY: leader.y,
+    lastX: leader.x,
+    lastY: leader.y,
+    targetX: null,
+    targetY: null,
+    memberIds: [...next.members],
+    arrivedIds: new Set(),
+    targetShipId: null,
+    targetMissingSinceGameMs: 0,
+  };
+  world.fleetCommands.set(next.id, command);
+  if (!startFleetOrder(world, command)) {
+    world.fleetCommands.delete(next.id);
+    pushNotice(world, playerId, "That order could not be carried out.");
+    return false;
+  }
+  return true;
+}
+
+/** Direct non-route orders for one ship. */
+/**
+ * TEMP-DEBUG test/dev helper: spawn a fully crewed, fully stocked group from
+ * &fleet=frigate:4,trade:3,line:1. It never runs in a normal room.
+ */
+export function spawnTestFleet(world: World, playerId: string, spec: string): number {
+  if (world.kind === "normal") return 0;
+  if (world.testFleetsSpawned.has(playerId)) return 0;
+  world.testFleetsSpawned.add(playerId);
+  const owner = shipsForOwner(world, playerId);
+  if (owner.length === 0) return 0;
+  const leader = owner[0]!;
+  const parts = spec.split(",").map((part) => part.trim()).filter(Boolean);
+  const wanted: Array<{ classId: ShipClassId; count: number }> = [];
+  for (const part of parts) {
+    const [rawClass, rawCount] = part.split(":");
+    if (!rawClass || !rawCount || !/^\d+$/.test(rawCount)) return -1;
+    const classId = parseShipClass(rawClass);
+    const count = Number(rawCount);
+    if (!classId || count < 1) return -1;
+    wanted.push({ classId, count });
+  }
+  const total = wanted.reduce((sum, entry) => sum + entry.count, 0);
+  if (total === 0) return 0;
+  const available = Math.max(0, settings.ships.maxShipsPerPlayer - owner.length);
+  let made = 0;
+  for (const entry of wanted) {
+    for (let index = 0; index < entry.count && made < available; index += 1) {
+      let x = leader.x;
+      let y = leader.y;
+      for (let attempt = 0; attempt < 80; attempt += 1) {
+        const angle = (attempt / 80) * Math.PI * 2;
+        const radius = 2 + (attempt % 5) * 0.8;
+        const candidate = {
+          x: leader.x + Math.sin(angle) * radius,
+          y: leader.y - Math.cos(angle) * radius,
+        };
+        if (isInsideMapFrame(candidate.x, candidate.y) && !isLandAt(candidate.x, candidate.y)) {
+          x = candidate.x;
+          y = candidate.y;
+          break;
+        }
+      }
+      const name = `${SHIP_NAMES[world.navy][(world.nextShipId + made) % SHIP_NAMES[world.navy].length]}`;
+      const ship = createShip(
+        `ship-${world.nextShipId++}`,
+        entry.classId,
+        x,
+        y,
+        leader.headingRad,
+        world.navy,
+        name,
+      );
+      ship.crew = ship.fullCrew;
+      ship.stores = fullStores(shipTypeFor(world.navy, entry.classId));
+      owner.push(ship);
+      made += 1;
+    }
+  }
+  return made;
+}
+
+export function applyShipSpecialOrder(
+  world: World,
+  playerId: string,
+  shipId: unknown,
+  rawOrder: unknown,
+): boolean {
+  if (typeof shipId !== "string" || !isValidFleetOrder(rawOrder)) return false;
+  const ship = shipsForOwner(world, playerId).find((candidate) => candidate.id === shipId);
+  if (!ship || ship.deliveryPortId) return false;
+  if (ship.fleetId) detachForDirectOrder(world, playerId, ship);
+  const order = rawOrder;
+  if (order.type === "hold") {
+    holdPosition(ship);
+    world.shipCommands.delete(ship.id);
+    return true;
+  }
+  if (order.type === "goTo") return applyOrder(world, playerId, order.x, order.y, ship.id);
+  if (order.type === "sailToPort") return applyPortOrder(world, playerId, order.portId, ship.id);
+  if (order.type === "returnToPort") {
+    const port = nearestOwnPort(world, playerId, ship);
+    return port ? applyPortOrder(world, playerId, port.id, ship.id) : false;
+  }
+  if (order.type === "heading") {
+    const point = headingTarget(
+      { x: ship.x, y: ship.y },
+      order.headingDeg,
+      order.distanceKm + settings.sailing.arrivalRadiusKm,
+    );
+    ship.route = null;
+    if (!sailTo(ship, point.x, point.y)) return false;
+    world.shipCommands.set(ship.id, {
+      ownerId: playerId,
+      shipId: ship.id,
+      order,
+      progress: initialOrderProgress(order),
+      startedX: ship.x,
+      startedY: ship.y,
+      targetX: point.x,
+      targetY: point.y,
+      targetShipId: null,
+      targetMissingSinceGameMs: 0,
+    });
+    return true;
+  }
+  if (order.type === "follow" || order.type === "escort") {
+    const target = shipsForOwner(world, playerId).find((candidate) => candidate.id === order.shipId);
+    if (!target) return false;
+    world.shipCommands.set(ship.id, {
+      ownerId: playerId,
+      shipId: ship.id,
+      order,
+      progress: initialOrderProgress(order),
+      startedX: ship.x,
+      startedY: ship.y,
+      targetX: null,
+      targetY: null,
+      targetShipId: order.shipId,
+      targetMissingSinceGameMs: 0,
+    });
+    return true;
+  }
+  // Patrol, rendezvous and queues are group orders and belong to a fleet.
+  return false;
+}
+
+/** Move fleet leaders and keep followers on their stations. */
+function prepareFleetCommands(world: World): void {
+  for (const [fleetId, command] of [...world.fleetCommands]) {
+    const fleet = fleetFor(world, command.ownerId, fleetId);
+    if (!fleet) {
+      world.fleetCommands.delete(fleetId);
+      continue;
+    }
+    const own = shipsForOwner(world, command.ownerId);
+    const leader = own.find((ship) => ship.id === fleet.leaderId);
+    if (!leader || leader.dockedPortId) continue;
+    const order = command.order;
+    if (order.type === "follow" || order.type === "escort") {
+      const target = own.find((ship) => ship.id === command.targetShipId);
+      if (target) {
+        const station = followStation(target, target.headingRad, order.type);
+        leader.order = { type: "sailTo", x: station.x, y: station.y };
+      }
+    }
+    if (order.type === "heading" && command.progress.status === "active") {
+      if (command.targetX !== null && command.targetY !== null) {
+        leader.order = { type: "sailTo", x: command.targetX, y: command.targetY };
+      }
+    }
+    // A free chase and a rendezvous give every ship its own route.
+    if (order.type === "goTo" && fleet.formation === "freeChase") continue;
+    if (order.type === "rendezvous") continue;
+    if (order.type === "hold") {
+      for (const id of fleet.members) {
+        const ship = own.find((candidate) => candidate.id === id);
+        if (ship) holdPosition(ship);
+      }
+      continue;
+    }
+    const activeMembers = fleet.members
+      .map((id) => own.find((ship) => ship.id === id))
+      .filter((ship): ship is Ship =>
+        Boolean(ship && !ship.detached && !ship.deliveryPortId && !ship.dockedPortId));
+    const leaderIndex = activeMembers.findIndex((ship) => ship.id === leader.id);
+    if (leaderIndex < 0) continue;
+    const formation = formationForLeg(
+      fleet.formation,
+      leader.headingRad,
+      settings.weather.windFromDeg,
+      shipSpecFor(leader).closestAngleDeg,
+    );
+    const path = world.fleetPaths.get(fleet.id) ?? [{ x: leader.x, y: leader.y }];
+    const slots = formationSlots({
+      formation,
+      members: activeMembers,
+      headingRad: leader.headingRad,
+      leaderPath: path,
+    });
+    // Use the fastest current member as the fleet pace. A stopped follower must
+    // not cap the whole formation at zero; the slowest-member rule is applied
+    // when the fleet is ordered, not to a ship still accelerating.
+    const fleetSpeed = Math.max(...activeMembers.map((ship) => ship.speedKnots));
+    for (let index = 0; index < activeMembers.length; index += 1) {
+      const ship = activeMembers[index]!;
+      if (ship.id === leader.id) continue;
+      const slot = slots[index];
+      if (!slot) continue;
+      const aim = {
+        x: leader.x + slot.aimX,
+        y: leader.y + slot.aimY,
+      };
+      ship.stationSpeedLimit = fleetSpeed * (1 + settings.fleets.stationSpeedShare);
+      if (distanceKm(ship, aim) > settings.sailing.minOrderDistanceKm) {
+        sailTo(ship, aim.x, aim.y);
+      } else {
+        holdPosition(ship);
+      }
+    }
+  }
+}
+
+/** Check completions and update follow/patrol orders after movement. */
+function updateFleetCommands(world: World): void {
+  for (const [fleetId, command] of [...world.fleetCommands]) {
+    const fleet = fleetFor(world, command.ownerId, fleetId);
+    if (!fleet) {
+      world.fleetCommands.delete(fleetId);
+      continue;
+    }
+    const own = shipsForOwner(world, command.ownerId);
+    const leader = own.find((ship) => ship.id === fleet.leaderId);
+    if (!leader) {
+      world.fleetCommands.delete(fleetId);
+      continue;
+    }
+    const order = command.order;
+    if (order.type === "follow" || order.type === "escort") {
+      const target = own.find((ship) => ship.id === command.targetShipId);
+      if (!target || target.dockedPortId) {
+        finishFleetOrder(world, command, "Target docked.");
+        continue;
+      }
+      const visible = Math.hypot(target.x - leader.x, target.y - leader.y) <= settings.fog.sightRangeKm;
+      if (visible) command.targetMissingSinceGameMs = 0;
+      else if (command.targetMissingSinceGameMs === 0) command.targetMissingSinceGameMs = world.gameMs;
+      if (
+        command.targetMissingSinceGameMs > 0 &&
+        world.gameMs - command.targetMissingSinceGameMs >= settings.fleets.targetLostGameMinutes * 60 * 1000
+      ) {
+        finishFleetOrder(world, command, "Target lost from sight.");
+        continue;
+      }
+      continue;
+    }
+    if (order.type === "heading") {
+      const moved = distanceKm(leader, { x: command.lastX, y: command.lastY });
+      command.progress = advanceOrderProgress(command.progress, { kind: "moved", distanceKm: moved });
+      command.lastX = leader.x;
+      command.lastY = leader.y;
+      if (command.progress.status === "complete") {
+        holdPosition(leader);
+        finishFleetOrder(world, command);
+      } else if (!leader.order) {
+        // The coast resolver stopped a literal heading order.
+        command.progress = advanceOrderProgress(command.progress, { kind: "landAhead" });
+        finishFleetOrder(world, command, "Land ahead.");
+      }
+      continue;
+    }
+    if (order.type === "patrol") {
+      if (leader.arrived && !leader.order && !leader.route) {
+        command.progress = advanceOrderProgress(command.progress, { kind: "arrived" });
+        const destination = patrolTarget(order, command.progress.patrolLeg);
+        command.targetX = destination.x;
+        command.targetY = destination.y;
+        if (!issueShipDestination(world, command.ownerId, leader, destination.x, destination.y, true)) {
+          finishFleetOrder(world, command, "Patrol route blocked.");
+        }
+      }
+      continue;
+    }
+    if (order.type === "rendezvous") {
+      for (const id of order.memberIds) {
+        const ship = own.find((candidate) => candidate.id === id);
+        if (!ship || ship.arrived) command.arrivedIds.add(id);
+      }
+      if (order.memberIds.every((id) => command.arrivedIds.has(id))) {
+        finishFleetOrder(world, command);
+      }
+      continue;
+    }
+    if (order.type === "hold") continue;
+    if (leader.arrived && !leader.order && !leader.route) {
+      finishFleetOrder(world, command);
+    }
+  }
+}
+
+function prepareShipCommands(world: World): void {
+  for (const [shipId, command] of [...world.shipCommands]) {
+    const ship = shipsForOwner(world, command.ownerId).find((candidate) => candidate.id === shipId);
+    if (!ship) {
+      world.shipCommands.delete(shipId);
+      continue;
+    }
+    const order = command.order;
+    if (order.type === "heading") continue;
+    if (order.type === "follow" || order.type === "escort") {
+      const target = shipsForOwner(world, command.ownerId).find(
+        (candidate) => candidate.id === command.targetShipId,
+      );
+      if (target && !target.dockedPortId) {
+        const station = followStation(target, target.headingRad, order.type);
+        ship.order = { type: "sailTo", x: station.x, y: station.y };
+      }
+    }
+  }
+}
+
+function updateShipCommands(world: World): void {
+  for (const [shipId, command] of [...world.shipCommands]) {
+    const ship = shipsForOwner(world, command.ownerId).find((candidate) => candidate.id === shipId);
+    if (!ship) {
+      world.shipCommands.delete(shipId);
+      continue;
+    }
+    const order = command.order;
+    if (order.type === "heading") {
+      const travelled = distanceKm(ship, { x: command.startedX, y: command.startedY });
+      command.progress = advanceOrderProgress(command.progress, {
+        kind: "moved",
+        distanceKm: travelled,
+      });
+      if (travelled >= order.distanceKm) {
+        holdPosition(ship);
+        world.shipCommands.delete(shipId);
+      } else if (!ship.order) {
+        holdPosition(ship);
+        pushNotice(world, command.ownerId, "Land ahead.");
+        world.shipCommands.delete(shipId);
+      }
+      continue;
+    }
+    if (order.type === "follow" || order.type === "escort") {
+      const target = shipsForOwner(world, command.ownerId).find(
+        (candidate) => candidate.id === command.targetShipId,
+      );
+      if (!target || target.dockedPortId) {
+        pushNotice(world, command.ownerId, "Target docked.");
+        world.shipCommands.delete(shipId);
+        continue;
+      }
+      const visible = Math.hypot(target.x - ship.x, target.y - ship.y) <= settings.fog.sightRangeKm;
+      if (visible) command.targetMissingSinceGameMs = 0;
+      else if (command.targetMissingSinceGameMs === 0) command.targetMissingSinceGameMs = world.gameMs;
+      if (
+        command.targetMissingSinceGameMs > 0 &&
+        world.gameMs - command.targetMissingSinceGameMs >= settings.fleets.targetLostGameMinutes * 60 * 1000
+      ) {
+        pushNotice(world, command.ownerId, "Target lost from sight.");
+        world.shipCommands.delete(shipId);
+      }
+    }
+  }
+}
+
+function recordFleetPaths(world: World): void {
+  for (const { ownerId, fleet } of allPlayerFleets(world)) {
+    const leader = shipsForOwner(world, ownerId).find((ship) => ship.id === fleet.leaderId);
+    if (!leader) continue;
+    let path = world.fleetPaths.get(fleet.id);
+    if (!path) {
+      path = [{ x: leader.x, y: leader.y }];
+      world.fleetPaths.set(fleet.id, path);
+    }
+    const last = path[path.length - 1];
+    if (!last || Math.hypot(leader.x - last.x, leader.y - last.y) >= settings.fleets.breadcrumbSpacingM / 1000) {
+      path.push({ x: leader.x, y: leader.y });
+      while (path.length > settings.fleets.maxBreadcrumbs) path.shift();
+    }
+  }
+}
+
+function allPlayerFleets(world: World): Array<{ ownerId: string; fleet: Fleet }> {
+  const found: Array<{ ownerId: string; fleet: Fleet }> = [];
+  for (const [ownerId, map] of world.fleetModels) {
+    for (const fleet of map.values()) found.push({ ownerId, fleet });
+  }
+  return found;
+}
+
+function fleetSnapshotsFor(world: World, playerId: string): FleetSnapshot[] {
+  syncPlayerFleets(world, playerId);
+  const ships = new Map(shipsForOwner(world, playerId).map((ship) => [ship.id, ship]));
+  const result: FleetSnapshot[] = [];
+  for (const fleet of fleetMapFor(world, playerId).values()) {
+    const command = world.fleetCommands.get(fleet.id);
+    const leader = ships.get(fleet.leaderId);
+    const active = fleet.members
+      .map((id) => ships.get(id))
+      .filter((ship): ship is Ship =>
+        Boolean(ship && !ship.detached && !ship.deliveryPortId && !ship.dockedPortId));
+    let slots: ReturnType<typeof formationSlots> = [];
+    if (leader && active.length > 0 && command) {
+      const formation = formationForLeg(
+        fleet.formation,
+        leader.headingRad,
+        settings.weather.windFromDeg,
+        shipSpecFor(leader).closestAngleDeg,
+      );
+      slots = formationSlots({
+        formation,
+        members: active,
+        headingRad: leader.headingRad,
+        leaderPath: world.fleetPaths.get(fleet.id) ?? [{ x: leader.x, y: leader.y }],
+      });
+    }
+    const members: FleetMemberSnapshot[] = fleet.members.map((id) => {
+      const ship = ships.get(id);
+      let state: FleetMemberState = "inStation";
+      if (id === fleet.leaderId) state = "leader";
+      else if (fleet.detached.includes(id) || ship?.detached) state = "detached";
+      else if (!ship) state = "detached";
+      else if (ship.dockedPortId) state = "docked";
+      else if (!canShipSail(ship)) state = "needsCrew";
+      else if (command && leader && ship && !ship.detached) {
+        const index = active.findIndex((candidate) => candidate.id === id);
+        const slot = slots[index];
+        if (slot && isOutOfStation(ship, leader, slot)) state = "outOfStation";
+      }
+      return { id, state };
+    });
+    result.push({
+      id: fleet.id,
+      name: fleet.name,
+      leaderId: fleet.leaderId,
+      formation: fleet.formation,
+      stance: fleet.stance,
+      members,
+    });
+  }
+  return result;
+}
+
+function orderLinesFor(world: World, playerId: string, ship: Ship): OrderLineSnapshot[] {
+  const command = commandForShip(world, ship);
+  if (!command) return [];
+  const order = command.order;
+  const lines: OrderLineSnapshot[] = [];
+  if (order.type === "heading") {
+    const finish = headingTarget(
+      { x: command.startedX, y: command.startedY },
+      order.headingDeg,
+      order.distanceKm,
+    );
+    lines.push({ kind: "heading", points: [[command.startedX, command.startedY], [finish.x, finish.y]], label: "Heading order" });
+  } else if (order.type === "patrol") {
+    lines.push({ kind: "patrol", points: [[order.a.x, order.a.y], [order.b.x, order.b.y]], label: "Patrol" });
+  } else if (order.type === "follow" || order.type === "escort") {
+    const target = shipsForOwner(world, playerId).find((candidate) => candidate.id === command.targetShipId);
+    if (target) lines.push({ kind: order.type, points: [[ship.x, ship.y], [target.x, target.y]], label: order.type === "follow" ? "Follow" : "Escort" });
+  } else if (order.type === "rendezvous") {
+    lines.push({ kind: "rendezvous", points: [[ship.x, ship.y], [order.point.x, order.point.y]], label: "Rendezvous" });
+  }
+  if ("queue" in command && command.queue.length > 0) {
+    command.queue.forEach((queued, index) => {
+      if (queued.type === "goTo") {
+        lines.push({ kind: "queue", points: [[ship.x, ship.y], [queued.x, queued.y]], label: `Queued ${index + 1}`, queueNumber: index + 1 });
+      } else if (queued.type === "rendezvous") {
+        lines.push({ kind: "queue", points: [[ship.x, ship.y], [queued.point.x, queued.point.y]], label: `Queued ${index + 1}`, queueNumber: index + 1 });
+      }
+    });
+  }
+  return lines;
+}
+
 
 /** Land this player has discovered. Undiscovered ground is open sea. */
 function routeKnownLand(
@@ -814,11 +1845,13 @@ export function applyOrder(
   x: unknown,
   y: unknown,
   shipId?: unknown,
+  fromFleet = false,
 ): boolean {
   if (typeof x !== "number" || typeof y !== "number") return false;
 
   const ship = shipForOrder(world, playerId, shipId);
   if (!ship || ship.deliveryPortId) return false;
+  if (!fromFleet) detachForDirectOrder(world, playerId, ship);
   if (!canShipSail(ship)) {
     if (world.players.has(playerId)) pushNotice(world, playerId, "Needs crew.");
     return false;
@@ -947,9 +1980,11 @@ export function applyPortOrder(
   playerId: string,
   portId: unknown,
   shipId?: unknown,
+  fromFleet = false,
 ): boolean {
   if (typeof portId !== "string") return false;
   const ship = shipForOrder(world, playerId, shipId);
+  if (ship && !fromFleet) detachForDirectOrder(world, playerId, ship);
   const port = world.ports.get(portId);
   if (!ship || !port || ship.deliveryPortId) return false;
   if (!canShipSail(ship)) {
@@ -1967,6 +3002,12 @@ export function stepWorld(
   dtGameSeconds: number,
   windFromDeg: number = settings.weather.windFromDeg,
 ): void {
+  for (const playerId of world.fleets.keys()) {
+    syncPlayerFleets(world, playerId);
+  }
+  prepareShipCommands(world);
+  prepareFleetCommands(world);
+
   for (const [playerId, fleet] of world.fleets) {
     for (const ship of fleet) {
       stepOwnerShip(world, playerId, ship, dtGameSeconds, windFromDeg);
@@ -1980,6 +3021,9 @@ export function stepWorld(
     }
   }
 
+  updateFleetCommands(world);
+  updateShipCommands(world);
+  recordFleetPaths(world);
   refreshBotOrders(world);
   world.tick += 1;
   // Integer milliseconds avoid a slowly drifting clock. A tick always adds the
@@ -2168,6 +3212,10 @@ export function visibleStateFor(
             Number(point.y.toFixed(2)),
           ])
         : null,
+      fleetId: ship.fleetId,
+      detached: ship.detached,
+      stance: ship.stance,
+      orderLines: orderLinesFor(world, playerId, ship),
     };
   });
 
@@ -2185,6 +3233,8 @@ export function visibleStateFor(
     m: owner?.money ?? 0,
     sel: owner?.selectedShipId ?? null,
     fleet,
+    fleets: fleetSnapshotsFor(world, playerId),
+    groups: world.controlGroups.get(playerId) ?? {},
   };
   if (world.kind !== "normal") state.h = world.hungerMultiplier;
   return state;

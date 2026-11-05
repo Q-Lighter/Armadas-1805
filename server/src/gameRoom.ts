@@ -9,19 +9,28 @@ import { botCountForRoom, botShipCount, setBotCount } from "@naval/shared/bots";
 import { LoadMetrics } from "@naval/shared/load-metrics";
 import {
   addPlayer,
+  applyFleetOrder,
   applyOrder,
   applyPortOrder,
+  applyShipSpecialOrder,
+  createPlayerFleet,
+  detachPlayerShip,
   buyGoods,
   buyShip,
   createWorld,
   hireCrew,
+  disbandPlayerFleet,
   removePlayer,
+  rejoinPlayerShip,
   requestChartResume,
   resupplyShip,
+  savePlayerControlGroup,
   selectShip,
   sellGoods,
   shipClassForRoom,
+  spawnTestFleet,
   stepWorld,
+  updatePlayerFleet,
   takeNotice,
   transferGoods,
   undock,
@@ -184,6 +193,14 @@ export class GameRoom {
       shipClass ?? shipClassForRoom(room),
       startMoney ?? this.world.startMoney,
     );
+    const rawFleet = url.searchParams.get("fleet");
+    if (kind !== "normal" && rawFleet !== null) {
+      if (spawnTestFleet(this.world, playerId, rawFleet) < 0) {
+        return new Response("Fleet must look like frigate:4,trade:3,line:1.", {
+          status: 400,
+        });
+      }
+    }
     // A refresh, a new tab or a reconnect starts with an empty client chart.
     // Replay the stored record and all block geometry before normal changes.
     requestChartResume(this.world, playerId);
@@ -289,7 +306,7 @@ export class GameRoom {
 
   /** Orders are untrusted: parse defensively and let the shared rules check. */
   private onMessage(playerId: string, data: unknown): void {
-    if (typeof data !== "string" || data.length > 400) return;
+    if (typeof data !== "string" || data.length > 4_000) return;
 
     let message: unknown;
     try {
@@ -311,10 +328,40 @@ export class GameRoom {
       count?: unknown;
       good?: unknown;
       amount?: unknown;
+      fleet?: unknown;
+      ships?: unknown;
+      formation?: unknown;
+      stance?: unknown;
+      leader?: unknown;
+      order?: unknown;
+      queue?: unknown;
+      slot?: unknown;
+      ids?: unknown;
     };
 
     if (order.t === "o") {
       applyOrder(this.world, playerId, order.x, order.y, order.ship);
+    } else if (order.t === "createFleet") {
+      createPlayerFleet(this.world, playerId, order.ships, order.name);
+    } else if (order.t === "fleetUpdate") {
+      updatePlayerFleet(this.world, playerId, order.fleet, {
+        name: order.name,
+        formation: order.formation,
+        stance: order.stance,
+        leaderId: order.leader,
+      });
+    } else if (order.t === "fleetDisband") {
+      disbandPlayerFleet(this.world, playerId, order.fleet);
+    } else if (order.t === "fleetDetach") {
+      detachPlayerShip(this.world, playerId, order.ship);
+    } else if (order.t === "fleetRejoin") {
+      rejoinPlayerShip(this.world, playerId, order.ship);
+    } else if (order.t === "fleetOrder") {
+      applyFleetOrder(this.world, playerId, order.fleet, order.order, order.queue === true);
+    } else if (order.t === "shipOrder") {
+      applyShipSpecialOrder(this.world, playerId, order.ship, order.order);
+    } else if (order.t === "saveGroup") {
+      savePlayerControlGroup(this.world, playerId, order.slot, order.ids);
     } else if (order.t === "sailToPort") {
       applyPortOrder(this.world, playerId, order.port, order.ship);
     } else if (order.t === "undock") {

@@ -283,6 +283,14 @@ export const settings = {
     driftHullDamageSharePerGameHour: 0.002,
     /** How many recent combat events are kept for the next updates. Draft. */
     maxCombatEvents: 500,
+    /** Draft: at most one notification of each kind per ship per real minute. */
+    noticeCooldownSeconds: 60,
+    /** Draft: how many private battle-log lines are kept for one player. */
+    maxBattleLogLines: 30,
+    /** Draft: port repairs are this much faster than the same work at sea. */
+    portRepairRateMultiplier: { stores: 4, pay: 6 },
+    /** Draft: paying locals costs this multiple of the repair materials value. */
+    portRepairPayMultiplier: 2,
     /** Neutral values for systems that arrive later. Keep at 1.0 for now. */
     seaStateHitMultiplier: 1,
     crewAccuracyMultiplier: 1,

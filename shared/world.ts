@@ -87,16 +87,19 @@ import {
   applyDriftingHullDamage,
   bearingRad,
   crewPercent,
+  crewTooLow,
   createSeededRandom,
   damageCapacities,
   damagePercents,
   isInCombat,
   reloadRealSeconds,
+  portRepairQuote,
   repairShip,
   resolveFiring,
   shipPerformance,
   type CombatObjective,
   type DamagePercents,
+  type PortRepairMode,
   type SeededRandom,
 } from "./combat.js";
 import type { NavyId } from "./navies.js";
@@ -257,6 +260,12 @@ export interface World {
   flagshipLost: FlagshipLostEvent[];
   /** Test/dev helper: the enemy dummy fleet has already been spawned. */
   testEnemiesSpawned: Set<string>;
+  /** Per-ship notification cooldowns, keyed by owner:ship:kind. */
+  noticeCooldowns: Map<string, number>;
+  /** Private short battle-log lines, by player. */
+  battleLogs: Map<string, string[]>;
+  /** Next battle-log sequence number. */
+  nextBattleLogId: number;
 }
 
 /**
@@ -353,6 +362,14 @@ export interface OwnShipSnapshot {
   canRepair?: boolean;
   repairEnabled?: boolean;
   crewTooLow?: boolean;
+  /** A pending repair quote at a usable port, or the active job at one. */
+  portRepair?: {
+    mode: PortRepairMode;
+    materials: number;
+    money: number;
+    rateMultiplier: number;
+    active: boolean;
+  };
   /** Normal and damage-limited values for the ship sheet. */
   effectiveSpeedKnots?: number;
   normalSpeedKnots?: number;
@@ -495,6 +512,8 @@ export interface StateMessage {
   groups: Record<number, string[]>;
   /** Visible combat events since the previous update. No damage numbers. */
   events?: CombatEvent[];
+  /** Private battle-log lines. Only events involving this player's ships. */
+  log?: string[];
   /** Test/dev provisions multiplier, shown by TEMP-DEBUG only. */
   h?: number;
   /** TEMP-DEBUG: dev-room load-test counters. */
@@ -602,6 +621,9 @@ export function createWorld(roomCode = "main", options: WorldOptions = {}): Worl
     combatRandom: createSeededRandom(hashText(roomCode) ^ 0x9e3779b9),
     flagshipLost: [],
     testEnemiesSpawned: new Set(),
+    noticeCooldowns: new Map(),
+    battleLogs: new Map(),
+    nextBattleLogId: 1,
   };
 }
 
@@ -1209,6 +1231,39 @@ function pushCombatEvent(
   while (world.combatEvents.length > settings.combat.maxCombatEvents) {
     world.combatEvents.shift();
   }
+}
+
+/** Short private battle-log lines, never another player's ship detail. */
+function pushBattleLog(world: World, ownerId: string, text: string): void {
+  if (!world.players.has(ownerId)) return;
+  const line = text.length > 120 ? `${text.slice(0, 117)}...` : text;
+  const current = world.battleLogs.get(ownerId) ?? [];
+  current.push(line);
+  while (current.length > settings.combat.maxBattleLogLines) current.shift();
+  world.battleLogs.set(ownerId, current);
+}
+
+/** At most one notice of each kind per ship per game minute. */
+function pushNoticeOnce(world: World, ownerId: string, shipId: string, kind: string, text: string): void {
+  if (!world.players.has(ownerId)) return;
+  const key = `${ownerId}:${shipId}:${kind}`;
+  const nowSeconds = world.gameMs / (settings.time.sailingTimeScale * 1_000);
+  const last = world.noticeCooldowns.get(key);
+  if (last !== undefined && nowSeconds - last < settings.combat.noticeCooldownSeconds) {
+    return;
+  }
+  world.noticeCooldowns.set(key, nowSeconds);
+  pushNotice(world, ownerId, text);
+}
+
+function damageLogText(damageByArea: Partial<Record<string, number>>): string {
+  const parts: string[] = [];
+  for (const area of ["hull", "sails", "masts", "rudder", "guns", "crew"]) {
+    const value = damageByArea[area];
+    if (value === undefined || value < 0.05) continue;
+    parts.push(`${area} -${value.toFixed(value < 1 ? 1 : 0)}%`);
+  }
+  return parts.join(", ");
 }
 
 /** Keep every engaged ship at about 250 m and on a beam bearing. */
@@ -2391,6 +2446,8 @@ function resolveCombat(world: World): void {
     });
     if (!result.fired) continue;
 
+    const firstOwnExchange = own.lastCombatRealMs === null;
+    const firstTargetExchange = target.lastCombatRealMs === null;
     own.lastCombatRealMs = nowMs;
     target.lastCombatRealMs = nowMs;
     own.stores.ammunition = Math.max(0, own.stores.ammunition - result.ammunitionUsed);
@@ -2414,6 +2471,22 @@ function resolveCombat(world: World): void {
     });
     if (result.hits > 0) {
       pushCombatEvent(world, { kind: "hit", x: target.x, y: target.y });
+      const summary = damageLogText(result.damageByArea);
+      if (summary) {
+        pushBattleLog(world, engagement.ownerId, `Your ${own.name} hit ${target.name}: ${summary}.`);
+        if (targetEntry) {
+          pushBattleLog(world, targetEntry.ownerId, `${own.name} hit your ${target.name}: ${summary}.`);
+        }
+      }
+      if (firstOwnExchange) {
+        pushNoticeOnce(world, engagement.ownerId, own.id, "battle", "Battle begun.");
+      }
+      if (targetEntry) {
+        pushNoticeOnce(world, targetEntry.ownerId, target.id, "underFire", "Ship under fire.");
+      }
+      if (targetEntry && crewTooLow(target.damage, damageCapacities(shipSpecFor(target)))) {
+        pushNoticeOnce(world, targetEntry.ownerId, target.id, "crewLow", "Crew too low.");
+      }
     }
     if (result.misses > 0) {
       const angle = world.combatRandom() * Math.PI * 2;
@@ -2424,10 +2497,14 @@ function resolveCombat(world: World): void {
         y: target.y - Math.cos(angle) * offset,
       });
     }
-    if (own.stores.ammunition <= 0) pushNotice(world, engagement.ownerId, "Out of ammunition.");
+    if (own.stores.ammunition <= 0) {
+      pushNoticeOnce(world, engagement.ownerId, own.id, "noAmmo", "Out of ammunition.");
+    }
     if (result.sunk) {
       sunk.add(target.id);
       pushCombatEvent(world, { kind: "sunk", x: target.x, y: target.y, shipId: target.id });
+      pushBattleLog(world, engagement.ownerId, `Your ${own.name} sank the ${target.name}.`);
+      if (targetEntry) pushBattleLog(world, targetEntry.ownerId, `The ${own.name} sank your ${target.name}.`);
     }
   }
   removeSunkShips(world, sunk);
@@ -2468,6 +2545,53 @@ function updateRepairs(world: World, dtGameSeconds: number): void {
     if (ship.damage.hull <= 0) sunk.add(ship.id);
   }
   removeSunkShips(world, sunk);
+}
+
+/** Port repair work, at four or six times the at-sea rate. */
+function updatePortRepairs(world: World, dtGameSeconds: number): void {
+  const gameHours = dtGameSeconds / 3600;
+  if (gameHours <= 0) return;
+  for (const { ship } of allShips(world)) {
+    const job = ship.portRepair;
+    if (!job) continue;
+    const ownerId = portOwnerForShip(world, ship);
+    const port = ship.dockedPortId ? world.ports.get(ship.dockedPortId) : null;
+    if (!port || !world.players.has(ownerId) || !portUsableForBuying(world, port, ownerId)) {
+      ship.portRepair = undefined;
+      continue;
+    }
+    const spec = shipSpecFor(ship);
+    const capacities = shipStoreCapacities(spec);
+    const materials = job.mode === "stores" ? ship.stores.repairMaterials : job.materialsQuoted;
+    const before = ship.damage;
+    const result = repairShip(
+      before,
+      spec,
+      materials,
+      capacities.repairMaterials,
+      gameHours * job.rateMultiplier,
+    );
+    ship.damage = result.damage;
+    if (job.mode === "stores") ship.stores.repairMaterials = result.materialsLeft;
+    ship.crew = ship.damage.crew;
+    const pct = damagePercents(ship.damage, damageCapacities(spec));
+    const complete = (["hull", "sails", "masts", "rudder", "guns"] as const)
+      .every((area) => pct[area] >= 99.999);
+    if (complete) {
+      ship.portRepair = undefined;
+      pushNotice(world, ownerId, `Repairs complete: ${ship.name}.`);
+    } else if (job.mode === "stores" && ship.stores.repairMaterials <= 0) {
+      ship.portRepair = undefined;
+      pushNotice(world, ownerId, "Repair materials exhausted.");
+    }
+  }
+}
+
+function portOwnerForShip(world: World, ship: Ship): string {
+  for (const [ownerId, fleet] of world.fleets) {
+    if (fleet.includes(ship)) return ownerId;
+  }
+  return "";
 }
 
 /** Docking places at a port size. */
@@ -3007,6 +3131,68 @@ export function resupplyShip(
   }
   const costText = cost > 0 ? ` for ${cost} pieces of eight` : " free";
   pushNotice(world, playerId, `Resupplied: ${taken.join(", ")}${costText}.`);
+  return true;
+}
+
+/**
+ * Start a port repair. NPC ports never repair ships. "stores" uses the ship's
+ * own repair materials at four times the at-sea rate; "pay" charges twice the
+ * materials' posted value and works at six times the rate without touching
+ * the stock. The quote is for the full missing work.
+ */
+export function repairAtPort(
+  world: World,
+  playerId: string,
+  shipId: unknown,
+  portId: unknown,
+  rawMode: unknown,
+): boolean {
+  if (rawMode !== "stores" && rawMode !== "pay") return false;
+  const found = shipDockedAt(world, playerId, shipId, portId);
+  if (!found) return false;
+  const { ship, port, owner } = found;
+  if (port.npc) {
+    pushNotice(world, playerId, "Neutral ports do not repair ships.");
+    return false;
+  }
+  if (!portUsableForBuying(world, port, playerId)) {
+    pushNotice(world, playerId, "You cannot repair ships at this port.");
+    return false;
+  }
+  const capacities = shipStoreCapacities(shipSpecFor(ship));
+  const quote = portRepairQuote(
+    ship.damage,
+    shipSpecFor(ship),
+    capacities.repairMaterials,
+    localPrice(world, port, "repairMaterials"),
+    rawMode,
+  );
+  if (quote.materialsTonnes < 0.001) {
+    pushNotice(world, playerId, "This ship needs no repairs.");
+    return false;
+  }
+  if (rawMode === "stores" && ship.stores.repairMaterials < 0.001) {
+    pushNotice(world, playerId, "No repair materials aboard.");
+    return false;
+  }
+  if (rawMode === "pay" && owner.money < quote.money) {
+    pushNotice(world, playerId, "Not enough money.");
+    return false;
+  }
+  if (rawMode === "pay") owner.money -= quote.money;
+  ship.portRepair = {
+    mode: rawMode,
+    rateMultiplier: quote.rateMultiplier,
+    materialsQuoted: quote.materialsTonnes,
+    moneyQuoted: quote.money,
+  };
+  pushNotice(
+    world,
+    playerId,
+    rawMode === "stores"
+      ? `Repair started with ${quote.materialsTonnes.toFixed(1)} t of materials.`
+      : `Repair started for ${quote.money} pieces of eight.`,
+  );
   return true;
 }
 
@@ -3588,6 +3774,7 @@ export function stepWorld(
   updateShipCommands(world);
   resolveCombat(world);
   updateRepairs(world, dtGameSeconds);
+  updatePortRepairs(world, dtGameSeconds);
   recordFleetPaths(world);
   refreshBotOrders(world);
   world.tick += 1;
@@ -3759,6 +3946,45 @@ export function visibleStateFor(
       world.hungerMultiplier,
     );
     const normalSpeed = speedForHeading(spec, ship.headingRad);
+    let portRepair: OwnShipSnapshot["portRepair"];
+    if (ship.dockedPortId) {
+      const port = world.ports.get(ship.dockedPortId);
+      if (port && !port.npc && portUsableForBuying(world, port, playerId)) {
+        if (ship.portRepair) {
+          portRepair = {
+            mode: ship.portRepair.mode,
+            materials: ship.portRepair.materialsQuoted,
+            money: ship.portRepair.moneyQuoted,
+            rateMultiplier: ship.portRepair.rateMultiplier,
+            active: true,
+          };
+        } else {
+          const stores = portRepairQuote(
+            ship.damage,
+            spec,
+            capacities.repairMaterials,
+            localPrice(world, port, "repairMaterials"),
+            "stores",
+          );
+          const pay = portRepairQuote(
+            ship.damage,
+            spec,
+            capacities.repairMaterials,
+            localPrice(world, port, "repairMaterials"),
+            "pay",
+          );
+          if (stores.materialsTonnes > 0.001) {
+            portRepair = {
+              mode: "stores",
+              materials: stores.materialsTonnes,
+              money: pay.money,
+              rateMultiplier: stores.rateMultiplier,
+              active: false,
+            };
+          }
+        }
+      }
+    }
     return {
       id: ship.id,
       name: ship.name,
@@ -3800,6 +4026,7 @@ export function visibleStateFor(
       canRepair: !isInCombat(ship.lastCombatRealMs, nowRealMs),
       repairEnabled: ship.repairEnabled,
       crewTooLow: performance.crewTooLow,
+      portRepair,
       effectiveSpeedKnots: Number((performance.driftSpeedKnots > 0
         ? performance.driftSpeedKnots
         : normalSpeed * performance.speedFactor).toFixed(2)),
@@ -3821,6 +4048,7 @@ export function visibleStateFor(
   const lastEventId = world.combatEvents[world.combatEvents.length - 1]?.id;
   if (lastEventId !== undefined) chart.combatCursor = lastEventId;
 
+  const battleLog = world.battleLogs.get(playerId);
   const state: StateMessage = {
     t: "s",
     tick: world.tick,
@@ -3839,6 +4067,7 @@ export function visibleStateFor(
     groups: world.controlGroups.get(playerId) ?? {},
   };
   if (events.length > 0) state.events = events;
+  if (battleLog && battleLog.length > 0) state.log = battleLog.slice(-settings.combat.maxBattleLogLines);
   if (world.kind !== "normal") state.h = world.hungerMultiplier;
   return state;
 }

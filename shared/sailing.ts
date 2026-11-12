@@ -114,6 +114,13 @@ export interface Ship {
   lastCombatRealMs: number | null;
   /** The player's repair toggle. Repairs still stop while in combat. */
   repairEnabled: boolean;
+  /** A repair job running while docked at a usable port. */
+  portRepair?: {
+    mode: "stores" | "pay";
+    rateMultiplier: number;
+    materialsQuoted: number;
+    moneyQuoted: number;
+  };
 }
 
 /** Normalise an angle in degrees to 0..360. */

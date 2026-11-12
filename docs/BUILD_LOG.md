@@ -1977,8 +1977,8 @@ winding`):
 - `npm test`: **265/265 passing** (10 new Part B tests).
 - `npm run build`: passing.
 - `npm run benchmark:battle`: 50 British against 50 French frigates, all
-  engaged and inside 1 km, 100 world steps: **1.16 ms per world step**,
-  11.6 ms per simulated second. The earlier 96-ship fleet benchmark measured
+  engaged and inside 1 km, 100 world steps: **0.95-1.16 ms per world step**,
+  9.5-11.6 ms per simulated second. The earlier 96-ship fleet benchmark measured
   6.39 ms per world step, so this is well under the earlier load-test level.
   This is a local Node proxy, not Cloudflare CPU time.
 - `npm run ui-test` is still unavailable and there is no headless Chromium, so
@@ -1988,3 +1988,60 @@ winding`):
 
 - Part C: attack menu, damage sheet, firing and sinking visuals, battle log,
   notifications, port repair, range rings and responsive checks.
+
+## 3B-c: damage screen, firing visuals and repairs
+
+- Long-press or right-click on a visible foreign ship now opens the attack
+  menu with **Attack: Sink** and **Attack: Capture**. The chosen order goes to
+  a single selected ship or to every selected fleet, using the 3B-b server
+  order. Own ships keep their existing orders menu.
+- Added the ship damage sheet for own ships: hull, sails, masts, rudder, guns
+  and crew bars with percentages, ammunition in broadsides, reload progress,
+  in-combat or can-repair state, effective and normal speed and turn, a short
+  list of damaged areas, and the repair toggle. It opens from the Damage
+  button, the Fleet panel, or a second tap on an already selected ship.
+- Combat events now draw as paper effects: a grey smoke puff on the firing
+  side, expanding splash rings on misses, a red-brown hit flash, and a growing
+  dark cloud for a sinking ship. The server's fog filter decides which events
+  arrive, and the effects are skipped outside a sight circle.
+- A faint 1 km ring and two 30-degree beam arcs appear around each of my ships
+  with an engage order.
+- Added the private battle log. The server records short lines only for the
+  receiving player's ships, the socket carries no other player's log, and the
+  client repeats the "your" filter. The log is collapsible and becomes a slim
+  list on phones.
+- Added throttled notices: Battle begun, Ship under fire, Out of ammunition and
+  Crew too low at most once per ship per real minute. Ship sunk keeps the
+  existing notice and a tap on it centres the map on the sinking. The flagship
+  lost record remains for 3E.
+- Added port repair jobs. At a capturable port this player can use, stores
+  repair at x4 using the ship's own materials; paying locals costs twice the
+  posted materials value and repairs at x6 without using stock. The server
+  sends the quote and charges exactly it. NPC ports refuse repairs, so a
+  normal room with no owned port has no repair buttons; the logic and buttons
+  are ready for port ownership.
+- Added browser-free plans and tests in `shared/combat-ui.ts` and
+  `tests/combat-ui.test.ts`, plus server tests for the private log, notice
+  throttle and the port repair quote charge.
+
+### Checks
+
+- `npm test`: **273/273 passing** (8 new Part C tests).
+- `npm run build`: passing.
+- `npm run ui-test`: still unavailable (`Missing script: "ui-test"`), and this
+  image has no working headless Chromium. The five viewport plans, 44 px
+  target minimum, menu contents, log privacy, notice throttle, effect
+  visibility and repair quote are covered without pixels.
+- `npm run benchmark:battle`: unchanged by Part C; **0.95-1.16 ms per world
+  step** for 50 against 50, under the earlier 96-ship fleet benchmark of
+  6.39 ms.
+
+### Not checked in a browser
+
+- The damage sheet, attack menu, battle log, notices, smoke/splash/sinking
+  effects and range rings were built and compiled, but not viewed at any
+  viewport. No screenshot was possible. The browser-free plans cover layout
+  limits and content, not rendered pixels or drag/long-press behaviour.
+- No usable capturable port exists in a normal room until port ownership is
+  built, so the port repair buttons were tested through the shared world and
+  the damage sheet, not by clicking them in a normal game.

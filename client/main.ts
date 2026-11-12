@@ -336,6 +336,26 @@ function parseFleet(raw: unknown): FleetSnapshot | null {
   };
 }
 
+function parseDamagePercents(raw: unknown): OwnShipSnapshot["damage"] | undefined {
+  if (!raw || typeof raw !== "object") return undefined;
+  const source = raw as Record<string, unknown>;
+  const hull = finiteNumber(source.hull);
+  const sails = finiteNumber(source.sails);
+  const masts = finiteNumber(source.masts);
+  const rudder = finiteNumber(source.rudder);
+  const guns = finiteNumber(source.guns);
+  const crew = finiteNumber(source.crew);
+  if ([hull, sails, masts, rudder, guns, crew].some((value) => value === null)) return undefined;
+  return {
+    hull: Math.max(0, Math.min(100, hull!)),
+    sails: Math.max(0, Math.min(100, sails!)),
+    masts: Math.max(0, Math.min(100, masts!)),
+    rudder: Math.max(0, Math.min(100, rudder!)),
+    guns: Math.max(0, Math.min(100, guns!)),
+    crew: Math.max(0, Math.min(100, crew!)),
+  };
+}
+
 /** Validate one private fleet row without trusting the socket. */
 function parseOwnShip(raw: unknown): OwnShipSnapshot | null {
   if (!raw || typeof raw !== "object") return null;
@@ -408,6 +428,45 @@ function parseOwnShip(raw: unknown): OwnShipSnapshot | null {
       ? source.stance as OwnShipSnapshot["stance"]
       : undefined,
     orderLines: parseOrderLines(source.orderLines),
+    damage: parseDamagePercents(source.damage),
+    ammunitionBroadsides: finiteNumber(source.ammunitionBroadsides) ?? undefined,
+    reloadProgress: finiteNumber(source.reloadProgress) ?? undefined,
+    reloadLeftSeconds: finiteNumber(source.reloadLeftSeconds) ?? undefined,
+    inCombat: source.inCombat === true,
+    canRepair: source.canRepair === true,
+    repairEnabled: source.repairEnabled !== false,
+    crewTooLow: source.crewTooLow === true,
+    effectiveSpeedKnots: finiteNumber(source.effectiveSpeedKnots) ?? undefined,
+    normalSpeedKnots: finiteNumber(source.normalSpeedKnots) ?? undefined,
+    effectiveTurnDegPerSecond: finiteNumber(source.effectiveTurnDegPerSecond) ?? undefined,
+    normalTurnDegPerSecond: finiteNumber(source.normalTurnDegPerSecond) ?? undefined,
+    portRepair: (() => {
+      const rawRepair = source.portRepair;
+      if (!rawRepair || typeof rawRepair !== "object") return undefined;
+      const repair = rawRepair as Record<string, unknown>;
+      const materials = finiteNumber(repair.materials);
+      const money = finiteNumber(repair.money);
+      const rate = finiteNumber(repair.rateMultiplier);
+      if (
+        (repair.mode !== "stores" && repair.mode !== "pay") ||
+        materials === null || money === null || rate === null
+      ) return undefined;
+      return {
+        mode: repair.mode,
+        materials,
+        money,
+        rateMultiplier: rate,
+        active: repair.active === true,
+      };
+    })(),
+    engagement: (() => {
+      const rawEngagement = source.engagement;
+      if (!rawEngagement || typeof rawEngagement !== "object") return null;
+      const engagement = rawEngagement as Record<string, unknown>;
+      if (typeof engagement.targetId !== "string") return null;
+      if (engagement.objective !== "sink" && engagement.objective !== "capture") return null;
+      return { targetId: engagement.targetId, objective: engagement.objective };
+    })(),
   };
 }
 
@@ -516,6 +575,27 @@ async function start(): Promise<void> {
   const fleetClear = element<HTMLButtonElement>("fleet-clear");
   const fleetSelectedCount = element<HTMLElement>("fleet-selected-count");
   const shipUndock = element<HTMLButtonElement>("ship-undock");
+  const shipDamage = element<HTMLButtonElement>("ship-damage");
+  const damagePanel = element<HTMLElement>("damage-panel");
+  const damageTitle = element<HTMLElement>("damage-title");
+  const damageSummary = element<HTMLElement>("damage-summary");
+  const damageBars = element<HTMLElement>("damage-bars");
+  const damageAmmo = element<HTMLElement>("damage-ammo");
+  const damageReload = element<HTMLElement>("damage-reload");
+  const damageState = element<HTMLElement>("damage-state");
+  const damageSpeed = element<HTMLElement>("damage-speed");
+  const damageTurn = element<HTMLElement>("damage-turn");
+  const damageHurts = element<HTMLElement>("damage-hurts");
+  const damageRepairToggle = element<HTMLInputElement>("damage-repair-toggle");
+  const damageClose = element<HTMLButtonElement>("damage-close");
+  const portRepairBox = element<HTMLElement>("port-repair");
+  const portRepairQuote = element<HTMLElement>("port-repair-quote");
+  const repairStores = element<HTMLButtonElement>("repair-stores");
+  const repairPay = element<HTMLButtonElement>("repair-pay");
+  const battleLog = element<HTMLElement>("battle-log");
+  const battleLogToggle = element<HTMLButtonElement>("battle-log-toggle");
+  const battleLogList = element<HTMLOListElement>("battle-log-list");
+  const battleLogCount = element<HTMLElement>("battle-log-count");
   const actionSheet = element<HTMLElement>("ship-action");
   const actionTitle = element<HTMLElement>("action-title");
   const actionUndock = element<HTMLButtonElement>("action-undock");
@@ -685,6 +765,8 @@ async function start(): Promise<void> {
   marker.visible = false;
 
   const fleetLayer = new Container();
+  const combatFxInk = new Graphics();
+  const combatRangeInk = new Graphics();
   const lastSeenLayer = new Container();
   const windLayer = new Graphics();
   const borderLayer = new Graphics();
@@ -710,9 +792,11 @@ async function start(): Promise<void> {
     holdRing,
     selectionBoxInk,
     routeLayer,
+    combatRangeInk,
     portLayer,
     lastSeenLayer,
     fleetLayer,
+    combatFxInk,
     windLayer,
     borderLayer,
     grainLayer,
@@ -773,6 +857,18 @@ async function start(): Promise<void> {
   let groupHoldTimer = 0;
   let groupHoldSlot = 0;
   let groupHoldFired = false;
+  let damageShipId: string | null = null;
+  let battleLogKey = "";
+  let lastSunkAt: { x: number; y: number } | null = null;
+  interface CombatFx {
+    kind: "fire" | "hit" | "miss" | "sunk";
+    x: number;
+    y: number;
+    side?: "port" | "starboard" | "bow" | "stern";
+    shipId?: string;
+    at: number;
+  }
+  const combatFx: CombatFx[] = [];
   const selectedShipIds = new Set<string>();
   let actionShipId: string | null = null;
   let actionPortId: string | null = null;
@@ -1788,6 +1884,77 @@ async function start(): Promise<void> {
     drawHeadingPreview();
   }
 
+  /** A faint 1 km ring and the two 30-degree beam arcs for engaged ships. */
+  function drawCombatRange(): void {
+    combatRangeInk.clear();
+    if (mode !== "ship") return;
+    const radius = scale();
+    const arc = (settings.combat.broadsideArcDeg * Math.PI) / 180;
+    for (const row of fleetShips) {
+      if (!row.engagement) continue;
+      const screen = toScreen(row.x, row.y);
+      combatRangeInk
+        .circle(screen.x, screen.y, radius)
+        .stroke({ width: 1, color: 0x8c1d1d, alpha: 0.16 });
+      const heading = ships.get(row.id)?.heading ?? 0;
+      for (const sign of [1, -1]) {
+        const middle = heading + sign * Math.PI / 2;
+        combatRangeInk
+          .arc(screen.x, screen.y, radius, middle - arc - Math.PI / 2, middle + arc - Math.PI / 2)
+          .stroke({ width: 2, color: 0x8c1d1d, alpha: 0.28 });
+      }
+    }
+  }
+
+  /** Grey smoke, splashes, hit flashes and a sinking cloud, in paper ink. */
+  function drawCombatFx(now: number): void {
+    combatFxInk.clear();
+    const zoom = Math.max(0.55, Math.min(2.2, scale() / 700));
+    let write = 0;
+    for (const fx of combatFx) {
+      const age = now - fx.at;
+      if (age < 0 || age > 2_400) continue;
+      combatFx[write++] = fx;
+      const screen = toScreen(fx.x, fx.y);
+      const t = age / 1_000;
+      if (fx.kind === "fire") {
+        const ship = fx.shipId ? ships.get(fx.shipId) : undefined;
+        const heading = ship?.heading ?? 0;
+        const sign = fx.side === "port" ? -1 : 1;
+        const offset = fx.side === "bow" || fx.side === "stern" ? 0 : 7 * zoom * sign;
+        const puff = 3 + t * 9 * zoom;
+        const dx = fx.side === "bow" ? Math.sin(heading) * 9 * zoom
+          : fx.side === "stern" ? -Math.sin(heading) * 9 * zoom
+          : Math.cos(heading) * offset;
+        const dy = fx.side === "bow" ? -Math.cos(heading) * 9 * zoom
+          : fx.side === "stern" ? Math.cos(heading) * 9 * zoom
+          : Math.sin(heading) * offset;
+        combatFxInk
+          .circle(screen.x + dx, screen.y + dy, puff)
+          .fill({ color: 0x5f6568, alpha: 0.28 * (1 - t / 2.4) });
+        combatFxInk
+          .circle(screen.x + dx * 0.7, screen.y + dy * 0.7, puff * 0.65)
+          .fill({ color: 0x8a8d8c, alpha: 0.22 * (1 - t / 2.4) });
+      } else if (fx.kind === "hit") {
+        combatFxInk
+          .circle(screen.x, screen.y, 3 + t * 7 * zoom)
+          .fill({ color: 0x7d2a20, alpha: Math.max(0, 0.75 - t) });
+      } else if (fx.kind === "miss") {
+        combatFxInk
+          .circle(screen.x, screen.y, 2 + t * 7 * zoom)
+          .stroke({ width: 1.5, color: 0x3d5866, alpha: Math.max(0, 0.6 - t * 0.5) });
+      } else {
+        for (let ring = 0; ring < 3; ring += 1) {
+          const scaleUp = 1 + ring * 0.65;
+          combatFxInk
+            .circle(screen.x, screen.y, (3 + t * 11 * zoom) * scaleUp)
+            .fill({ color: 0x3a3b39, alpha: Math.max(0, 0.25 - t * 0.09) });
+        }
+      }
+    }
+    combatFx.length = write;
+  }
+
   function portAt(screenX: number, screenY: number): PortMarkerPlan | null {
     let best: PortMarkerPlan | null = null;
     let bestDistance = Number.POSITIVE_INFINITY;
@@ -1830,6 +1997,19 @@ async function start(): Promise<void> {
     const ownIds = new Set(fleetShips.map((ship) => ship.id));
     for (const [id, view] of ships) {
       if (!ownIds.has(id)) continue;
+      const screen = toScreen(view.x, view.y);
+      const distance = Math.hypot(screen.x - screenX, screen.y - screenY);
+      if (distance > 22 || distance >= bestDistance) continue;
+      best = view;
+      bestDistance = distance;
+    }
+    return best;
+  }
+
+  function anyShipAt(screenX: number, screenY: number): ShipView | null {
+    let best: ShipView | null = null;
+    let bestDistance = Number.POSITIVE_INFINITY;
+    for (const view of ships.values()) {
       const screen = toScreen(view.x, view.y);
       const distance = Math.hypot(screen.x - screenX, screen.y - screenY);
       if (distance > 22 || distance >= bestDistance) continue;
@@ -2203,6 +2383,14 @@ async function start(): Promise<void> {
         showNotice("Tap the chart to place the rendezvous point.");
       });
       action("Return to port", () => sendFleetOrder(fleet.id, { type: "returnToPort" }));
+      action("Damage", () => {
+        const selected = fleet.members.find((member) => member.id === selectedShipId);
+        if (!selected) {
+          showNotice("Select a member of this fleet first.");
+          return;
+        }
+        openDamagePanel(selected.id);
+      });
       action("Change leader", () => {
         const selected = fleet.members.find((member) => member.id === selectedShipId);
         if (!selected) {
@@ -2245,14 +2433,20 @@ async function start(): Promise<void> {
     orderMenuTarget = null;
     orderMenuTitle.textContent = "Orders";
     orderMenuWhere.textContent = `${world.x.toFixed(1)} km E · ${world.y.toFixed(1)} km S`;
-    let kind: "sea" | "ship" | "port" = "sea";
+    let kind: "sea" | "ship" | "port" | "enemy" = "sea";
     const ownShip = shipAt(screenX, screenY);
+    const foreignShip = anyShipAt(screenX, screenY);
     const port = portAt(screenX, screenY);
     if (ownShip) {
       kind = "ship";
       orderMenuTarget = { kind: "ship", id: ownShip.id };
       orderMenuTitle.textContent = shipById(ownShip.id)?.name ?? "Ship";
       orderMenuWhere.textContent = "Orders for the selected ships";
+    } else if (foreignShip) {
+      kind = "enemy";
+      orderMenuTarget = { kind: "ship", id: foreignShip.id };
+      orderMenuTitle.textContent = `${foreignShip.navy} ${foreignShip.classId}`;
+      orderMenuWhere.textContent = "Attack with the selected ships or fleet";
     } else if (port) {
       kind = "port";
       orderMenuTarget = { kind: "port", id: port.id };
@@ -2287,11 +2481,21 @@ async function start(): Promise<void> {
     orderMenu.hidden = false;
   }
 
-  function runOrderMenu(id: string, kind: "sea" | "ship" | "port"): void {
+  function runOrderMenu(id: string, kind: "sea" | "ship" | "port" | "enemy"): void {
     const point = orderMenuPoint;
     const target = orderMenuTarget;
     if (id === "close") {
       closeOrderMenu();
+      return;
+    }
+    if (kind === "enemy" && target?.kind === "ship" &&
+      (id === "attackSink" || id === "attackCapture")) {
+      closeOrderMenu();
+      sendSelectedSpecial({
+        type: "engage",
+        shipId: target.id,
+        objective: id === "attackSink" ? "sink" : "capture",
+      });
       return;
     }
     if (kind === "ship" && target?.kind === "ship" && (id === "follow" || id === "escort")) {
@@ -2481,7 +2685,13 @@ async function start(): Promise<void> {
         updateSelectedShip(ship.id, true);
         closeFleetPanel();
       });
-      item.append(pick, button);
+      const damageButton = document.createElement("button");
+      damageButton.type = "button";
+      damageButton.className = "btn fleet-damage";
+      damageButton.textContent = "Damage";
+      damageButton.disabled = ship.status === "delivery";
+      damageButton.addEventListener("click", () => openDamagePanel(ship.id));
+      item.append(pick, button, damageButton);
       fleetList.append(item);
     }
   }
@@ -3421,6 +3631,113 @@ async function start(): Promise<void> {
     shipStripCrew.textContent = viewRow?.crewText ?? "–";
     shipStripProvisions.textContent = viewRow?.provisionsText ?? "–";
     shipUndock.hidden = row?.status !== "docked";
+    shipDamage.disabled = !row || row.status === "delivery";
+  }
+
+  function closeDamagePanel(): void {
+    damagePanel.hidden = true;
+    damageShipId = null;
+  }
+
+  function openDamagePanel(shipId: string | null = null): void {
+    const row = shipId ? shipById(shipId) : selectedFleetShip();
+    if (!row) return;
+    damageShipId = row.id;
+    closeFleetPanel();
+    damagePanel.hidden = false;
+    renderDamagePanel();
+  }
+
+  function renderDamagePanel(): void {
+    if (damagePanel.hidden) return;
+    const row = damageShipId ? shipById(damageShipId) : selectedFleetShip();
+    if (!row) {
+      closeDamagePanel();
+      return;
+    }
+    damageTitle.textContent = `${row.name} · ${shipTypeFor(row.navy, row.classId).name}`;
+    const damage = row.damage;
+    const labels = [
+      ["hull", "Hull"],
+      ["sails", "Sails"],
+      ["masts", "Masts"],
+      ["rudder", "Rudder"],
+      ["guns", "Guns"],
+      ["crew", "Crew"],
+    ] as const;
+    damageBars.replaceChildren();
+    const hurt: string[] = [];
+    for (const [key, label] of labels) {
+      const pct = damage ? damage[key] : 100;
+      const bar = document.createElement("div");
+      const name = document.createElement("span");
+      const track = document.createElement("span");
+      const fill = document.createElement("span");
+      const value = document.createElement("span");
+      bar.className = "damage-bar";
+      name.className = "damage-bar-label";
+      name.textContent = label;
+      track.className = "damage-bar-track";
+      fill.className = `damage-bar-fill${pct >= 98 ? " is-ok" : ""}`;
+      fill.style.width = `${Math.max(0, Math.min(100, pct))}%`;
+      value.className = "damage-bar-value";
+      value.textContent = `${Math.round(pct)}%`;
+      track.append(fill);
+      bar.append(name, track, value);
+      damageBars.append(bar);
+      if (pct < 99) hurt.push(`${label} at ${Math.round(pct)}%`);
+    }
+    damageSummary.textContent = row.crewTooLow
+      ? "Crew too low — the ship cannot sail or fight."
+      : `${row.status === "docked" ? "In port" : "At sea"} · ${hurt.length === 0 ? "No damage" : `${hurt.length} areas damaged`}`;
+    damageAmmo.textContent = `${(row.ammunitionBroadsides ?? 0).toFixed(1)} broadsides`;
+    damageReload.textContent = row.reloadProgress === undefined
+      ? "–"
+      : `${Math.round(row.reloadProgress * 100)}% · ${(row.reloadLeftSeconds ?? 0).toFixed(1)}s`;
+    damageState.textContent = row.inCombat
+      ? "In combat — repairs blocked"
+      : row.canRepair
+        ? "Can repair"
+        : "Repairs blocked";
+    damageSpeed.textContent = row.effectiveSpeedKnots === undefined
+      ? "–"
+      : `${row.effectiveSpeedKnots.toFixed(1)} / ${(row.normalSpeedKnots ?? 0).toFixed(1)} kn`;
+    damageTurn.textContent = row.effectiveTurnDegPerSecond === undefined
+      ? "–"
+      : `${row.effectiveTurnDegPerSecond.toFixed(1)} / ${(row.normalTurnDegPerSecond ?? 0).toFixed(1)}°/s`;
+    damageHurts.textContent = hurt.length > 0 ? hurt.join(" · ") : "All six areas sound.";
+    damageRepairToggle.checked = row.repairEnabled !== false;
+    damageRepairToggle.disabled = row.status === "delivery";
+    const quote = row.portRepair;
+    portRepairBox.hidden = !quote;
+    if (quote) {
+      portRepairQuote.textContent = quote.active
+        ? `Repair in progress at x${quote.rateMultiplier}. ${quote.materials.toFixed(1)} t quoted.`
+        : `Stores ${quote.materials.toFixed(1)} t (x4) · pay locals ${formatMoney(quote.money)} pieces (x2, x6).`;
+      repairStores.disabled = quote.active;
+      repairPay.disabled = quote.active;
+    }
+  }
+
+  function renderBattleLog(lines: string[] | undefined): void {
+    const clean: string[] = [];
+    for (const line of lines ?? []) {
+      if (typeof line !== "string" || line.length > 120) continue;
+      if (!/your/i.test(line)) continue;
+      clean.push(line);
+    }
+    const key = clean.join("\n");
+    if (key === battleLogKey) return;
+    battleLogKey = key;
+    battleLog.hidden = clean.length === 0;
+    battleLogCount.textContent = String(clean.length);
+    battleLogList.replaceChildren();
+    for (const line of clean) {
+      const item = document.createElement("li");
+      item.textContent = line;
+      battleLogList.append(item);
+    }
+    battleLogList.scrollTop = battleLogList.scrollHeight;
   }
 
   function updateClockAndNight(now: number): void {
@@ -3584,6 +3901,38 @@ async function start(): Promise<void> {
     }
 
     ownId = state.you;
+    if (Array.isArray(state.events)) {
+      const receivedAtClient = performance.now();
+      for (const raw of state.events) {
+        if (!raw || typeof raw !== "object") continue;
+        const event = raw as unknown as Record<string, unknown>;
+        if (
+          event.kind !== "fire" && event.kind !== "hit" &&
+          event.kind !== "miss" && event.kind !== "sunk"
+        ) continue;
+        if (typeof event.x !== "number" || typeof event.y !== "number") continue;
+        combatFx.push({
+          kind: event.kind,
+          x: event.x,
+          y: event.y,
+          side: event.side === "port" || event.side === "starboard" ||
+            event.side === "bow" || event.side === "stern"
+            ? event.side
+            : undefined,
+          shipId: typeof event.shipId === "string" ? event.shipId : undefined,
+          at: receivedAtClient,
+        });
+        if (event.kind === "sunk") {
+          lastSunkAt = { x: event.x, y: event.y };
+          if (notice.textContent?.startsWith("Ship sunk")) {
+            notice.dataset.sunk = "true";
+            notice.tabIndex = 0;
+            notice.title = "Tap to centre the map on the sinking";
+          }
+        }
+      }
+      while (combatFx.length > 240) combatFx.shift();
+    }
 
     const incomingFleet: OwnShipSnapshot[] = [];
     if (Array.isArray(state.fleet)) {
@@ -3819,6 +4168,9 @@ async function start(): Promise<void> {
       renderHirePanel();
     }
     if (!tradePanel.hidden) renderTradePanel();
+    if (damageShipId && !shipById(damageShipId)) closeDamagePanel();
+    if (!damagePanel.hidden) renderDamagePanel();
+    renderBattleLog(state.log);
 
     lastSeen = Array.isArray(state.l) ? state.l : [];
     drawLastSeen();
@@ -4093,6 +4445,10 @@ async function start(): Promise<void> {
       }
       const row = fleetShips.find((ship) => ship.id === ownShip.id);
       if (row?.status === "docked" && openShipActions(ownShip.id)) return;
+      if (row && row.id === selectedShipId && !multiSelect) {
+        openDamagePanel(row.id);
+        return;
+      }
       updateSelectedShip(ownShip.id, false);
       selectedFleetId = fleet?.id ?? null;
       return;
@@ -4347,6 +4703,27 @@ async function start(): Promise<void> {
 
   fleetUndock.addEventListener("click", sendUndock);
   shipUndock.addEventListener("click", sendUndock);
+  shipDamage.addEventListener("click", () => openDamagePanel());
+  damageClose.addEventListener("click", closeDamagePanel);
+  damageRepairToggle.addEventListener("change", () => {
+    const row = damageShipId ? shipById(damageShipId) : selectedFleetShip();
+    if (!row) return;
+    sendCommand({ t: "repair", ship: row.id, enabled: damageRepairToggle.checked });
+  });
+  repairStores.addEventListener("click", () => {
+    const row = damageShipId ? shipById(damageShipId) : selectedFleetShip();
+    if (!row?.portId) return;
+    sendCommand({ t: "portRepair", ship: row.id, port: row.portId, mode: "stores" });
+  });
+  repairPay.addEventListener("click", () => {
+    const row = damageShipId ? shipById(damageShipId) : selectedFleetShip();
+    if (!row?.portId) return;
+    sendCommand({ t: "portRepair", ship: row.id, port: row.portId, mode: "pay" });
+  });
+  battleLogToggle.addEventListener("click", () => {
+    const collapsed = battleLog.classList.toggle("is-collapsed");
+    battleLogToggle.setAttribute("aria-expanded", String(!collapsed));
+  });
 
   actionUndock.addEventListener("click", () => {
     if (actionShipId) sendCommand({ t: "undock", ship: actionShipId });
@@ -4654,7 +5031,17 @@ async function start(): Promise<void> {
 
   versionNotice.addEventListener("click", () => location.reload());
   notice.addEventListener("click", () => {
-    if (notice.dataset.reload === "true") location.reload();
+    if (notice.dataset.reload === "true") {
+      location.reload();
+      return;
+    }
+    if (notice.dataset.sunk === "true" && lastSunkAt) {
+      view.x = lastSunkAt.x;
+      view.y = lastSunkAt.y;
+      setFollow(false);
+      refreshMap(performance.now(), true);
+      notice.dataset.sunk = "false";
+    }
   });
   notice.addEventListener("keydown", (event) => {
     if (
@@ -4731,6 +5118,8 @@ async function start(): Promise<void> {
     updateLayerOffset();
     refreshPorts();
     drawSelectedRoute();
+    drawCombatRange();
+    drawCombatFx(now);
 
     for (let index = 0; index < lastSeenViews.length; index += 1) {
       const markerView = lastSeenViews[index];

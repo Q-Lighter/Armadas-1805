@@ -111,6 +111,9 @@
         <button class="btn ship-undock" id="ship-undock" type="button" hidden>
           Undock
         </button>
+        <button class="btn ship-damage" id="ship-damage" type="button">
+          Damage
+        </button>
 
         <div class="wind-row">
           <svg class="wind-arrow" viewBox="0 0 24 24" aria-hidden="true">
@@ -146,6 +149,44 @@
           </svg>
         </div>
       </div>
+    </section>
+
+    <section class="damage-panel paper" id="damage-panel" role="dialog" aria-labelledby="damage-title" hidden>
+      <div class="panel-head">
+        <div>
+          <p class="kicker">Ship's report</p>
+          <h2 id="damage-title">Damage</h2>
+        </div>
+        <button class="btn panel-close" id="damage-close" type="button">Close</button>
+      </div>
+      <p class="damage-summary" id="damage-summary">–</p>
+      <div class="damage-bars" id="damage-bars" aria-label="Six damage areas"></div>
+      <dl class="damage-facts">
+        <dt>Ammunition</dt><dd id="damage-ammo">–</dd>
+        <dt>Reload</dt><dd id="damage-reload">–</dd>
+        <dt>State</dt><dd id="damage-state">–</dd>
+        <dt>Speed</dt><dd id="damage-speed">–</dd>
+        <dt>Turn</dt><dd id="damage-turn">–</dd>
+      </dl>
+      <p class="damage-hurts" id="damage-hurts"></p>
+      <label class="repair-toggle">
+        <input id="damage-repair-toggle" type="checkbox" />
+        Repair at sea when out of combat
+      </label>
+      <div class="port-repair" id="port-repair" hidden>
+        <p class="port-repair-quote" id="port-repair-quote"></p>
+        <div class="port-repair-actions">
+          <button class="btn" id="repair-stores" type="button">Repair with stores (x4)</button>
+          <button class="btn" id="repair-pay" type="button">Pay locals (x2, x6)</button>
+        </div>
+      </div>
+    </section>
+
+    <section class="battle-log paper" id="battle-log" hidden aria-label="Battle log">
+      <button class="battle-log-toggle" id="battle-log-toggle" type="button" aria-expanded="true">
+        Battle log <span class="battle-log-count" id="battle-log-count">0</span>
+      </button>
+      <ol class="battle-log-list" id="battle-log-list"></ol>
     </section>
 
     <section class="menu-panel paper" id="menu-panel" role="dialog" aria-labelledby="menu-title" hidden>

@@ -173,6 +173,10 @@
     "./tap-to-sail": {
       "types": "./dist/tapToSail.d.ts",
       "default": "./dist/tapToSail.js"
+    },
+    "./combat-ui": {
+      "types": "./dist/combat-ui.d.ts",
+      "default": "./dist/combat-ui.js"
     }
   },
   "files": [

@@ -28,6 +28,7 @@ import {
   selectShip,
   sellGoods,
   shipClassForRoom,
+  repairAtPort,
   setPlayerRepair,
   spawnTestEnemyFleet,
   spawnTestFleet,
@@ -348,6 +349,7 @@ export class GameRoom {
       slot?: unknown;
       ids?: unknown;
       enabled?: unknown;
+      mode?: unknown;
     };
 
     if (order.t === "o") {
@@ -395,6 +397,8 @@ export class GameRoom {
       resupplyShip(this.world, playerId, order.ship, order.port);
     } else if (order.t === "repair") {
       setPlayerRepair(this.world, playerId, order.ship, order.enabled);
+    } else if (order.t === "portRepair") {
+      repairAtPort(this.world, playerId, order.ship, order.port, order.mode);
     }
   }
 }

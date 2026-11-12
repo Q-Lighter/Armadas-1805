@@ -649,6 +649,47 @@ export function repairShip(
   return { damage: next, materialsUsed, materialsLeft: Math.max(0, materials), repaired };
 }
 
+export type PortRepairMode = "stores" | "pay";
+
+export interface PortRepairQuote {
+  /** Full missing repair work, in tonnes of repair materials. */
+  materialsTonnes: number;
+  /** What the locals charge for the same work. Zero for the stores choice. */
+  money: number;
+  rateMultiplier: number;
+}
+
+/**
+ * Price a full repair of the five non-crew areas at a port. The stores choice
+ * uses the ship's own materials; the pay choice costs twice their posted value
+ * and never touches that stock. Both are Draft numbers from settings.
+ */
+export function portRepairQuote(
+  damage: ShipDamage,
+  spec: ShipType,
+  materialCapacityTonnes: number,
+  repairMaterialsPrice: number,
+  mode: PortRepairMode,
+): PortRepairQuote {
+  const capacities = damageCapacities(spec);
+  let materialsTonnes = 0;
+  const areas: Array<Exclude<DamageArea, "crew">> = ["hull", "sails", "masts", "rudder", "guns"];
+  for (const area of areas) {
+    const missing = 1 - damageAreaPercent(damage, capacities, area) / 100;
+    if (missing <= 0) continue;
+    materialsTonnes += repairCostForArea(spec, area, materialCapacityTonnes) * missing;
+  }
+  const price = Math.max(0, repairMaterialsPrice);
+  const money = mode === "pay"
+    ? Math.ceil(materialsTonnes * price * COM.portRepairPayMultiplier)
+    : 0;
+  return {
+    materialsTonnes,
+    money,
+    rateMultiplier: COM.portRepairRateMultiplier[mode],
+  };
+}
+
 /** A repairing ship is in combat for 30 real seconds after the last shot. */
 export function isInCombat(lastCombatRealMs: number | null, nowRealMs: number): boolean {
   if (lastCombatRealMs === null || !Number.isFinite(lastCombatRealMs)) return false;

@@ -45,7 +45,7 @@ export function stanceOptionIds(): readonly FleetStance[] {
   return FLEET_STANCES;
 }
 
-export type OrderMenuKind = "sea" | "ship" | "port";
+export type OrderMenuKind = "sea" | "ship" | "port" | "enemy";
 
 export interface OrderMenuItem {
   id: string;
@@ -65,6 +65,13 @@ export function orderMenuItems(kind: OrderMenuKind): OrderMenuItem[] {
   if (kind === "port") {
     return [
       { id: "sailToPort", label: "Sail to port", primary: true },
+      { id: "close", label: "Cancel", primary: false },
+    ];
+  }
+  if (kind === "enemy") {
+    return [
+      { id: "attackSink", label: "Attack: Sink", primary: true },
+      { id: "attackCapture", label: "Attack: Capture", primary: false },
       { id: "close", label: "Cancel", primary: false },
     ];
   }

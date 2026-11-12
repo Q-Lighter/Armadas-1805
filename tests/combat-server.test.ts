@@ -7,6 +7,7 @@ import { settings } from "@naval/shared/settings";
 import {
   addPlayer,
   applyFleetOrder,
+  repairAtPort,
   applyShipSpecialOrder,
   createPlayerFleet,
   createWorld,
@@ -199,4 +200,56 @@ test("the repair toggle can be turned off and on by the owner", () => {
   assert.equal(setPlayerRepair(world, "p", ship.id, true), true);
   assert.equal(ship.repairEnabled, true);
   assert.equal(setPlayerRepair(world, "q", ship.id, true), false);
+});
+
+test("the battle log is private and battle notices are throttled", () => {
+  const world = testWorld();
+  const own = addPlayer(world, "p");
+  const far = addPlayer(world, "q");
+  far.x += 40;
+  far.y += 40;
+  spawnTestEnemyFleet(world, "p", "frigate:1");
+  const enemy = world.botFleets.get("TEST-ENEMY")![0]!;
+  enemy.x = own.x + 0.4;
+  enemy.y = own.y;
+  own.headingRad = 0;
+  applyShipSpecialOrder(world, "p", own.id, { type: "engage", shipId: enemy.id, objective: "sink" });
+  for (let index = 0; index < 5; index += 1) stepWorld(world, 14.4);
+  const mine = visibleStateFor(world, "p");
+  assert.ok((mine.log?.length ?? 0) > 0);
+  assert.ok(mine.log?.every((line) => /your/i.test(line)));
+  assert.equal(visibleStateFor(world, "q").log, undefined);
+  const notices = world.notices.get("p") ?? [];
+  assert.equal(notices.filter((text) => text === "Battle begun.").length, 1);
+  for (let index = 0; index < 20; index += 1) stepWorld(world, 14.4);
+  assert.equal(
+    (world.notices.get("p") ?? []).filter((text) => text === "Battle begun.").length,
+    1,
+  );
+});
+
+test("port repair charges exactly the quoted pay cost and NPC ports refuse", () => {
+  const world = testWorld();
+  const ship = addPlayer(world, "p");
+  const port = [...world.ports.values()].find((candidate) => !candidate.npc)!;
+  ship.dockedPortId = port.id;
+  ship.x = port.anchorage.x;
+  ship.y = port.anchorage.y;
+  ship.damage.hull = ship.damage.hull * 0.4;
+  world.charts.get("p")!.foundPorts.add(port.id);
+  world.owners.get("p")!.money = 50_000;
+  const quoted = visibleStateFor(world, "p").fleet[0]?.portRepair;
+  assert.ok(quoted);
+  assert.equal(quoted!.active, false);
+  const before = world.owners.get("p")!.money;
+  const materialsBefore = ship.stores.repairMaterials;
+  assert.equal(repairAtPort(world, "p", ship.id, port.id, "pay"), true);
+  assert.equal(world.owners.get("p")!.money, before - quoted!.money);
+  assert.equal(ship.portRepair?.mode, "pay");
+  assert.equal(ship.stores.repairMaterials, materialsBefore);
+
+  const npc = [...world.ports.values()].find((candidate) => candidate.npc)!;
+  ship.dockedPortId = npc.id;
+  world.charts.get("p")!.foundPorts.add(npc.id);
+  assert.equal(repairAtPort(world, "p", ship.id, npc.id, "stores"), false);
 });

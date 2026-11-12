@@ -2510,3 +2510,69 @@ body.game {
     max-height: none;
   }
 }
+
+/* --- 3B-c: damage sheet, battle log and range rings ------------------- */
+.damage-panel {
+  position: fixed;
+  z-index: 48;
+  right: 18px;
+  top: 76px;
+  width: min(390px, calc(100vw - 36px));
+  max-height: calc(100vh - 110px);
+  overflow: auto;
+  padding: 14px 16px 18px;
+}
+.damage-panel[hidden] { display: none; }
+.damage-summary { font-family: "IM Fell English", serif; font-size: 15px; margin: 4px 0 10px; }
+.damage-bars { display: grid; gap: 8px; }
+.damage-bar { display: grid; grid-template-columns: 74px 1fr 42px; align-items: center; gap: 7px; }
+.damage-bar-label { font-size: 13px; }
+.damage-bar-track { height: 10px; background: rgba(27, 47, 61, 0.12); border: 1px solid rgba(27, 47, 61, 0.35); }
+.damage-bar-fill { height: 100%; background: #8c1d1d; }
+.damage-bar-fill.is-ok { background: #4d6b4f; }
+.damage-bar-value { text-align: right; font-variant-numeric: tabular-nums; font-size: 13px; }
+.damage-facts { display: grid; grid-template-columns: 1fr auto; gap: 3px 10px; margin: 12px 0; font-size: 13px; }
+.damage-facts dt { opacity: 0.75; }
+.damage-facts dd { margin: 0; text-align: right; }
+.damage-hurts { font-size: 12px; min-height: 1.2em; color: #5b2a24; }
+.repair-toggle { display: flex; gap: 8px; align-items: center; min-height: 44px; font-size: 13px; }
+.repair-toggle input { width: 20px; height: 20px; }
+.port-repair { margin-top: 10px; border-top: 1px solid rgba(27, 47, 61, 0.25); padding-top: 10px; }
+.port-repair[hidden] { display: none; }
+.port-repair-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.port-repair-actions .btn { min-height: 44px; }
+.battle-log {
+  position: fixed;
+  z-index: 46;
+  left: 14px;
+  bottom: 14px;
+  width: min(330px, calc(100vw - 28px));
+  max-height: 190px;
+  overflow: hidden;
+  padding: 6px 9px;
+}
+.battle-log[hidden] { display: none; }
+.battle-log-toggle {
+  width: 100%;
+  border: 0;
+  background: none;
+  color: inherit;
+  text-align: left;
+  font: inherit;
+  font-weight: 600;
+  min-height: 32px;
+  cursor: pointer;
+}
+.battle-log-count { opacity: 0.6; font-weight: 400; }
+.battle-log-list { margin: 0; padding: 0 0 0 16px; max-height: 140px; overflow: auto; font-size: 12px; line-height: 1.35; }
+.battle-log.is-collapsed .battle-log-list { display: none; }
+.battle-log-list li { margin: 2px 0; }
+@media (max-width: 640px) {
+  .damage-panel { left: 10px; right: 10px; top: 62px; width: auto; max-height: calc(100vh - 90px); }
+  .battle-log { left: 8px; bottom: 74px; width: calc(100vw - 16px); max-height: 132px; }
+  .battle-log-list { max-height: 92px; }
+}
+@media (max-height: 420px) {
+  .damage-panel { top: 48px; max-height: calc(100vh - 58px); }
+  .battle-log { display: none; }
+}

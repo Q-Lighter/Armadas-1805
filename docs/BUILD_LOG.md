@@ -2088,3 +2088,39 @@ winding`):
 - Browser layout was not checked: `npm run ui-test` is still missing and this
   image has no working headless Chromium. The Test tools panel is a render-plan
   and CSS layout, not a viewed screenshot.
+
+## 3C-b: battle orders on the server
+
+- Added the four battle orders as pure rules plus server actions in
+  `shared/battleOrders.ts` and `shared/world.ts`: Capture and Sink keep the
+  same target, reload and position and only change the aimed areas; Run sails
+  away using normal sailing, follows the coast when land blocks the way,
+  re-steers every 2 real seconds, fires bearing guns while running, and ends
+  with "Escaped." after 60 real seconds out of every pursuer's sight (queued
+  fleet orders then start). Surrender is per ship, cancellable before accept,
+  and accepting moves ownership, navy, class, damage, cargo, ammunition and
+  upgrades while removing fleet and control-group membership. A flagship
+  surrender only records a `flagshipLost` event; no elimination.
+- Fleet Capture, Sink and Run apply to every member; fleet Surrender is
+  rejected. Accepting is refused outside 1 km, or when it would exceed 30
+  ships, with the stated notices. Attackers' Engage orders end on accept.
+- Stances have their first effect: fight-if-attacked answers its attacker,
+  engage-anything scans 3 km, avoid-combat runs, stealth never starts or
+  answers. Dummy `runs` and `surrenders` now work at their hull thresholds.
+- Battle zones: a player who can see a ship within 1.5 km of an engaged enemy
+  receives the world at 10 Hz; everyone else stays at 5 Hz. The client's
+  existing interpolation smooths the 10 Hz updates. `settings.combat`
+  contains the Draft numbers.
+
+### Checks
+
+- `npm test`: **297/297 passing**.
+- `npm run build`: passing.
+- `npm run benchmark:battle-zone`: 102 ships, 100 in a battle zone, two
+  players watching; **1.52 ms per world step**, **480,981 bytes per player per
+  second at 10 Hz** versus **233,457 bytes at 5 Hz** (2.06x), 500 combat
+  events. The 3B 50-v-50 benchmark was 0.95-1.16 ms per step; the earlier
+  96-ship load test was 6.39 ms per step. These are local Node proxies, not
+  Cloudflare CPU time.
+- Racing and layout were not checked in a browser; `npm run ui-test` is still
+  missing and this image has no working headless Chromium.

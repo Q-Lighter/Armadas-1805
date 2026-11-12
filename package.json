@@ -18,7 +18,8 @@
     "test": "node scripts/test.mjs",
     "test:server": "npm run build && node scripts/simulate-clients.mjs",
     "deploy": "wrangler deploy",
-    "benchmark:battle": "node scripts/benchmark-battle.mjs"
+    "benchmark:battle": "node scripts/benchmark-battle.mjs",
+    "benchmark:battle-zone": "node scripts/benchmark-battle-zone.mjs"
   },
   "engines": {
     "node": ">=20"

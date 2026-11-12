@@ -9,10 +9,15 @@ import { botCountForRoom, botShipCount, setBotCount } from "@naval/shared/bots";
 import { LoadMetrics } from "@naval/shared/load-metrics";
 import {
   addPlayer,
+  acceptShipSurrender,
+  cancelShipSurrender,
+  setFleetBattleOrder,
+  setShipBattleOrder,
   applyFleetOrder,
   applyOrder,
   applyPortOrder,
   applyShipSpecialOrder,
+  battleZoneVisibleFor,
   createPlayerFleet,
   detachPlayerShip,
   buyGoods,
@@ -290,9 +295,15 @@ export class GameRoom {
 
     stepWorld(this.world, gameSecondsPerTick);
     this.ticks += 1;
-    if (this.ticks % broadcastEvery === 0) {
-      this.broadcast();
-    }
+    const regular = this.ticks % broadcastEvery === 0;
+    const battleEvery = Math.max(
+      1,
+      Math.round(settings.server.tickHz / settings.combat.battleSendRate),
+    );
+    const battleNow = this.ticks % battleEvery === 0;
+    // A player who can see an engaged pair gets the battle-zone rate. Other
+    // players keep the unchanged 5 Hz rate.
+    this.broadcast(regular, battleNow);
   }
 
   /** Drop one socket and, in test/dev rooms, schedule its ship's removal. */
@@ -308,9 +319,11 @@ export class GameRoom {
   }
 
   /** Send the world to every connected player, through visibleStateFor only. */
-  private broadcast(): void {
+  private broadcast(regular: boolean, battleNow: boolean): void {
     for (const [playerId, socket] of this.sockets.entries()) {
-      this.sendState(playerId, socket);
+      if (regular || (battleNow && battleZoneVisibleFor(this.world, playerId))) {
+        this.sendState(playerId, socket);
+      }
     }
 
     // TEMP-DEBUG: build the same full updates a human would receive, for every
@@ -453,6 +466,14 @@ export class GameRoom {
       removeTestDummies(this.world);
     } else if (order.t === "refillShips") {
       refillPlayerShips(this.world, playerId);
+    } else if (order.t === "battleOrder") {
+      setShipBattleOrder(this.world, playerId, order.ship, order.order);
+    } else if (order.t === "fleetBattleOrder") {
+      setFleetBattleOrder(this.world, playerId, order.fleet, order.order);
+    } else if (order.t === "acceptSurrender") {
+      acceptShipSurrender(this.world, playerId, order.ship);
+    } else if (order.t === "cancelSurrender") {
+      cancelShipSurrender(this.world, playerId, order.ship);
     }
   }
 }

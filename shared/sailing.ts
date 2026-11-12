@@ -61,7 +61,7 @@ export interface ShipRoute {
 export interface Ship {
   readonly id: string;
   readonly classId: ShipClassId;
-  readonly navy: NavyId;
+  navy: NavyId;
   /** Permanent name chosen for this ship. */
   readonly name: string;
   /** Sailors aboard, and the full complement from the ship table. */
@@ -116,6 +116,16 @@ export interface Ship {
   repairEnabled: boolean;
   /** Test-room dummy behaviour. Human ships leave this undefined. */
   dummyBehaviour?: import("./testSetup.js").DummyBehaviour;
+  /** Last battle objective chosen by the player or stance. */
+  battleOrder?: import("./battleOrders.js").BattleOrder;
+  /** A run away from an enemy, or undefined. */
+  runState?: import("./battleOrders.js").RunState;
+  /** White flag is up; the ship cannot fire until it is accepted or lowered. */
+  surrendered?: boolean;
+  /** Ship that most recently aimed a shot at this one, for stances and orders. */
+  lastAttackerShipId?: string;
+  /** Real milliseconds of that last aimed shot. */
+  lastAttackedRealMs?: number;
   /** A repair job running while docked at a usable port. */
   portRepair?: {
     mode: "stores" | "pay";

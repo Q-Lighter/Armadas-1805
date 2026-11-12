@@ -291,6 +291,24 @@ export const settings = {
     portRepairRateMultiplier: { stores: 4, pay: 6 },
     /** Draft: paying locals costs this multiple of the repair materials value. */
     portRepairPayMultiplier: 2,
+    /** Draft: battle orders, running, surrender, stances and battle zones. */
+    fireWhileRunning: true,
+    /** Draft: a running ship re-steers away from enemies this often. */
+    runRecomputeSeconds: 2,
+    /** Draft: out of every enemy's sight this long and the run succeeds. */
+    runEscapeSeconds: 60,
+    /** Draft: a run keeps this much open water ahead when steering. */
+    runOpenWaterKm: 8,
+    /** Draft: stances look this far for a new fight. */
+    stanceEngageRangeKm: 3,
+    /** Draft: fight-if-attacked keeps its attacker inside this range. */
+    stanceFightRangeKm: 1.5,
+    /** Draft: a player with a ship this close may accept a surrender. */
+    surrenderAcceptRangeM: 1_000,
+    /** Draft: ships this close to an engaged enemy form a battle zone. */
+    battleZoneKm: 1.5,
+    /** Draft: battle-zone players receive world updates this many times a second. */
+    battleSendRate: 10,
     /** Neutral values for systems that arrive later. Keep at 1.0 for now. */
     seaStateHitMultiplier: 1,
     crewAccuracyMultiplier: 1,

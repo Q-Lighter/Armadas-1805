@@ -106,6 +106,14 @@ import {
 import { NAVY_IDS, type NavyId } from "./navies.js";
 import type { DummyBehaviour } from "./testSetup.js";
 import {
+  objectiveForOrder,
+  runEscaped,
+  runHeadingAway,
+  surrenderAcceptProblem,
+  type BattleOrder,
+  type RunState,
+} from "./battleOrders.js";
+import {
   findPortByName,
   PORT_BY_ID,
   PLACED_PORTS,
@@ -262,6 +270,8 @@ export interface World {
   flagshipLost: FlagshipLostEvent[];
   /** Test/dev helper: the enemy dummy fleet has already been spawned. */
   testEnemiesSpawned: Set<string>;
+  /** Fleet orders queued behind a Run, per ship. */
+  queuedRunOrders: Map<string, FleetOrder[]>;
   /** Per-ship notification cooldowns, keyed by owner:ship:kind. */
   noticeCooldowns: Map<string, number>;
   /** Private short battle-log lines, by player. */
@@ -378,6 +388,10 @@ export interface OwnShipSnapshot {
   effectiveTurnDegPerSecond?: number;
   normalTurnDegPerSecond?: number;
   engagement?: { targetId: string; objective: CombatObjective } | null;
+  /** Battle order and white flag, own ships only. */
+  battleOrder?: import("./battleOrders.js").BattleOrder;
+  surrendered?: boolean;
+  running?: boolean;
 }
 
 /** One dotted order line for the selected ship or fleet. */
@@ -451,6 +465,8 @@ export interface Engagement {
   objective: CombatObjective;
   /** Game time the target was first out of sight, or 0. */
   targetMissingSinceGameMs: number;
+  /** True when a stance, not a player order, started this engagement. */
+  stanceEngagement?: boolean;
 }
 
 /** A short visual event. It deliberately carries no damage numbers. */
@@ -516,6 +532,8 @@ export interface StateMessage {
   events?: CombatEvent[];
   /** Private battle-log lines. Only events involving this player's ships. */
   log?: string[];
+  /** Visible foreign ships with a white flag flying. */
+  sf?: string[];
   /** The room's shared test start port, so the invite link can keep it. */
   sp?: string;
   /** Test/dev provisions multiplier, shown by TEMP-DEBUG only. */
@@ -625,6 +643,7 @@ export function createWorld(roomCode = "main", options: WorldOptions = {}): Worl
     combatRandom: createSeededRandom(hashText(roomCode) ^ 0x9e3779b9),
     flagshipLost: [],
     testEnemiesSpawned: new Set(),
+    queuedRunOrders: new Map(),
     noticeCooldowns: new Map(),
     battleLogs: new Map(),
     nextBattleLogId: 1,
@@ -1052,6 +1071,11 @@ export function updatePlayerFleet(
     next = changeFleetLeader(next, patch.leaderId);
   }
   fleetMapFor(world, playerId).set(next.id, next);
+  if (typeof patch.stance === "string") {
+    for (const ship of shipsForOwner(world, playerId)) {
+      if (next.members.includes(ship.id)) ship.stance = next.stance;
+    }
+  }
   return true;
 }
 
@@ -1205,8 +1229,10 @@ function startEngagement(
   ship: Ship,
   targetId: string,
   objective: CombatObjective,
+  stanceEngagement = false,
 ): boolean {
-  if (ship.deliveryPortId || !canShipSail(ship)) return false;
+  if (ship.deliveryPortId || ship.surrendered || !canShipSail(ship)) return false;
+  if (ship.runState) clearRun(ship);
   if (ship.dockedPortId && !undock(world, ownerId, ship.id)) return false;
   const target = validEngageTarget(world, ownerId, ship, targetId, objective);
   if (!target) return false;
@@ -1215,12 +1241,14 @@ function startEngagement(
   ship.order = null;
   ship.stationSpeedLimit = undefined;
   ship.arrived = false;
+  ship.battleOrder = objective;
   world.engagements.set(ship.id, {
     ownerId,
     shipId: ship.id,
     targetShipId: target.id,
     objective,
     targetMissingSinceGameMs: 0,
+    stanceEngagement,
   });
   return true;
 }
@@ -1234,6 +1262,9 @@ function clearEngagement(world: World, shipId: string): void {
     ship.order = null;
     ship.route = null;
     ship.stationSpeedLimit = undefined;
+    if (ship.battleOrder === "capture" || ship.battleOrder === "sink") {
+      ship.battleOrder = undefined;
+    }
   }
   const fleet = ship?.fleetId ? fleetFor(world, engagement.ownerId, ship.fleetId) : null;
   if (fleet && fleet.members.every((id) => !world.engagements.has(id))) {
@@ -1248,6 +1279,10 @@ function clearFleetEngagements(world: World, fleet: Fleet): void {
       world.engagements.delete(id);
       const ship = shipEntry(world, id)?.ship;
       if (ship) {
+        clearRun(ship);
+        if (ship.battleOrder === "capture" || ship.battleOrder === "sink") {
+          ship.battleOrder = undefined;
+        }
         ship.order = null;
         ship.route = null;
         ship.stationSpeedLimit = undefined;
@@ -1310,7 +1345,7 @@ function updateEngagements(world: World): void {
   for (const [shipId, engagement] of [...world.engagements]) {
     const own = shipEntry(world, shipId);
     const target = shipEntry(world, engagement.targetShipId);
-    if (!own || own.ship.deliveryPortId || own.ship.dockedPortId) {
+    if (!own || own.ship.deliveryPortId || own.ship.dockedPortId || own.ship.surrendered || own.ship.runState) {
       clearEngagement(world, shipId);
       continue;
     }
@@ -1320,6 +1355,10 @@ function updateEngagements(world: World): void {
       missing = true;
     } else if (Math.hypot(target.ship.x - ship.x, target.ship.y - ship.y) ** 2 > sightSq) {
       missing = true;
+    }
+    if (missing && engagement.stanceEngagement) {
+      clearEngagement(world, shipId);
+      continue;
     }
     if (missing) {
       if (engagement.targetMissingSinceGameMs === 0) {
@@ -1589,6 +1628,423 @@ function enemyNumberWord(count: number): string {
   return count === 1 ? "one enemy" : `${count} enemy`;
 }
 
+/** Stop a run without issuing any replacement order. */
+function clearRun(ship: Ship): void {
+  if (!ship.runState) return;
+  ship.runState = undefined;
+  if (ship.battleOrder === "run") ship.battleOrder = undefined;
+  ship.order = null;
+  ship.route = null;
+  ship.stationSpeedLimit = undefined;
+}
+
+function setRunSteering(world: World, ship: Ship): void {
+  const run = ship.runState;
+  if (!run) return;
+  const enemyShips: Ship[] = [];
+  for (const id of run.enemies) {
+    const entry = shipEntry(world, id);
+    if (entry && entry.ship.damage.hull > 0) enemyShips.push(entry.ship);
+  }
+  // Include every visible enemy in the steering, not just the original
+  // attackers, so a second enemy closing in also turns the ship away.
+  for (const { ship: other } of allShips(world)) {
+    if (other.id === ship.id || other.navy === ship.navy || other.deliveryPortId) continue;
+    if (Math.hypot(other.x - ship.x, other.y - ship.y) > settings.fog.sightRangeKm) continue;
+    if (!enemyShips.some((candidate) => candidate.id === other.id)) enemyShips.push(other);
+  }
+  const preferred = runHeadingAway(ship, enemyShips) ?? ship.headingRad;
+  // If the direct escape runs into land, turn along the coast until open water
+  // is ahead. The normal coast handling still stops the hull at the shore.
+  let heading = preferred;
+  for (const offset of [0, 15, -15, 30, -30, 45, -45, 60, -60, 90, -90, 120, -120, 150, -150, 180]) {
+    const candidate = preferred + offset * DEG;
+    if (openWaterDistance(ship, candidate) >= Math.min(settings.combat.runOpenWaterKm, settings.coast.offshoreProbeKm)) {
+      heading = candidate;
+      break;
+    }
+  }
+  run.headingRad = heading;
+  run.lastSteerRealSeconds = combatRealSeconds(world);
+  const target = {
+    x: ship.x + Math.sin(heading) * 12,
+    y: ship.y - Math.cos(heading) * 12,
+  };
+  if (isInsideMapFrame(target.x, target.y) && !isLandAt(target.x, target.y)) {
+    ship.order = { type: "sailTo", x: target.x, y: target.y };
+    ship.route = null;
+    ship.stationSpeedLimit = undefined;
+  } else {
+    ship.order = null;
+    ship.route = null;
+    ship.speedKnots = 0;
+  }
+}
+
+/** Start a run from every enemy that is currently fighting or close. */
+export function startShipRun(world: World, ownerId: string, ship: Ship): boolean {
+  if (ship.surrendered || ship.deliveryPortId || ship.dockedPortId) return false;
+  if (crewTooLow(ship.damage, damageCapacities(shipSpecFor(ship)))) return false;
+  if (ship.runState) return true;
+  const enemies = new Set<string>();
+  const engagement = world.engagements.get(ship.id);
+  if (engagement && shipEntry(world, engagement.targetShipId)) {
+    enemies.add(engagement.targetShipId);
+  }
+  if (ship.lastAttackerShipId && shipEntry(world, ship.lastAttackerShipId)) {
+    enemies.add(ship.lastAttackerShipId);
+  }
+  for (const { ship: other } of allShips(world)) {
+    if (other.id === ship.id || other.navy === ship.navy || other.deliveryPortId) continue;
+    if (Math.hypot(other.x - ship.x, other.y - ship.y) <= settings.fog.sightRangeKm) {
+      enemies.add(other.id);
+    }
+  }
+  if (enemies.size === 0) {
+    if (world.players.has(ownerId)) pushNotice(world, ownerId, "No enemy in sight.");
+    return false;
+  }
+  clearEngagement(world, ship.id);
+  const run: RunState = {
+    startedAtGameMs: world.gameMs,
+    headingRad: ship.headingRad,
+    lastSteerRealSeconds: -Infinity,
+    enemies: [...enemies],
+    outOfSightSinceRealMs: null,
+  };
+  ship.runState = run;
+  ship.battleOrder = "run";
+  ship.stationSpeedLimit = undefined;
+  ship.route = null;
+  setRunSteering(world, ship);
+  return true;
+}
+
+/** Start the white flag on one ship. The fleet membership stays. */
+export function startShipSurrender(world: World, ownerId: string, ship: Ship): boolean {
+  if (ship.deliveryPortId) return false;
+  if (!world.players.has(ownerId) && !world.botFleets.has(ownerId)) return false;
+  if (ship.surrendered) return true;
+  clearEngagement(world, ship.id);
+  clearRun(ship);
+  holdPosition(ship);
+  ship.surrendered = true;
+  ship.battleOrder = "surrender";
+  ship.stationSpeedLimit = undefined;
+  if (world.players.has(ownerId)) {
+    pushBattleLog(world, ownerId, `Your ${ship.name} surrendered.`);
+    pushNotice(world, ownerId, `${ship.name} has surrendered.`);
+  }
+  for (const [playerId] of world.players) {
+    if (playerId === ownerId) continue;
+    if (!ownerCanSeeShip(world, playerId, ship)) continue;
+    pushNoticeOnce(world, playerId, ship.id, "surrender", `${ship.name} has surrendered.`);
+  }
+  return true;
+}
+
+/** Lower the flag before anyone accepts. The ship stays where it is. */
+export function cancelShipSurrender(world: World, playerId: string, shipId: unknown): boolean {
+  if (typeof shipId !== "string") return false;
+  const ship = shipsForOwner(world, playerId).find((candidate) => candidate.id === shipId);
+  if (!ship || !ship.surrendered) return false;
+  ship.surrendered = false;
+  ship.battleOrder = undefined;
+  holdPosition(ship);
+  pushNotice(world, playerId, `${ship.name} lowered the white flag.`);
+  return true;
+}
+
+function nearestOwnDistanceKm(world: World, playerId: string, target: Ship): number | null {
+  let nearest: number | null = null;
+  for (const ship of shipsForOwner(world, playerId)) {
+    if (ship.deliveryPortId || ship.id === target.id) continue;
+    const distance = Math.hypot(ship.x - target.x, ship.y - target.y);
+    nearest = nearest === null ? distance : Math.min(nearest, distance);
+  }
+  return nearest;
+}
+
+/** Move a surrendered ship to the accepting player. */
+export function acceptShipSurrender(world: World, playerId: string, shipId: unknown): boolean {
+  if (typeof shipId !== "string") return false;
+  const entry = shipEntry(world, shipId);
+  if (!entry || !entry.ship.surrendered) return false;
+  const target = entry.ship;
+  const oldOwner = entry.ownerId;
+  if (oldOwner === playerId || target.navy === (shipsForOwner(world, playerId)[0]?.navy ?? "")) {
+    return false;
+  }
+  if (!ownerCanSeeShip(world, playerId, target)) return false;
+  const accepting = shipsForOwner(world, playerId);
+  if (accepting.length === 0) return false;
+  const problem = surrenderAcceptProblem({
+    fleetCount: accepting.length,
+    nearestShipKm: nearestOwnDistanceKm(world, playerId, target),
+  });
+  if (problem) {
+    pushNotice(world, playerId, problem);
+    return false;
+  }
+  const acceptingNavy = accepting[0]!.navy;
+
+  // Remove from the old owner's fleet and fleet model.
+  if (world.fleets.has(oldOwner)) {
+    const kept = (world.fleets.get(oldOwner) ?? []).filter((ship) => ship.id !== target.id);
+    if (kept.length > 0) world.fleets.set(oldOwner, kept);
+    else world.fleets.delete(oldOwner);
+    const alias = world.players.get(oldOwner);
+    if (alias?.id === target.id) {
+      if (kept[0]) world.players.set(oldOwner, kept[0]);
+      else world.players.delete(oldOwner);
+    }
+    syncPlayerFleets(world, oldOwner);
+  }
+  if (world.botFleets.has(oldOwner)) {
+    const kept = (world.botFleets.get(oldOwner) ?? []).filter((ship) => ship.id !== target.id);
+    if (kept.length > 0) world.botFleets.set(oldOwner, kept);
+    else world.botFleets.delete(oldOwner);
+  }
+
+  // End every attacker's order against the prize.
+  for (const [shipId, engagement] of [...world.engagements]) {
+    if (shipId === target.id || engagement.targetShipId === target.id) clearEngagement(world, shipId);
+  }
+  world.shipCommands.delete(target.id);
+  const oldGroups = world.controlGroups.get(oldOwner);
+  if (oldGroups) {
+    for (const ids of Object.values(oldGroups)) {
+      const index = ids.indexOf(target.id);
+      if (index >= 0) ids.splice(index, 1);
+    }
+  }
+
+  target.navy = acceptingNavy;
+  target.fleetId = null;
+  target.detached = false;
+  target.surrendered = false;
+  target.battleOrder = undefined;
+  target.runState = undefined;
+  target.lastAttackerShipId = undefined;
+  target.lastAttackedRealMs = undefined;
+  holdPosition(target);
+  world.fleets.set(playerId, [...accepting, target]);
+  if (target.classId === "flagship" && !world.flagshipLost.some((event) => event.shipId === target.id)) {
+    world.flagshipLost.push({ ownerId: oldOwner, shipId: target.id, atGameMs: world.gameMs });
+    pushCombatEvent(world, { kind: "flagshipLost", x: target.x, y: target.y, shipId: target.id });
+  }
+  pushNotice(world, oldOwner, `Your ship ${target.name} was taken.`);
+  pushNotice(world, playerId, `You accepted the surrender of the ${target.navy} ${target.classId}.`);
+  pushBattleLog(world, playerId, `You accepted the surrender of the ${target.navy} ${target.classId}.`);
+  return true;
+}
+
+/** Change Capture or Sink, keeping the current target, reload and position. */
+function setBattleObjective(
+  world: World,
+  playerId: string,
+  ship: Ship,
+  objective: "capture" | "sink",
+): boolean {
+  if (ship.deliveryPortId || ship.surrendered) return false;
+  if (ship.runState) clearRun(ship);
+  const engagement = world.engagements.get(ship.id);
+  if (engagement && shipEntry(world, engagement.targetShipId)) {
+    engagement.objective = objective;
+    ship.battleOrder = objective;
+    return true;
+  }
+  let target: Ship | null = null;
+  if (ship.lastAttackerShipId) {
+    const attacker = shipEntry(world, ship.lastAttackerShipId)?.ship;
+    if (attacker && attacker.navy !== ship.navy && ownerCanSeeShip(world, playerId, attacker)) {
+      target = attacker;
+    }
+  }
+  if (!target) {
+    let nearest = Infinity;
+    for (const { ship: other } of allShips(world)) {
+      if (other.id === ship.id || other.navy === ship.navy || other.deliveryPortId) continue;
+      if (!ownerCanSeeShip(world, playerId, other)) continue;
+      const distance = Math.hypot(other.x - ship.x, other.y - ship.y);
+      if (distance <= settings.combat.stanceEngageRangeKm && distance < nearest) {
+        nearest = distance;
+        target = other;
+      }
+    }
+  }
+  if (!target) {
+    pushNotice(world, playerId, "No enemy in sight.");
+    return false;
+  }
+  if (!startEngagement(world, playerId, ship, target.id, objective)) return false;
+  ship.battleOrder = objective;
+  return true;
+}
+
+/** The server entry point for one of the four battle orders. */
+export function setShipBattleOrder(
+  world: World,
+  playerId: string,
+  shipId: unknown,
+  order: unknown,
+): boolean {
+  if (typeof shipId !== "string") return false;
+  if (order !== "capture" && order !== "sink" && order !== "run" && order !== "surrender") {
+    return false;
+  }
+  const ship = shipsForOwner(world, playerId).find((candidate) => candidate.id === shipId);
+  if (!ship) return false;
+  if (order === "surrender") return startShipSurrender(world, playerId, ship);
+  if (order === "run") return startShipRun(world, playerId, ship);
+  if (ship.surrendered) return false;
+  const objective = objectiveForOrder(order);
+  if (!objective) return false;
+  return setBattleObjective(world, playerId, ship, objective);
+}
+
+/** Fleet Capture/Sink/Run; Surrender is deliberately only per ship. */
+export function setFleetBattleOrder(
+  world: World,
+  playerId: string,
+  fleetId: unknown,
+  order: unknown,
+): boolean {
+  if (order === "surrender" || (order !== "capture" && order !== "sink" && order !== "run")) {
+    return false;
+  }
+  const fleet = fleetFor(world, playerId, fleetId);
+  if (!fleet) return false;
+  const queued = order === "run" ? [...(world.fleetCommands.get(fleet.id)?.queue ?? [])] : [];
+  if (queued.length > 0) {
+    for (const ship of shipsForOwner(world, playerId)) {
+      if (fleet.members.includes(ship.id)) world.queuedRunOrders.set(ship.id, [...queued]);
+    }
+  }
+  world.fleetCommands.delete(fleet.id);
+  let any = false;
+  for (const ship of shipsForOwner(world, playerId)) {
+    if (!fleet.members.includes(ship.id)) continue;
+    if (order === "run") any = startShipRun(world, playerId, ship) || any;
+    else {
+      const objective = objectiveForOrder(order);
+      if (objective) any = setBattleObjective(world, playerId, ship, objective) || any;
+    }
+  }
+  return any;
+}
+
+/** Apply stance and dummy reactions after the previous tick's shots. */
+function applyStances(world: World): void {
+  for (const { ownerId, ship } of allShips(world)) {
+    if (ship.surrendered || ship.runState || ship.deliveryPortId || ship.dockedPortId) continue;
+    if (ship.damage.hull <= 0) continue;
+    const dummy = ship.dummyBehaviour;
+    if (dummy === "passive") continue;
+    const hullShare = ship.damage.hull / Math.max(1, shipSpecFor(ship).hull);
+    if (dummy === "runs" && hullShare < settings.testing.dummyRunHullShare) {
+      startShipRun(world, ownerId, ship);
+      continue;
+    }
+    if (dummy === "surrenders" && hullShare < settings.testing.dummySurrenderHullShare) {
+      startShipSurrender(world, ownerId, ship);
+      continue;
+    }
+    const attacker = ship.lastAttackerShipId
+      ? shipEntry(world, ship.lastAttackerShipId)?.ship
+      : null;
+    if (dummy === "fights" || dummy === "runs" || dummy === "surrenders" ||
+      ship.stance === "fightIfAttacked") {
+      if (attacker && !world.engagements.has(ship.id) &&
+        attacker.navy !== ship.navy && ownerCanSeeShip(world, ownerId, attacker)) {
+        startEngagement(world, ownerId, ship, attacker.id, "sink", true);
+      }
+      continue;
+    }
+    if (ship.stance === "avoid") {
+      if (attacker) startShipRun(world, ownerId, ship);
+      continue;
+    }
+    if (ship.stance === "stealth") continue;
+    if (ship.stance === "engage" && !world.engagements.has(ship.id)) {
+      let nearest: Ship | null = null;
+      let distance: number = settings.combat.stanceEngageRangeKm;
+      for (const { ship: other } of allShips(world)) {
+        if (other.id === ship.id || other.navy === ship.navy || other.deliveryPortId) continue;
+        if (!ownerCanSeeShip(world, ownerId, other)) continue;
+        const current = Math.hypot(other.x - ship.x, other.y - ship.y);
+        if (current <= distance) {
+          distance = current;
+          nearest = other;
+        }
+      }
+      if (nearest) startEngagement(world, ownerId, ship, nearest.id, "sink", true);
+    }
+  }
+}
+
+/** Re-steer and complete runs. */
+function updateRuns(world: World): void {
+  const nowRealMs = combatRealSeconds(world) * 1000;
+  for (const { ownerId, ship } of allShips(world)) {
+    const run = ship.runState;
+    if (!run || ship.surrendered) continue;
+    if (crewTooLow(ship.damage, damageCapacities(shipSpecFor(ship)))) {
+      clearRun(ship);
+      holdPosition(ship);
+      if (world.players.has(ownerId)) pushNotice(world, ownerId, "Crew too low to run.");
+      continue;
+    }
+    if (run.lastSteerRealSeconds < 0 ||
+      combatRealSeconds(world) - run.lastSteerRealSeconds >= settings.combat.runRecomputeSeconds) {
+      setRunSteering(world, ship);
+    }
+    let anyVisible = false;
+    for (const enemyId of run.enemies) {
+      const enemy = shipEntry(world, enemyId)?.ship;
+      if (!enemy || enemy.damage.hull <= 0) continue;
+      if (Math.hypot(enemy.x - ship.x, enemy.y - ship.y) <= settings.fog.sightRangeKm) {
+        anyVisible = true;
+        break;
+      }
+    }
+    if (anyVisible) {
+      run.outOfSightSinceRealMs = null;
+    } else {
+      run.outOfSightSinceRealMs ??= nowRealMs;
+      if (runEscaped(run.outOfSightSinceRealMs, nowRealMs)) {
+        const queued = world.queuedRunOrders.get(ship.id)?.shift() ?? null;
+        if ((world.queuedRunOrders.get(ship.id)?.length ?? 0) === 0) {
+          world.queuedRunOrders.delete(ship.id);
+        }
+        clearRun(ship);
+        holdPosition(ship);
+        if (world.players.has(ownerId)) pushNotice(world, ownerId, "Escaped.");
+        if (queued) applyShipSpecialOrder(world, ownerId, ship.id, queued);
+      }
+    }
+  }
+}
+
+/** Visible enemies with a live engagement, for the 10 Hz battle-zone send. */
+export function battleZoneVisibleFor(world: World, playerId: string): boolean {
+  const flagged = new Set<string>();
+  for (const [shipId, engagement] of world.engagements) {
+    const own = shipEntry(world, shipId)?.ship;
+    const target = shipEntry(world, engagement.targetShipId)?.ship;
+    if (!own || !target) continue;
+    if (Math.hypot(own.x - target.x, own.y - target.y) <= settings.combat.battleZoneKm) {
+      flagged.add(own.id);
+      flagged.add(target.id);
+    }
+  }
+  if (flagged.size === 0) return false;
+  return [...flagged].some((id) => {
+    const ship = shipEntry(world, id)?.ship;
+    return ship ? ownerCanSeeShip(world, playerId, ship) : false;
+  });
+}
+
 /** Test/dev helper: spawn a small enemy squadron about three kilometres away. */
 export function spawnTestEnemyFleet(
   world: World,
@@ -1837,6 +2293,7 @@ export function applyShipSpecialOrder(
   if (typeof shipId !== "string" || !isValidFleetOrder(rawOrder)) return false;
   const ship = shipsForOwner(world, playerId).find((candidate) => candidate.id === shipId);
   if (!ship || ship.deliveryPortId) return false;
+  if (ship.runState) clearRun(ship);
   if (ship.fleetId) detachForDirectOrder(world, playerId, ship);
   const order = rawOrder;
   if (order.type !== "engage") clearEngagement(world, ship.id);
@@ -2427,6 +2884,7 @@ export function applyOrder(
   const ship = shipForOrder(world, playerId, shipId);
   if (!ship || ship.deliveryPortId) return false;
   if (!fromFleet) {
+    if (ship.runState) clearRun(ship);
     detachForDirectOrder(world, playerId, ship);
     clearEngagement(world, ship.id);
   }
@@ -2552,12 +3010,43 @@ function resolveCombat(world: World): void {
   const now = combatRealSeconds(world);
   const nowMs = now * 1000;
   const sunk = new Set<string>();
-  for (const [shipId, engagement] of [...world.engagements]) {
-    const own = shipEntry(world, shipId)?.ship;
-    const targetEntry = shipEntry(world, engagement.targetShipId);
+  const plans: Array<{
+    ownerId: string;
+    shipId: string;
+    targetShipId: string;
+    objective: "capture" | "sink";
+  }> = [...world.engagements.values()].map((engagement) => ({
+    ownerId: engagement.ownerId,
+    shipId: engagement.shipId,
+    targetShipId: engagement.targetShipId,
+    objective: engagement.objective,
+  }));
+  // A running ship may still fire any gun group that bears, including its
+  // stern guns at a pursuer. It does not get a station-keeping order.
+  if (settings.combat.fireWhileRunning) {
+    for (const { ownerId, ship } of allShips(world)) {
+      if (!ship.runState || ship.surrendered) continue;
+      let nearest: Ship | null = null;
+      let distance = 1;
+      for (const { ship: other } of allShips(world)) {
+        if (other.id === ship.id || other.navy === ship.navy || other.deliveryPortId || other.surrendered) continue;
+        const current = Math.hypot(other.x - ship.x, other.y - ship.y);
+        if (current < distance) {
+          distance = current;
+          nearest = other;
+        }
+      }
+      if (nearest) {
+        plans.push({ ownerId, shipId: ship.id, targetShipId: nearest.id, objective: "sink" });
+      }
+    }
+  }
+  for (const plan of plans) {
+    const own = shipEntry(world, plan.shipId)?.ship;
+    const targetEntry = shipEntry(world, plan.targetShipId);
     const target = targetEntry?.ship;
-    if (!own || !target || own.damage.hull <= 0 || target.damage.hull <= 0) {
-      if (!target) clearEngagement(world, shipId);
+    if (!own || !target || own.surrendered || own.damage.hull <= 0 || target.damage.hull <= 0) {
+      if (!target) clearEngagement(world, plan.shipId);
       continue;
     }
     const distance = Math.hypot(target.x - own.x, target.y - own.y);
@@ -2573,7 +3062,7 @@ function resolveCombat(world: World): void {
       targetBearingRad: bearingRad(own, target),
       headingRad: own.headingRad,
       ammunitionTonnes: own.stores.ammunition,
-      objective: engagement.objective,
+      objective: plan.objective,
       random: world.combatRandom,
     });
     if (!result.fired) continue;
@@ -2582,10 +3071,15 @@ function resolveCombat(world: World): void {
     const firstTargetExchange = target.lastCombatRealMs === null;
     own.lastCombatRealMs = nowMs;
     target.lastCombatRealMs = nowMs;
+    target.lastAttackerShipId = own.id;
+    target.lastAttackedRealMs = nowMs;
+    if (target.runState && !target.runState.enemies.includes(own.id)) {
+      target.runState.enemies.push(own.id);
+    }
     // Being aimed at is enough: a first broadside that misses still starts
     // the battle and still warns the target. Only the damage log needs a hit.
     if (firstOwnExchange) {
-      pushNoticeOnce(world, engagement.ownerId, own.id, "battle", "Battle begun.");
+      pushNoticeOnce(world, plan.ownerId, own.id, "battle", "Battle begun.");
     }
     if (targetEntry) {
       if (firstTargetExchange) {
@@ -2616,7 +3110,7 @@ function resolveCombat(world: World): void {
       pushCombatEvent(world, { kind: "hit", x: target.x, y: target.y });
       const summary = damageLogText(result.damageByArea);
       if (summary) {
-        pushBattleLog(world, engagement.ownerId, `Your ${own.name} hit ${target.name}: ${summary}.`);
+        pushBattleLog(world, plan.ownerId, `Your ${own.name} hit ${target.name}: ${summary}.`);
         if (targetEntry) {
           pushBattleLog(world, targetEntry.ownerId, `${own.name} hit your ${target.name}: ${summary}.`);
         }
@@ -2635,12 +3129,12 @@ function resolveCombat(world: World): void {
       });
     }
     if (own.stores.ammunition <= 0) {
-      pushNoticeOnce(world, engagement.ownerId, own.id, "noAmmo", "Out of ammunition.");
+      pushNoticeOnce(world, plan.ownerId, own.id, "noAmmo", "Out of ammunition.");
     }
     if (result.sunk) {
       sunk.add(target.id);
       pushCombatEvent(world, { kind: "sunk", x: target.x, y: target.y, shipId: target.id });
-      pushBattleLog(world, engagement.ownerId, `Your ${own.name} sank the ${target.name}.`);
+      pushBattleLog(world, plan.ownerId, `Your ${own.name} sank the ${target.name}.`);
       if (targetEntry) pushBattleLog(world, targetEntry.ownerId, `The ${own.name} sank your ${target.name}.`);
     }
   }
@@ -2796,6 +3290,7 @@ export function applyPortOrder(
   if (typeof portId !== "string") return false;
   const ship = shipForOrder(world, playerId, shipId);
   if (ship && !fromFleet) {
+    if (ship.runState) clearRun(ship);
     detachForDirectOrder(world, playerId, ship);
     clearEngagement(world, ship.id);
   }
@@ -3832,12 +4327,13 @@ function stepOwnerShip(
   // A ship close to a coast first turns and sails for open water. This gives
   // a new seaward order a way out even when the wind is blowing onshore.
   if (
+    !ship.runState &&
     ship.order &&
     orderHasClearWaterPath(ship) &&
     isNearLand(ship.x, ship.y, settings.coast.tackAwarenessKm)
   ) {
     ship.coastEscapeHeadingRad ??= chooseCoastEscapeHeading(ship, windFromDeg);
-  } else {
+  } else if (!ship.runState) {
     ship.coastEscapeHeadingRad = null;
   }
 
@@ -3860,8 +4356,8 @@ function stepOwnerShip(
     dtGameSeconds,
     windFromDeg,
     preferredTackSide,
-    ship.coastEscapeHeadingRad ?? undefined,
-    world.engagements.has(ship.id) ? 0.02 : undefined,
+    ship.runState?.headingRad ?? ship.coastEscapeHeadingRad ?? undefined,
+    ship.runState ? undefined : world.engagements.has(ship.id) ? 0.02 : undefined,
   );
   resolveMovement(world, ownerId, ship, fromX, fromY);
 
@@ -3892,6 +4388,7 @@ export function stepWorld(
   }
   prepareShipCommands(world);
   prepareFleetCommands(world);
+  applyStances(world);
   updateEngagements(world);
 
   for (const [playerId, fleet] of world.fleets) {
@@ -3910,6 +4407,7 @@ export function stepWorld(
   updateFleetCommands(world);
   updateShipCommands(world);
   resolveCombat(world);
+  updateRuns(world);
   updateRepairs(world, dtGameSeconds);
   updatePortRepairs(world, dtGameSeconds);
   recordFleetPaths(world);
@@ -4173,6 +4671,9 @@ export function visibleStateFor(
       engagement: engagement
         ? { targetId: engagement.targetShipId, objective: engagement.objective }
         : null,
+      battleOrder: ship.battleOrder,
+      surrendered: ship.surrendered === true,
+      running: ship.runState !== undefined,
     };
   });
 
@@ -4186,6 +4687,12 @@ export function visibleStateFor(
   if (lastEventId !== undefined) chart.combatCursor = lastEventId;
 
   const battleLog = world.battleLogs.get(playerId);
+  const surrenderFlags = ships
+    .filter((snapshot) => {
+      const entry = shipEntry(world, snapshot[0]);
+      return entry?.ship.surrendered === true && !ownIds.has(snapshot[0]);
+    })
+    .map((snapshot) => snapshot[0]);
   const state: StateMessage = {
     t: "s",
     tick: world.tick,
@@ -4204,6 +4711,7 @@ export function visibleStateFor(
     groups: world.controlGroups.get(playerId) ?? {},
   };
   if (events.length > 0) state.events = events;
+  if (surrenderFlags.length > 0) state.sf = surrenderFlags;
   if (battleLog && battleLog.length > 0) state.log = battleLog.slice(-settings.combat.maxBattleLogLines);
   if (world.startPort) state.sp = world.startPort.name;
   if (world.kind !== "normal") state.h = world.hungerMultiplier;

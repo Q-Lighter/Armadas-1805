@@ -181,6 +181,10 @@
     "./test-setup": {
       "types": "./dist/testSetup.d.ts",
       "default": "./dist/testSetup.js"
+    },
+    "./battle-orders": {
+      "types": "./dist/battleOrders.d.ts",
+      "default": "./dist/battleOrders.js"
     }
   },
   "files": [

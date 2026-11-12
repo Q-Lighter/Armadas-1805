@@ -75,6 +75,42 @@
       </button>
     </nav>
 
+    <!-- Battle orders for the selected ship or fleet. Phones: a slim bar. -->
+    <section class="battle-bar paper" id="battle-bar" hidden aria-label="Battle orders">
+      <p class="battle-bar-title" id="battle-bar-title"></p>
+      <div class="battle-bar-actions" id="battle-bar-actions"></div>
+    </section>
+
+    <!-- A surrender always asks once more before the flag goes up. -->
+    <section class="surrender-confirm paper" id="surrender-confirm" role="dialog" aria-labelledby="surrender-confirm-title" hidden>
+      <p class="kicker">Battle orders</p>
+      <h2 id="surrender-confirm-title">Surrender this ship?</h2>
+      <p class="surrender-confirm-text" id="surrender-confirm-text">The white flag stops her firing. You can take it down until an enemy accepts.</p>
+      <div class="surrender-confirm-actions">
+        <button class="btn" id="surrender-confirm-cancel" type="button">Keep fighting</button>
+        <button class="btn btn-seal" id="surrender-confirm-yes" type="button">Surrender</button>
+      </div>
+    </section>
+
+    <!-- An enemy white flag: accept, keep attacking, or sail into range. -->
+    <section class="surrender-sheet paper" id="surrender-sheet" role="dialog" aria-labelledby="surrender-offer-title" hidden>
+      <div class="panel-head">
+        <div>
+          <p class="kicker">Surrender offer</p>
+          <h2 id="surrender-offer-title">A ship has struck her flag</h2>
+        </div>
+        <button class="btn panel-close" id="surrender-offer-close" type="button">Close</button>
+      </div>
+      <p class="surrender-offer-detail" id="surrender-offer-detail"></p>
+      <p class="surrender-offer-fleet" id="surrender-offer-fleet"></p>
+      <p class="surrender-offer-reason" id="surrender-offer-reason" hidden></p>
+      <div class="surrender-offer-actions">
+        <button class="btn btn-seal" id="surrender-accept" type="button">Accept</button>
+        <button class="btn" id="surrender-sail" type="button" hidden>Sail there</button>
+        <button class="btn" id="surrender-keep" type="button">Keep attacking</button>
+      </div>
+    </section>
+
     <nav class="hud group-bar paper" id="group-bar" aria-label="Control groups" hidden></nav>
 
     <section class="hud hud-ship paper" id="ship-panel" aria-label="Your ship">

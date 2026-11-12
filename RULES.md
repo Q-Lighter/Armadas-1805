@@ -57,6 +57,42 @@ Read this file at the start of every prompt, then follow it for the whole sessio
   inside 300 m, otherwise round shot is used.
 - One full broadside uses `broadside lb / 2,000` tonnes of ammunition;
   partial fire uses the matching share. No ammunition means no fire.
+- The four battle orders are Capture, Sink, Run and Surrender. Capture and
+  Sink are the objective of an Engage order; switching them keeps the same
+  target, reload state and position and only changes the aimed areas. With
+  no target, choosing one engages the ship that most recently fired on it,
+  or else the nearest visible enemy within 3 km; otherwise nothing happens
+  and the player is told "No enemy in sight". Orders are per ship; a fleet
+  order applies Capture, Sink or Run to every member. Surrender is always
+  per ship, never a fleet order.
+- Run uses the normal sailing rules: it steers away from the weighted
+  nearest known enemies, re-steers every 2 real seconds, and follows the
+  coast when land blocks the way. A running ship still fires any gun group
+  that bears and may repair after the usual 30 seconds out of combat. It
+  escapes after 60 real seconds out of every pursuer's sight, then holds
+  position (or starts queued orders) and is told "Escaped". A new order
+  cancels the run. A ship below 10% crew cannot run.
+- Surrender is the player's choice and is confirmed first. The ship stops,
+  stops firing, flies a white flag and cannot fire until the flag is
+  accepted or taken down. The owner may cancel at any time before an
+  enemy accepts. A player who can see the flag and has a ship within 1 km
+  may accept; ships already attacking keep attacking until they do. On
+  acceptance the ship changes owner and navy, keeps class, name, damage,
+  cargo, ammunition and upgrades, leaves its fleet and control group, and
+  holds position unfleeted; all attackers' Engage orders against it end.
+  Acceptance is refused if it would exceed 30 ships. A surrendered
+  flagship only records a "flagship lost" event for a later prompt.
+- Stances now act: fight-if-attacked (the default) answers the ship that
+  fired on it and stays within 1.5 km; engage-anything seeks any visible
+  enemy within 3 km; avoid-combat runs when fired at; stealth never starts
+  a fight or answers fire on its own.
+- A battle zone is a group of ships within 1.5 km of an enemy that is
+  engaging them or being engaged. Players who can see a battle zone get
+  its world updates at 10 a second instead of 5; everything elsewhere
+  stays at 5. The client smooths between updates.
+- Draft class durability multiplies all damage taken: raider x1.75 and
+  flagship x0.55, with the other classes at x1. This is a duel-length
+  tuning number, not an agreed ship-table value.
 - Repairs work on the most damaged area first, at the table rates per game
   hour multiplied by crew%. A full 0-100 repair of all five non-crew areas
   uses half the repair-material capacity, shared by damage points. Crew

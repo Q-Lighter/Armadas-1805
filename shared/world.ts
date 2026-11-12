@@ -1717,6 +1717,7 @@ export function startShipRun(world: World, ownerId: string, ship: Ship): boolean
   ship.stationSpeedLimit = undefined;
   ship.route = null;
   setRunSteering(world, ship);
+  pushBattleLog(world, ownerId, `Your ${ship.name} is running.`);
   return true;
 }
 
@@ -2020,6 +2021,7 @@ function updateRuns(world: World): void {
         clearRun(ship);
         holdPosition(ship);
         if (world.players.has(ownerId)) pushNotice(world, ownerId, "Escaped.");
+        pushBattleLog(world, ownerId, `Your ${ship.name} escaped.`);
         if (queued) applyShipSpecialOrder(world, ownerId, ship.id, queued);
       }
     }

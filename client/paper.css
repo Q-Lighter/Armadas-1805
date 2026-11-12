@@ -2648,3 +2648,148 @@ body.game {
   }
   .test-tools-grid { grid-template-columns: 1fr; }
 }
+
+/* --- 3C-c: battle bar, surrender sheets and white flags ---------------- */
+.battle-bar {
+  position: fixed;
+  z-index: 34;
+  left: 50%;
+  bottom: calc(max(0.4rem, env(safe-area-inset-bottom)) + 4.9rem);
+  transform: translateX(-50%);
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 0.45rem;
+  width: min(620px, calc(100% - 1rem));
+  margin: 0;
+  padding: 0.35rem 0.45rem;
+}
+.battle-bar[hidden] { display: none; }
+.battle-bar-title {
+  margin: 0;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.82rem;
+  font-weight: 600;
+}
+.battle-bar-actions {
+  display: flex;
+  gap: 0.3rem;
+  min-width: 0;
+}
+.battle-bar-actions .btn {
+  min-width: 44px;
+  min-height: 44px;
+  padding: 0.2rem 0.45rem;
+  font-size: 0.76rem;
+  white-space: nowrap;
+}
+.battle-bar-actions .btn.is-active {
+  background: #8c1d1d;
+  color: #fff8e6;
+  border-color: #5b2a24;
+}
+.surrender-confirm,
+.surrender-sheet {
+  position: fixed;
+  z-index: 49;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  width: min(28rem, calc(100vw - 1rem));
+  max-height: calc(100dvh - 1rem);
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: 0.9rem;
+}
+.surrender-confirm[hidden],
+.surrender-sheet[hidden] { display: none; }
+.surrender-confirm h2,
+.surrender-sheet h2 { margin: 0.15rem 0 0.5rem; }
+.surrender-confirm-text,
+.surrender-offer-detail,
+.surrender-offer-fleet,
+.surrender-offer-reason { margin: 0.35rem 0; font-size: 0.9rem; }
+.surrender-offer-fleet { color: var(--ink-faded); }
+.surrender-offer-reason { color: #8c1d1d; font-weight: 600; }
+.surrender-confirm-actions,
+.surrender-offer-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  margin-top: 0.7rem;
+}
+.surrender-confirm-actions .btn,
+.surrender-offer-actions .btn { flex: 1 1 8rem; min-height: 44px; }
+.damage-battle {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.3rem;
+  margin: 0.55rem 0;
+  padding-top: 0.5rem;
+  border-top: 1px solid rgba(27, 47, 61, 0.25);
+}
+.damage-battle .btn { flex: 1 1 5.5rem; min-height: 44px; }
+.fleet-member-battle {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem;
+  padding: 0 0 0.2rem;
+}
+.fleet-member-battle .btn {
+  flex: 1 1 4.4rem;
+  min-height: 44px;
+  font-size: 0.72rem;
+}
+@media (max-width: 640px) {
+  .battle-bar {
+    left: max(0.3rem, env(safe-area-inset-left));
+    right: max(0.3rem, env(safe-area-inset-right));
+    bottom: calc(max(0.3rem, env(safe-area-inset-bottom)) + 4.35rem);
+    transform: none;
+    width: auto;
+    grid-template-columns: 1fr;
+    gap: 0.2rem;
+    padding: 0.25rem 0.3rem;
+  }
+  .battle-bar-title { font-size: 0.72rem; }
+  .battle-bar-actions .btn {
+    flex: 1 1 0;
+    min-width: 0;
+    padding: 0.15rem 0.2rem;
+    font-size: 0.7rem;
+  }
+  body.has-battle-bar .hud-ship {
+    bottom: calc(max(0.3rem, env(safe-area-inset-bottom)) + 8.2rem);
+  }
+  body.has-battle-bar .chart-notice {
+    bottom: calc(max(0.3rem, env(safe-area-inset-bottom)) + 8.2rem);
+  }
+  .surrender-confirm,
+  .surrender-sheet {
+    top: max(0.4rem, env(safe-area-inset-top));
+    left: max(0.4rem, env(safe-area-inset-left));
+    right: max(0.4rem, env(safe-area-inset-right));
+    bottom: max(0.4rem, env(safe-area-inset-bottom));
+    width: auto;
+    max-height: none;
+    transform: none;
+  }
+}
+@media (max-height: 440px) and (orientation: landscape) {
+  .battle-bar {
+    bottom: calc(max(0.25rem, env(safe-area-inset-bottom)) + 4rem);
+    padding-block: 0.15rem;
+  }
+  .battle-bar-actions .btn { min-height: 44px; }
+  body.has-battle-bar .hud-ship { bottom: calc(max(0.25rem, env(safe-area-inset-bottom)) + 7.6rem); }
+  .surrender-confirm,
+  .surrender-sheet {
+    top: max(0.3rem, env(safe-area-inset-top));
+    bottom: max(0.3rem, env(safe-area-inset-bottom));
+    max-height: none;
+  }
+}

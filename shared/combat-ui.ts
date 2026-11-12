@@ -3,6 +3,8 @@
 // browser.
 
 import type { DamagePercents } from "./combat.js";
+import type { BattleOrder } from "./battleOrders.js";
+import { surrenderAcceptProblem } from "./battleOrders.js";
 
 export const DAMAGE_AREA_ROWS = [
   { key: "hull", label: "Hull" },
@@ -97,7 +99,7 @@ export function battleLogLines(lines: readonly string[] | undefined): string[] {
   const clean: string[] = [];
   for (const line of lines ?? []) {
     if (typeof line !== "string" || line.length === 0 || line.length > 120) continue;
-    if (!/your/i.test(line)) continue;
+    if (!/\b(you|your)\b/i.test(line)) continue;
     clean.push(line);
   }
   return clean.slice(-30);
@@ -164,4 +166,133 @@ export function portRepairChoices(
       chargesMoney: Math.max(0, Math.round(money)),
     },
   ];
+}
+
+
+// --- 3C-c: battle bar, surrender offer and white flags -------------------
+
+export interface BattleBarItem {
+  id: "capture" | "sink" | "run" | "surrender" | "cancelSurrender";
+  label: string;
+  active: boolean;
+}
+
+/** Four orders, except that a fleet cannot surrender as a whole. */
+export function battleBarItems(options: {
+  fleet: boolean;
+  surrendered: boolean;
+  battleOrder?: BattleOrder;
+  running?: boolean;
+}): BattleBarItem[] {
+  if (options.surrendered) {
+    return [{ id: "cancelSurrender", label: "Take down flag", active: true }];
+  }
+  const items: BattleBarItem[] = [
+    { id: "capture", label: "Capture", active: options.battleOrder === "capture" },
+    { id: "sink", label: "Sink", active: options.battleOrder === "sink" },
+    { id: "run", label: "Run", active: options.running === true },
+  ];
+  if (!options.fleet) {
+    items.push({ id: "surrender", label: "Surrender", active: false });
+  }
+  return items;
+}
+
+/** Show the bar for an engaged ship or fleet, a run, a flag, or an enemy. */
+export function battleBarVisible(options: {
+  hasOwnShip: boolean;
+  inCombat: boolean;
+  fleetInCombat: boolean;
+  enemySelected: boolean;
+  surrendered?: boolean;
+  running?: boolean;
+}): boolean {
+  if (options.enemySelected) return true;
+  if (!options.hasOwnShip) return false;
+  return options.inCombat || options.fleetInCombat ||
+    options.surrendered === true || options.running === true;
+}
+
+export interface SurrenderOffer {
+  title: string;
+  detail: string;
+  fleetText: string;
+  acceptEnabled: boolean;
+  reason: string | null;
+  sailThere: boolean;
+}
+
+/** The sheet only exists for a visible foreign ship whose flag is up. */
+export function surrenderOffer(options: {
+  visible: boolean;
+  name: string;
+  navy: string;
+  classId: string;
+  fleetCount: number;
+  maxShips: number;
+  nearestShipKm: number;
+  acceptRangeM?: number;
+}): SurrenderOffer | null {
+  if (!options.visible) return null;
+  const problem = surrenderAcceptProblem({
+    fleetCount: options.fleetCount,
+    nearestShipKm: options.nearestShipKm,
+    maxShips: options.maxShips,
+    rangeM: options.acceptRangeM,
+  });
+  return {
+    title: `${options.name || options.classId} of the ${options.navy} has struck her flag`,
+    detail: `${options.navy} ${options.classId}`,
+    fleetText: `Your fleet: ${options.fleetCount} of ${options.maxShips}`,
+    acceptEnabled: problem === null,
+    reason: problem,
+    sailThere: (options.nearestShipKm * 1_000) > (options.acceptRangeM ?? 1_000),
+  };
+}
+
+/** A white flag is drawn only for a ship that is both surrendered and visible. */
+export function whiteFlagVisible(visible: boolean, surrendered: boolean): boolean {
+  return visible && surrendered;
+}
+
+export interface BattleBarLayout {
+  sheet: boolean;
+  minTargetPx: number;
+  barHeight: number;
+  contentWidth: number;
+  /** Phone sheets scroll; the bar itself never grows past this. */
+  maxBarHeight: number;
+}
+
+export function battleBarLayout(width: number, height: number): BattleBarLayout {
+  const phone = width <= 640;
+  const margin = phone ? 12.8 : 24;
+  return {
+    sheet: phone,
+    minTargetPx: 44,
+    barHeight: 56,
+    contentWidth: Math.max(0, width - margin * 2),
+    maxBarHeight: Math.max(44, Math.min(72, Math.floor(height * 0.2))),
+  };
+}
+
+export interface SurrenderSheetLayout {
+  sheet: boolean;
+  minTargetPx: number;
+  width: number;
+  maxHeight: number;
+  scrolls: boolean;
+}
+
+/** The offer is a centred sheet, or the phone's full paper page. */
+export function surrenderSheetLayout(width: number, height: number): SurrenderSheetLayout {
+  const phone = width <= 640;
+  const margin = phone ? 8 : 16;
+  return {
+    sheet: phone,
+    minTargetPx: 44,
+    width: Math.max(0, Math.min(phone ? width - margin * 2 : 448, width - margin * 2)),
+    maxHeight: Math.max(0, height - margin * 2),
+    scrolls: true,
+  };
 }

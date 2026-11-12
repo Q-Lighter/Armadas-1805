@@ -91,3 +91,100 @@ test("port repair choices show the same cost that is charged", () => {
   assert.equal(choices[1]?.chargesMoney, 247);
   assert.equal(choices[1]?.label, "Pay locals: 247 pieces at x2, x6");
 });
+
+// --- 3C-c: battle bar and surrender screens --------------------------------
+
+import { battleBarItems, battleBarLayout, battleBarVisible, surrenderOffer, surrenderSheetLayout, whiteFlagVisible } from "@naval/shared/combat-ui";
+
+test("battle bar orders, active objective and fleet surrender", () => {
+  assert.deepEqual(
+    battleBarItems({ fleet: false, surrendered: false, battleOrder: "capture" })
+      .map((item) => `${item.label}:${item.active ? "on" : "off"}`),
+    ["Capture:on", "Sink:off", "Run:off", "Surrender:off"],
+  );
+  assert.equal(
+    battleBarItems({ fleet: true, surrendered: false }).some((item) => item.id === "surrender"),
+    false,
+  );
+  assert.deepEqual(
+    battleBarItems({ fleet: false, surrendered: true }).map((item) => item.label),
+    ["Take down flag"],
+  );
+  assert.equal(
+    battleBarItems({ fleet: false, surrendered: false, running: true })
+      .find((item) => item.id === "run")?.active,
+    true,
+  );
+});
+
+test("battle bar visibility needs combat, an enemy or a run", () => {
+  assert.equal(battleBarVisible({ hasOwnShip: true, inCombat: true, fleetInCombat: false, enemySelected: false }), true);
+  assert.equal(battleBarVisible({ hasOwnShip: true, inCombat: false, fleetInCombat: true, enemySelected: false }), true);
+  assert.equal(battleBarVisible({ hasOwnShip: true, inCombat: false, fleetInCombat: false, enemySelected: true }), true);
+  assert.equal(battleBarVisible({ hasOwnShip: true, inCombat: false, fleetInCombat: false, enemySelected: false }), false);
+  assert.equal(battleBarVisible({ hasOwnShip: false, inCombat: false, fleetInCombat: false, enemySelected: false }), false);
+});
+
+test("surrender sheet explains range and fleet-full reasons", () => {
+  const near = surrenderOffer({
+    visible: true, name: "Lively", navy: "French", classId: "frigate",
+    fleetCount: 24, maxShips: 30, nearestShipKm: 0.8,
+  })!;
+  assert.match(near.title, /Lively of the French has struck her flag/);
+  assert.equal(near.acceptEnabled, true);
+  assert.equal(near.reason, null);
+  assert.equal(near.fleetText, "Your fleet: 24 of 30");
+
+  const far = surrenderOffer({
+    visible: true, name: "", navy: "French", classId: "frigate",
+    fleetCount: 24, maxShips: 30, nearestShipKm: 2,
+  })!;
+  assert.equal(far.acceptEnabled, false);
+  assert.match(far.reason ?? "", /within 1 km/);
+  assert.equal(far.sailThere, true);
+
+  const full = surrenderOffer({
+    visible: true, name: "Lively", navy: "French", classId: "frigate",
+    fleetCount: 30, maxShips: 30, nearestShipKm: 0.8,
+  })!;
+  assert.equal(full.acceptEnabled, false);
+  assert.match(full.reason ?? "", /Fleet full/);
+  assert.equal(surrenderOffer({
+    visible: false, name: "Lively", navy: "French", classId: "frigate",
+    fleetCount: 1, maxShips: 30, nearestShipKm: 0.2,
+  }), null);
+});
+
+test("battle bar and surrender sheet fit the five viewports", () => {
+  for (const [width, height] of VIEWPORTS) {
+    const layout = battleBarLayout(width, height);
+    assert.equal(layout.minTargetPx, 44);
+    assert.ok(layout.barHeight >= 44);
+    assert.ok(layout.maxBarHeight >= 44);
+    assert.ok(layout.contentWidth > 0 && layout.contentWidth <= width);
+    assert.equal(layout.sheet, width <= 640);
+    const sheet = surrenderSheetLayout(width, height);
+    assert.equal(sheet.minTargetPx, 44);
+    assert.equal(sheet.scrolls, true);
+    assert.ok(sheet.width > 0 && sheet.width <= width);
+    assert.ok(sheet.maxHeight > 0 && sheet.maxHeight <= height);
+  }
+});
+
+test("white flags draw only for visible surrendered ships", () => {
+  assert.equal(whiteFlagVisible(true, true), true);
+  assert.equal(whiteFlagVisible(false, true), false);
+  assert.equal(whiteFlagVisible(true, false), false);
+});
+
+test("battle log accepts you/your surrender lines", () => {
+  assert.deepEqual(battleLogLines([
+    "Your Lively surrendered.",
+    "You accepted the surrender of the French frigate.",
+    "The Vengeur hit your Lively: hull -2%.",
+  ]), [
+    "Your Lively surrendered.",
+    "You accepted the surrender of the French frigate.",
+    "The Vengeur hit your Lively: hull -2%.",
+  ]);
+});

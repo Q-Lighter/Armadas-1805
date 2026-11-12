@@ -255,6 +255,17 @@ export const settings = {
       sink: { hull: 70, sails: 5, masts: 5, rudder: 5, guns: 10, crew: 5 },
       capture: { hull: 10, sails: 3, masts: 5, rudder: 7, guns: 30, crew: 45 },
     },
+    /** Draft: class durability against all damage. A raider is fragile, a
+     *  flagship is deliberately hard to sink; this only tunes duel length. */
+    classDamageTakenMultiplier: {
+      raider: 1.75,
+      escort: 1,
+      frigate: 1,
+      trade: 1,
+      fireShip: 1,
+      line: 1,
+      flagship: 0.55,
+    },
     /** Draft: one crewman is lost for this many pounds of damage. */
     crewKillPounds: 10,
     /** AGREED: grape at x2 only within this range; otherwise round at x1. */

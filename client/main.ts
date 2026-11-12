@@ -74,6 +74,12 @@ import {
   testJoinQuery,
 } from "@naval/shared/test-setup";
 import {
+  battleBarItems,
+  battleBarVisible,
+  surrenderOffer,
+  whiteFlagVisible,
+} from "@naval/shared/combat-ui";
+import {
   shipTypeFor,
   type BuyableShipClassId,
 } from "@naval/shared/ships";
@@ -440,6 +446,11 @@ function parseOwnShip(raw: unknown): OwnShipSnapshot | null {
     reloadLeftSeconds: finiteNumber(source.reloadLeftSeconds) ?? undefined,
     inCombat: source.inCombat === true,
     canRepair: source.canRepair === true,
+    battleOrder: source.battleOrder === "capture" || source.battleOrder === "sink"
+      ? source.battleOrder
+      : undefined,
+    surrendered: source.surrendered === true,
+    running: source.running === true,
     repairEnabled: source.repairEnabled !== false,
     crewTooLow: source.crewTooLow === true,
     effectiveSpeedKnots: finiteNumber(source.effectiveSpeedKnots) ?? undefined,
@@ -484,6 +495,9 @@ interface ShipView {
   id: string;
   hull: Graphics;
   ring: Graphics;
+  flag: Graphics;
+  runInk: Graphics;
+  runLabel: Text;
   own: boolean;
   classId: string;
   navy: string;
@@ -495,6 +509,8 @@ interface ShipView {
   targetHeading: number;
   dockedPortId: string | null;
   waitingPortId: string | null;
+  surrendered: boolean;
+  running: boolean;
 }
 
 interface Camera {
@@ -602,6 +618,23 @@ async function start(): Promise<void> {
   const battleLogToggle = element<HTMLButtonElement>("battle-log-toggle");
   const battleLogList = element<HTMLOListElement>("battle-log-list");
   const battleLogCount = element<HTMLElement>("battle-log-count");
+  const battleBar = element<HTMLElement>("battle-bar");
+  const battleBarTitle = element<HTMLElement>("battle-bar-title");
+  const battleBarActions = element<HTMLElement>("battle-bar-actions");
+  const surrenderConfirm = element<HTMLElement>("surrender-confirm");
+  const surrenderConfirmText = element<HTMLElement>("surrender-confirm-text");
+  const surrenderConfirmCancel = element<HTMLButtonElement>("surrender-confirm-cancel");
+  const surrenderConfirmYes = element<HTMLButtonElement>("surrender-confirm-yes");
+  const surrenderSheet = element<HTMLElement>("surrender-sheet");
+  const surrenderOfferTitle = element<HTMLElement>("surrender-offer-title");
+  const surrenderOfferDetail = element<HTMLElement>("surrender-offer-detail");
+  const surrenderOfferFleet = element<HTMLElement>("surrender-offer-fleet");
+  const surrenderOfferReason = element<HTMLElement>("surrender-offer-reason");
+  const surrenderAccept = element<HTMLButtonElement>("surrender-accept");
+  const surrenderSail = element<HTMLButtonElement>("surrender-sail");
+  const surrenderKeep = element<HTMLButtonElement>("surrender-keep");
+  const surrenderOfferClose = element<HTMLButtonElement>("surrender-offer-close");
+  const damageBattle = element<HTMLElement>("damage-battle");
   const actionSheet = element<HTMLElement>("ship-action");
   const actionTitle = element<HTMLElement>("action-title");
   const actionUndock = element<HTMLButtonElement>("action-undock");
@@ -878,6 +911,13 @@ async function start(): Promise<void> {
   let groupHoldFired = false;
   let damageShipId: string | null = null;
   let battleLogKey = "";
+  let selectedEnemyId: string | null = null;
+  let surrenderFlags = new Set<string>();
+  let surrenderConfirmShipId: string | null = null;
+  let surrenderOfferShipId: string | null = null;
+  let surrenderOfferKey = "";
+  const surrenderDismissed = new Set<string>();
+  let battleBarKey = "";
   let lastSunkAt: { x: number; y: number } | null = null;
   interface CombatFx {
     kind: "fire" | "hit" | "miss" | "sunk";
@@ -2121,6 +2161,7 @@ async function start(): Promise<void> {
   function updateSelectedShip(id: string, centre: boolean): boolean {
     const row = fleetShips.find((ship) => ship.id === id);
     if (!row || row.status === "delivery") return false;
+    selectedEnemyId = null;
     if (!multiSelect) selectedShipIds.clear();
     selectedShipId = id;
     target = null;
@@ -2139,6 +2180,7 @@ async function start(): Promise<void> {
     }
     updateMultiUi();
     updateHud(ownSnapshot ?? undefined);
+    renderBattleBar();
     return true;
   }
 
@@ -2378,6 +2420,13 @@ async function start(): Promise<void> {
           item.append(rejoin);
         } else {
           item.append(document.createElement("span"));
+        }
+        const memberShip = shipById(member.id);
+        if (memberShip && memberShip.status !== "delivery") {
+          const battle = document.createElement("div");
+          battle.className = "fleet-member-battle";
+          appendBattleButtons(battle, memberShip);
+          item.append(battle);
         }
         members.append(item);
       }
@@ -3553,6 +3602,15 @@ async function start(): Promise<void> {
     }
   }
 
+  function drawWhiteFlag(flag: Graphics): void {
+    flag.clear();
+    flag.moveTo(0, -10).lineTo(0, -24).stroke({ width: 1.5, color: INK_COLOR });
+    flag
+      .poly([1, -24, 10, -21, 1, -17])
+      .fill({ color: 0xfffdf2 })
+      .stroke({ width: 1, color: INK_COLOR });
+  }
+
   function makeHull(own: boolean, navy: string): Graphics {
     const hull = new Graphics();
     const size = own ? 1 : 0.85;
@@ -3658,6 +3716,235 @@ async function start(): Promise<void> {
     damageShipId = null;
   }
 
+  // ---- 3C-c: battle orders, surrender offers and white flags -------------
+
+  function battleFleetScope(): boolean {
+    return multiSelect && selectedFleetIds().length > 0;
+  }
+
+  function sendFleetBattle(order: "capture" | "sink" | "run"): void {
+    const fleets = selectedFleetIds();
+    if (fleets.length === 0) {
+      showNotice("No fleet selected.");
+      return;
+    }
+    for (const fleetId of fleets) {
+      sendCommand({ t: "fleetBattleOrder", fleet: fleetId, order });
+    }
+  }
+
+  function sendShipBattle(shipId: string, order: "capture" | "sink" | "run" | "surrender"): void {
+    sendCommand({ t: "battleOrder", ship: shipId, order });
+  }
+
+  function openSurrenderConfirm(shipId: string): void {
+    const row = shipById(shipId);
+    if (!row || row.surrendered) return;
+    surrenderConfirmShipId = row.id;
+    surrenderConfirmText.textContent =
+      `${row.name} will stop and fly the white flag. You can take it down until an enemy accepts.`;
+    surrenderConfirm.hidden = false;
+  }
+
+  /** The same four order buttons in the damage sheet and fleet ship cards. */
+  function appendBattleButtons(
+    container: HTMLElement,
+    row: OwnShipSnapshot,
+  ): void {
+    const items = battleBarItems({
+      fleet: false,
+      surrendered: row.surrendered === true,
+      battleOrder: row.battleOrder,
+      running: row.running === true,
+    });
+    for (const item of items) {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = `btn${item.active ? " is-active" : ""}`;
+      button.textContent = item.label;
+      button.addEventListener("click", () => {
+        if (item.id === "surrender") {
+          openSurrenderConfirm(row.id);
+        } else if (item.id === "cancelSurrender") {
+          sendCommand({ t: "cancelSurrender", ship: row.id });
+        } else {
+          sendShipBattle(row.id, item.id);
+        }
+      });
+      container.append(button);
+    }
+  }
+
+  function hideBattleBar(): void {
+    battleBar.hidden = true;
+    document.body.classList.remove("has-battle-bar");
+    battleBarKey = "";
+  }
+
+  function renderBattleBar(): void {
+    if (selectedEnemyId && !ships.has(selectedEnemyId)) selectedEnemyId = null;
+    const enemy = selectedEnemyId ? ships.get(selectedEnemyId) : null;
+    if (enemy) {
+      const key = `enemy:${enemy.id}:${enemy.navy}:${enemy.classId}`;
+      if (key === battleBarKey) return;
+      battleBarKey = key;
+      battleBarTitle.textContent = `${enemy.navy} ${enemy.classId}`;
+      battleBarActions.replaceChildren();
+      battleBar.hidden = false;
+      document.body.classList.add("has-battle-bar");
+      return;
+    }
+
+    const row = selectedFleetShip();
+    if (!row) {
+      hideBattleBar();
+      return;
+    }
+    const fleet = battleFleetScope();
+    const fleetIds = fleet ? selectedFleetIds() : [];
+    const fleetMemberIds = new Set<string>();
+    for (const fleetId of fleetIds) {
+      for (const member of fleetById(fleetId)?.members ?? []) fleetMemberIds.add(member.id);
+    }
+    const fleetInCombat = fleet
+      ? fleetShips.some((ship) => fleetMemberIds.has(ship.id) && ship.inCombat === true)
+      : false;
+    const visible = battleBarVisible({
+      hasOwnShip: true,
+      inCombat: row.inCombat === true,
+      fleetInCombat,
+      enemySelected: false,
+      surrendered: row.surrendered === true,
+      running: row.running === true,
+    });
+    if (!visible) {
+      hideBattleBar();
+      return;
+    }
+    const items = battleBarItems({
+      fleet,
+      surrendered: row.surrendered === true,
+      battleOrder: row.battleOrder,
+      running: row.running === true,
+    });
+    const title = fleet
+      ? (fleetIds.length === 1 ? fleetById(fleetIds[0]!)?.name ?? "Fleet" : "Fleets")
+      : row.surrendered
+        ? `${row.name} · white flag`
+        : row.running
+          ? `${row.name} · running`
+          : row.name;
+    const key = [title, ...items.map((item) => `${item.id}:${item.active}`)].join("|");
+    if (key === battleBarKey) return;
+    battleBarKey = key;
+    battleBarTitle.textContent = title;
+    battleBarActions.replaceChildren();
+    for (const item of items) {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = `btn${item.active ? " is-active" : ""}`;
+      button.textContent = item.label;
+      button.setAttribute("aria-pressed", String(item.active));
+      button.addEventListener("click", () => {
+        if (item.id === "surrender") {
+          openSurrenderConfirm(row.id);
+        } else if (item.id === "cancelSurrender") {
+          sendCommand({ t: "cancelSurrender", ship: row.id });
+        } else if (fleet) {
+          sendFleetBattle(item.id);
+        } else {
+          sendShipBattle(row.id, item.id);
+        }
+      });
+      battleBarActions.append(button);
+    }
+    battleBar.hidden = false;
+    document.body.classList.add("has-battle-bar");
+  }
+
+  function hideSurrenderOffer(): void {
+    surrenderSheet.hidden = true;
+    surrenderOfferShipId = null;
+    surrenderOfferKey = "";
+  }
+
+  function renderSurrenderOffer(): void {
+    for (const id of [...surrenderDismissed]) {
+      if (!surrenderFlags.has(id)) surrenderDismissed.delete(id);
+    }
+    let target: ShipView | null = null;
+    for (const id of surrenderFlags) {
+      if (surrenderDismissed.has(id)) continue;
+      const view = ships.get(id);
+      if (view && whiteFlagVisible(true, view.surrendered)) {
+        target = view;
+        break;
+      }
+    }
+    if (!target) {
+      hideSurrenderOffer();
+      return;
+    }
+    const own = fleetShips.filter((ship) => ship.status !== "delivery");
+    let nearestKm = Number.POSITIVE_INFINITY;
+    let nearestShip: OwnShipSnapshot | null = null;
+    for (const ship of own) {
+      const distance = Math.hypot(ship.x - target.x, ship.y - target.y);
+      if (distance < nearestKm) {
+        nearestKm = distance;
+        nearestShip = ship;
+      }
+    }
+    const fleetCount = own.length;
+    const typeName = shipTypeFor(
+      target.navy as NavyId,
+      target.classId as BuyableShipClassId,
+    ).name;
+    const offer = surrenderOffer({
+      visible: true,
+      name: typeName,
+      navy: target.navy,
+      classId: target.classId,
+      fleetCount,
+      maxShips: settings.ships.maxShipsPerPlayer,
+      nearestShipKm: nearestKm,
+      acceptRangeM: settings.combat.surrenderAcceptRangeM,
+    });
+    if (!offer) {
+      hideSurrenderOffer();
+      return;
+    }
+    const key = [target.id, offer.title, offer.acceptEnabled, offer.reason].join("|");
+    surrenderOfferShipId = target.id;
+    if (key === surrenderOfferKey && !surrenderSheet.hidden) return;
+    surrenderOfferKey = key;
+    surrenderOfferTitle.textContent = offer.title;
+    surrenderOfferDetail.textContent = offer.detail;
+    surrenderOfferFleet.textContent = offer.fleetText;
+    surrenderOfferReason.textContent = offer.reason ?? "";
+    surrenderOfferReason.hidden = offer.reason === null;
+    surrenderAccept.disabled = !offer.acceptEnabled;
+    surrenderAccept.title = offer.reason ?? "Take this ship into your fleet";
+    surrenderSail.hidden = !offer.sailThere;
+    surrenderOfferShipId = target.id;
+    surrenderSail.onclick = () => {
+      if (!nearestShip) return;
+      sendCommand({
+        t: "o",
+        x: Number(target!.x.toFixed(2)),
+        y: Number(target!.y.toFixed(2)),
+        ship: nearestShip.id,
+      });
+      showNotice(`${nearestShip.name} sails towards the white flag.`);
+    };
+    surrenderSheet.hidden = false;
+  }
+
+  function closeSurrenderConfirm(): void {
+    surrenderConfirm.hidden = true;
+    surrenderConfirmShipId = null;
+  }
+
   function openDamagePanel(shipId: string | null = null): void {
     const row = shipId ? shipById(shipId) : selectedFleetShip();
     if (!row) return;
@@ -3725,6 +4012,8 @@ async function start(): Promise<void> {
       ? "–"
       : `${row.effectiveTurnDegPerSecond.toFixed(1)} / ${(row.normalTurnDegPerSecond ?? 0).toFixed(1)}°/s`;
     damageHurts.textContent = hurt.length > 0 ? hurt.join(" · ") : "All six areas sound.";
+    damageBattle.replaceChildren();
+    if (row.status !== "delivery") appendBattleButtons(damageBattle, row);
     damageRepairToggle.checked = row.repairEnabled !== false;
     damageRepairToggle.disabled = row.status === "delivery";
     const quote = row.portRepair;
@@ -3972,6 +4261,7 @@ async function start(): Promise<void> {
         controlGroups[slot] = ids.filter((id): id is string => typeof id === "string");
       }
     }
+    if (selectedEnemyId && !ships.has(selectedEnemyId)) selectedEnemyId = null;
     if (selectedFleetId && !playerFleets.some((fleet) => fleet.id === selectedFleetId)) {
       selectedFleetId = null;
     }
@@ -3998,6 +4288,11 @@ async function start(): Promise<void> {
     if (selectedShipIds.size === 0) multiSelect = false;
     updateMultiUi();
     const ownIds = new Set(fleetShips.map((ship) => ship.id));
+    surrenderFlags = new Set(
+      Array.isArray(state.sf)
+        ? state.sf.filter((id): id is string => typeof id === "string" && !ownIds.has(id))
+        : [],
+    );
 
     windFrom = Number.isFinite(state.w) ? state.w : settings.weather.windFromDeg;
     roomKind = validRoomKind(state.k) ? state.k : "normal";
@@ -4127,11 +4422,30 @@ async function start(): Promise<void> {
         const hull = makeHull(ownHere, navy);
         const ring = new Graphics();
         ring.visible = false;
-        fleetLayer.addChild(hull, ring);
+        const flag = new Graphics();
+        drawWhiteFlag(flag);
+        flag.visible = false;
+        const runInk = new Graphics();
+        runInk.moveTo(0, 0).lineTo(0, -34).stroke({
+          width: 1.6,
+          color: 0xfff8e6,
+          alpha: 0.95,
+          cap: "round",
+        });
+        runInk.visible = false;
+        const runLabel = new Text({
+          text: "Running",
+          style: { fontFamily: "Source Sans 3", fontSize: 10, fill: 0xfff8e6 },
+        });
+        runLabel.visible = false;
+        fleetLayer.addChild(hull, ring, flag, runInk, runLabel);
         ship = {
           id,
           hull,
           ring,
+          flag,
+          runInk,
+          runLabel,
           own: ownHere,
           classId: String(classId),
           navy,
@@ -4143,6 +4457,8 @@ async function start(): Promise<void> {
           targetHeading: headingDeg * (Math.PI / 180),
           dockedPortId,
           waitingPortId,
+          surrendered: false,
+          running: false,
         };
         ships.set(id, ship);
       }
@@ -4154,6 +4470,9 @@ async function start(): Promise<void> {
       ship.targetX = x;
       ship.targetY = y;
       ship.targetHeading = headingDeg * (Math.PI / 180);
+      const ownRow = ownIds.has(id) ? fleetShips.find((row) => row.id === id) : undefined;
+      ship.surrendered = ownRow?.surrendered === true || surrenderFlags.has(id);
+      ship.running = ownRow?.running === true;
       if (id === selectedShipId) own = snapshot;
     }
 
@@ -4161,6 +4480,9 @@ async function start(): Promise<void> {
       if (!seen.has(id)) {
         ship.hull.destroy();
         ship.ring.destroy();
+        ship.flag.destroy();
+        ship.runInk.destroy();
+        ship.runLabel.destroy();
         ships.delete(id);
       }
     }
@@ -4193,6 +4515,8 @@ async function start(): Promise<void> {
     if (damageShipId && !shipById(damageShipId)) closeDamagePanel();
     if (!damagePanel.hidden) renderDamagePanel();
     renderBattleLog(state.log);
+    renderBattleBar();
+    renderSurrenderOffer();
 
     lastSeen = Array.isArray(state.l) ? state.l : [];
     drawLastSeen();
@@ -4472,6 +4796,18 @@ async function start(): Promise<void> {
       selectedFleetId = fleet?.id ?? null;
       return;
     }
+    const foreign = anyShipAt(screenX, screenY);
+    if (foreign && !foreign.own) {
+      selectedEnemyId = foreign.id;
+      closePortPanel();
+      closeTradePanel();
+      closeFleetPanel();
+      closeShipyardPanel();
+      closeHirePanel();
+      knownPortsPanel.hidden = true;
+      renderBattleBar();
+      return;
+    }
     const port = portHit;
     if (port) {
       const docked = fleetShips.find(
@@ -4503,6 +4839,7 @@ async function start(): Promise<void> {
       return;
     }
 
+    selectedEnemyId = null;
     const decision = resolveTap({ tapToSail, moveArmed, heldMs: 0 });
     moveArmed = decision.moveArmed;
     refreshTapUi();
@@ -4743,6 +5080,27 @@ async function start(): Promise<void> {
     const collapsed = battleLog.classList.toggle("is-collapsed");
     battleLogToggle.setAttribute("aria-expanded", String(!collapsed));
   });
+  surrenderConfirmYes.addEventListener("click", () => {
+    if (surrenderConfirmShipId) {
+      sendShipBattle(surrenderConfirmShipId, "surrender");
+    }
+    closeSurrenderConfirm();
+  });
+  surrenderConfirmCancel.addEventListener("click", closeSurrenderConfirm);
+  surrenderAccept.addEventListener("click", () => {
+    if (surrenderOfferShipId) {
+      sendCommand({ t: "acceptSurrender", ship: surrenderOfferShipId });
+      surrenderDismissed.add(surrenderOfferShipId);
+    }
+    hideSurrenderOffer();
+    renderBattleBar();
+  });
+  const dismissSurrender = (): void => {
+    if (surrenderOfferShipId) surrenderDismissed.add(surrenderOfferShipId);
+    hideSurrenderOffer();
+  };
+  surrenderKeep.addEventListener("click", dismissSurrender);
+  surrenderOfferClose.addEventListener("click", dismissSurrender);
 
   actionUndock.addEventListener("click", () => {
     if (actionShipId) sendCommand({ t: "undock", ship: actionShipId });
@@ -5177,6 +5535,7 @@ async function start(): Promise<void> {
     }
 
     const ease = 1 - Math.exp(-7 * dt);
+    const flagScale = clamp(8 / Math.max(1, view.kmAcross), 0.65, 1.6);
     for (const ship of ships.values()) {
       ship.x += (ship.targetX - ship.x) * ease;
       ship.y += (ship.targetY - ship.y) * ease;
@@ -5190,6 +5549,15 @@ async function start(): Promise<void> {
         screen.x > -90 && screen.x < app.screen.width + 90 &&
         screen.y > -90 && screen.y < app.screen.height + 90;
       ship.ring.visible = ship.own && ship.hull.visible;
+      ship.flag.position.set(screen.x, screen.y);
+      ship.flag.rotation = ship.heading;
+      ship.flag.scale.set(flagScale);
+      ship.flag.visible = whiteFlagVisible(ship.hull.visible, ship.surrendered);
+      ship.runInk.position.set(screen.x, screen.y);
+      ship.runInk.rotation = ship.heading;
+      ship.runInk.visible = ship.running && ship.hull.visible;
+      ship.runLabel.position.set(screen.x + 10, screen.y - 20);
+      ship.runLabel.visible = ship.running && ship.hull.visible;
     }
 
     refreshDiscoveredOutline(now);

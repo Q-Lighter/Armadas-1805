@@ -516,7 +516,8 @@ export function resolveFiring(input: FiringInput): FiringResult {
       const shot = shotTypeForArea(area, input.distanceKm);
       const delivered = basePounds *
         gunClassDamageMultiplier(group.gunClass, input.targetClass) *
-        shotDamageMultiplier(area, input.distanceKm);
+        shotDamageMultiplier(area, input.distanceKm) *
+        (COM.classDamageTakenMultiplier[input.targetClass] ?? 1);
       damage = applyAreaDamage(damage, capacities, area, delivered);
       areaHits[area] += 1;
       areaPounds[area] = (areaPounds[area] ?? 0) + delivered;

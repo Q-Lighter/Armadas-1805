@@ -2124,3 +2124,39 @@ winding`):
   Cloudflare CPU time.
 - Racing and layout were not checked in a browser; `npm run ui-test` is still
   missing and this image has no working headless Chromium.
+
+## 3C-c: battle orders screens
+
+- Added the battle bar for the selected ship or fleet, with Capture, Sink,
+  Run and Surrender; the active objective is highlighted. Surrender asks
+  "Surrender this ship?" first, is hidden for a fleet, and becomes "Take down
+  flag" while the white flag is up. The same order buttons appear in the Fleet
+  panel's ship cards and the ship Damage sheet.
+- Added the surrender offer sheet ("[class] of the [navy] has struck her
+  flag"), class/navy detail, fleet count, Accept, Keep attacking and a Sail
+  there button when no ship is within 1 km. Accept is disabled with the range
+  or fleet-full reason. The sheet is private to visible foreign flags.
+- White flags are drawn per visible surrendered ship and scale with zoom;
+  running ships get a heading line and a small "Running" label. The client
+  keeps its existing interpolation for the 10 Hz battle-zone updates. The
+  Test tools panel remains available only in test/dev rooms and keeps its
+  phone layout. Battle log filtering accepts the new "Your ... surrendered",
+  "Your ... escaped" and "You accepted ..." lines.
+- Duel tuning (Draft only): added a class damage-taken multiplier, raider
+  x1.75 and flagship x0.55, with other classes x1. This moves the 100-run
+  duel results to raider **1.03**, frigate **2.84**, line **3.23** and
+  flagship **7.42** real minutes, inside all four agreed targets. No AGREED
+  number was changed.
+
+### Checks
+
+- `npm test`: **303/303 passing**.
+- `npm run build`: passing; `npx tsc -p client/tsconfig.json --noEmit`: passing.
+- `npm run benchmark:battle-zone`: 1.52 ms per world step, 480,981 bytes
+  per player per second at 10 Hz and 233,457 at 5 Hz for 100 ships in a
+  battle zone with two players. Local Node proxy, not Cloudflare CPU time.
+- `npm run ui-test`: still missing (`Missing script: "ui-test"`), and this
+  image has no working headless Chromium. The battle-bar, surrender-sheet and
+  five-viewport fit/scroll checks are render-plan tests only. The screens
+  were built and compiled but not viewed or screenshotted, so overlap,
+  scrolling and touch behaviour in a real browser remain unverified.

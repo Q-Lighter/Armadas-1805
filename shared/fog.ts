@@ -60,6 +60,8 @@ export interface ChartState {
   seen: Map<string, SeenShip>;
   /** Ports this player has found. Never sent anywhere before discovery. */
   foundPorts: Set<string>;
+  /** Last visible combat event delivered to this player. */
+  combatCursor?: number;
   /** A new socket must receive the whole record before normal changes. */
   resume?: boolean;
 }
@@ -99,6 +101,7 @@ export function createChart(kind: RoomKind): ChartState {
     all: kind === "dev",
     seen: new Map(),
     foundPorts: new Set(),
+    combatCursor: 0,
     resume: false,
   };
 

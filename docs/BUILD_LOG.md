@@ -1944,3 +1944,47 @@ winding`):
   hull points, broadside weights, hit chances and battle clock leave no Draft
   number that moves those two in opposite directions without changing an
   agreed value. I did not change an AGREED number to hide this.
+
+## 3B-b: shooting, damage and repairs on the server
+
+- Added the minimal "Engage ship" order with a Sink or Capture objective. An
+  engaged ship closes to a 250 m station, circles at a slower station speed so
+  it can actually hold the range, and fires whenever a gun group bears. A
+  fleet engage starts one engagement per member and suspends formation; a new
+  fleet order clears the engagements and re-forms the fleet.
+- The combat loop runs only for engagements in range: reload on the battle
+  clock (one game minute per real second), target bearing, ammunition use,
+  damage and sinking. Two fixes came out of the first live runs: the firing
+  result now applies to the target's damage rather than the shooter's, and the
+  in-combat timer uses milliseconds consistently with Part A.
+- Damage stays private on `visibleStateFor`: own ships carry the six
+  percentages, points and capacities, ammunition in broadsides, reload state,
+  combat/repair state and effective speed/turn. Foreign ships keep the compact
+  nine-field public tuple. Combat events carry no damage numbers and are
+  filtered by the same sight circles as ships.
+- A sunken ship is removed from its fleet, the ship count and every engagement,
+  and its owner gets a notice. A flagship only records a `flagshipLost` event
+  and notice for 3E; nobody is eliminated.
+- Added server-side repairs: the 30 second combat timer, most-damaged-first
+  repair rates, material use and the drifting hull loss. The owner can toggle
+  repairs, but the timer still blocks them.
+- `&enemy=frigate:2,line:1` works only in test/dev rooms and spawns stationary,
+  fully stored dummies of the other navy about 3 km away. The server accepts
+  `{t:"repair",ship,enabled}`.
+
+### Checks
+
+- `npm test`: **265/265 passing** (10 new Part B tests).
+- `npm run build`: passing.
+- `npm run benchmark:battle`: 50 British against 50 French frigates, all
+  engaged and inside 1 km, 100 world steps: **1.16 ms per world step**,
+  11.6 ms per simulated second. The earlier 96-ship fleet benchmark measured
+  6.39 ms per world step, so this is well under the earlier load-test level.
+  This is a local Node proxy, not Cloudflare CPU time.
+- `npm run ui-test` is still unavailable and there is no headless Chromium, so
+  the server behaviour is tested through the shared world only.
+
+### Still to do after B
+
+- Part C: attack menu, damage sheet, firing and sinking visuals, battle log,
+  notifications, port repair, range rings and responsive checks.

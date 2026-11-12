@@ -249,7 +249,10 @@ export function setBotCount(
 
 /** Replace a missing/arrived/coast-stopped order with a new sea destination. */
 export function refreshBotOrders(world: World, random: Random = Math.random): void {
-  for (const fleet of world.botFleets.values()) {
+  for (const [ownerId, fleet] of world.botFleets) {
+    // Practice dummies hold their station so a single player can learn the
+    // guns. Real bots still receive normal sea orders.
+    if (ownerId === "TEST-ENEMY") continue;
     for (const ship of fleet) {
       if (!ship.order || ship.arrived) {
         ship.arrived = false;

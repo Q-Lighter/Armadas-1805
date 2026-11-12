@@ -16,6 +16,7 @@ export type FleetOrder =
   | { type: "escort"; shipId: string }
   | { type: "patrol"; a: MapPoint; b: MapPoint }
   | { type: "rendezvous"; point: MapPoint; memberIds: string[] }
+  | { type: "engage"; shipId: string; objective: "sink" | "capture" }
   | { type: "returnToPort" }
   | { type: "queue"; orders: FleetOrder[] };
 
@@ -55,6 +56,7 @@ export const ORDER_LABELS: Record<FleetOrder["type"], string> = {
   escort: "Escort ship",
   patrol: "Patrol",
   rendezvous: "Rendezvous",
+  engage: "Engage ship",
   returnToPort: "Return to nearest port",
   queue: "Queue",
 };

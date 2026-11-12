@@ -17,6 +17,11 @@ import {
   type ShipStores,
 } from "./trade.js";
 import { DEFAULT_STANCE, type Stance } from "./stances.js";
+import {
+  createShipDamage,
+  shipPerformance,
+  type ShipDamage,
+} from "./combat.js";
 
 /** One knot is 1.852 km/h. A definition, not a tuning value. */
 export const KM_PER_HOUR_PER_KNOT = 1.852;
@@ -100,6 +105,15 @@ export interface Ship {
   portOrderId: string | null;
   /** Game time when this ship joined a port's waiting queue. */
   waitingSinceGameMs: number;
+  /** The six combat areas. Crew here is the living count. */
+  damage: ShipDamage;
+  /** Battle clock, in real seconds from the room start. */
+  reloadStartedRealSeconds: number;
+  reloadReadyRealSeconds: number;
+  /** Last shot fired at or by this ship, in real seconds. */
+  lastCombatRealMs: number | null;
+  /** The player's repair toggle. Repairs still stop while in combat. */
+  repairEnabled: boolean;
 }
 
 /** Normalise an angle in degrees to 0..360. */
@@ -236,6 +250,11 @@ export function createShip(
     waitingPortId: null,
     portOrderId: null,
     waitingSinceGameMs: 0,
+    damage: createShipDamage(type, crew ?? type.crew),
+    reloadStartedRealSeconds: 0,
+    reloadReadyRealSeconds: 0,
+    lastCombatRealMs: null,
+    repairEnabled: true,
   };
 }
 
@@ -332,13 +351,33 @@ export function stepShip(
   windFromDeg: number = settings.weather.windFromDeg,
   preferredTackSide?: TackSide,
   forcedHeadingRad?: number,
+  arrivalRadiusKm: number = settings.sailing.arrivalRadiusKm,
 ): void {
   if (!(dtGameSeconds > 0) || !Number.isFinite(dtGameSeconds)) return;
 
   const spec = shipSpecFor(ship);
   const order = ship.order;
+  const performance = shipPerformance(spec, ship.damage, windFromDeg);
+
+  if (performance.crewTooLow) {
+    ship.speedKnots = 0;
+    return;
+  }
 
   if (!order) {
+    if (performance.driftSpeedKnots > 0) {
+      const maxTurnDeg = performance.turnRateDegPerSecond * dtGameSeconds;
+      const turnDeg = Math.max(
+        -maxTurnDeg,
+        Math.min(maxTurnDeg, shortestTurnDegrees(ship.headingRad, performance.driftHeadingRad)),
+      );
+      ship.headingRad += turnDeg * DEG;
+      ship.speedKnots = performance.driftSpeedKnots;
+      const travelKm = ship.speedKnots * KM_PER_HOUR_PER_KNOT * (dtGameSeconds / 3600);
+      ship.x += Math.sin(ship.headingRad) * travelKm;
+      ship.y -= Math.cos(ship.headingRad) * travelKm;
+      return;
+    }
     ship.speedKnots = 0;
     return;
   }
@@ -347,7 +386,7 @@ export function stepShip(
   const dy = order.y - ship.y;
   const distanceKm = Math.hypot(dx, dy);
 
-  if (distanceKm <= settings.sailing.arrivalRadiusKm) {
+  if (distanceKm <= arrivalRadiusKm) {
     // Arrived: stop exactly here. Never keep circling a near target.
     ship.speedKnots = 0;
     ship.order = null;
@@ -359,20 +398,31 @@ export function stepShip(
   // south, so north is negative y.
   const bearingRad = Math.atan2(dx, -dy);
   const sailable = angleOffWindDeg(bearingRad, windFromDeg) >= spec.closestAngleDeg - 1e-9;
+  const badlySteered = performance.wantsDownwind;
   const wantedRad = forcedHeadingRad ??
-    (sailable ? bearingRad : upwindHeadingRad(ship, spec, order, windFromDeg, preferredTackSide));
+    (badlySteered
+      ? performance.driftHeadingRad
+      : sailable
+        ? bearingRad
+        : upwindHeadingRad(ship, spec, order, windFromDeg, preferredTackSide));
 
-  // Turn gradually towards the wanted heading.
-  const maxTurnDeg = turnRateDegPerSecond(spec) * dtGameSeconds;
+  // Turn gradually towards the wanted heading, at the damaged turn rate.
+  const maxTurnDeg = performance.turnRateDegPerSecond * dtGameSeconds;
   const turnDeg = Math.max(
     -maxTurnDeg,
     Math.min(maxTurnDeg, shortestTurnDegrees(ship.headingRad, wantedRad)),
   );
   ship.headingRad += turnDeg * DEG;
 
-  // Speed follows the angle to the wind, then a loaded cargo hold slows it.
-  ship.speedKnots = speedForHeading(spec, ship.headingRad, windFromDeg) *
-    cargoSpeedMultiplier(ship.stores, spec.cargoTonnes);
+  // A ship with no effective sail drifts downwind. Otherwise the effective
+  // sail product and the loaded cargo hold reduce the normal speed.
+  if (performance.driftSpeedKnots > 0) {
+    ship.speedKnots = performance.driftSpeedKnots;
+  } else {
+    ship.speedKnots = speedForHeading(spec, ship.headingRad, windFromDeg) *
+      performance.speedFactor *
+      cargoSpeedMultiplier(ship.stores, spec.cargoTonnes);
+  }
   if (ship.stationSpeedLimit !== undefined) {
     ship.speedKnots = Math.min(ship.speedKnots, ship.stationSpeedLimit);
   }

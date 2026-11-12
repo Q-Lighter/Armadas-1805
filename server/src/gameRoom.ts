@@ -28,6 +28,8 @@ import {
   selectShip,
   sellGoods,
   shipClassForRoom,
+  setPlayerRepair,
+  spawnTestEnemyFleet,
   spawnTestFleet,
   stepWorld,
   updatePlayerFleet,
@@ -201,6 +203,14 @@ export class GameRoom {
         });
       }
     }
+    const rawEnemy = url.searchParams.get("enemy");
+    if (kind !== "normal" && rawEnemy !== null) {
+      if (spawnTestEnemyFleet(this.world, playerId, rawEnemy) < 0) {
+        return new Response("Enemy must look like frigate:2,line:1.", {
+          status: 400,
+        });
+      }
+    }
     // A refresh, a new tab or a reconnect starts with an empty client chart.
     // Replay the stored record and all block geometry before normal changes.
     requestChartResume(this.world, playerId);
@@ -337,6 +347,7 @@ export class GameRoom {
       queue?: unknown;
       slot?: unknown;
       ids?: unknown;
+      enabled?: unknown;
     };
 
     if (order.t === "o") {
@@ -382,6 +393,8 @@ export class GameRoom {
       transferGoods(this.world, playerId, order.ship, order.port, order.good, order.amount, "unload");
     } else if (order.t === "resupply") {
       resupplyShip(this.world, playerId, order.ship, order.port);
+    } else if (order.t === "repair") {
+      setPlayerRepair(this.world, playerId, order.ship, order.enabled);
     }
   }
 }

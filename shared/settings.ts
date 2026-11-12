@@ -281,6 +281,8 @@ export const settings = {
     /** Draft: a drifting ship with no repair materials loses this share of
      *  maximum hull per game hour. */
     driftHullDamageSharePerGameHour: 0.002,
+    /** How many recent combat events are kept for the next updates. Draft. */
+    maxCombatEvents: 500,
     /** Neutral values for systems that arrive later. Keep at 1.0 for now. */
     seaStateHitMultiplier: 1,
     crewAccuracyMultiplier: 1,

@@ -253,3 +253,28 @@ test("port repair charges exactly the quoted pay cost and NPC ports refuse", () 
   world.charts.get("p")!.foundPorts.add(npc.id);
   assert.equal(repairAtPort(world, "p", ship.id, npc.id, "stores"), false);
 });
+
+test("a first broadside that misses still starts the battle and warns the target", () => {
+  const world = testWorld();
+  const shooter = addPlayer(world, "p");
+  const target = addPlayer(world, "q", "frigate", 50_000, "French");
+  target.x = shooter.x + 0.45;
+  target.y = shooter.y;
+  shooter.headingRad = 0;
+  target.headingRad = 0;
+  world.combatRandom = () => 0.99;
+  assert.equal(
+    applyShipSpecialOrder(world, "p", shooter.id, {
+      type: "engage",
+      shipId: target.id,
+      objective: "sink",
+    }),
+    true,
+  );
+  for (let index = 0; index < 3; index += 1) stepWorld(world, 14.4);
+  assert.equal(world.combatEvents.filter((event) => event.kind === "hit").length, 0);
+  assert.ok(world.combatEvents.some((event) => event.kind === "miss"));
+  assert.ok((world.notices.get("p") ?? []).includes("Battle begun."));
+  assert.ok((world.notices.get("q") ?? []).includes("Battle begun."));
+  assert.ok((world.notices.get("q") ?? []).includes("Ship under fire."));
+});

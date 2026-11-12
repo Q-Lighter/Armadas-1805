@@ -89,6 +89,7 @@ import {
   crewPercent,
   crewTooLow,
   createSeededRandom,
+  createShipDamage,
   damageCapacities,
   damagePercents,
   isInCombat,
@@ -102,7 +103,8 @@ import {
   type PortRepairMode,
   type SeededRandom,
 } from "./combat.js";
-import type { NavyId } from "./navies.js";
+import { NAVY_IDS, type NavyId } from "./navies.js";
+import type { DummyBehaviour } from "./testSetup.js";
 import {
   findPortByName,
   PORT_BY_ID,
@@ -514,6 +516,8 @@ export interface StateMessage {
   events?: CombatEvent[];
   /** Private battle-log lines. Only events involving this player's ships. */
   log?: string[];
+  /** The room's shared test start port, so the invite link can keep it. */
+  sp?: string;
   /** Test/dev provisions multiplier, shown by TEMP-DEBUG only. */
   h?: number;
   /** TEMP-DEBUG: dev-room load-test counters. */
@@ -719,6 +723,39 @@ function distanceKm(a: { x: number; y: number }, b: { x: number; y: number }): n
 function newPlayerSpot(world: World, playerId: string): { x: number; y: number; headingRad: number } {
   const centre = startCentreFor(world);
   const initial = startSpot(playerId, centre);
+
+  // A second test-room player starts 2-4 km from the first, facing them, so
+  // the two devices can see each other at once. Water and the 8 km clearance
+  // are checked by walking around the first ship.
+  const firstOther = [...world.players.values()][0];
+  if (world.kind !== "normal" && world.startPort && firstOther) {
+    const hash = hashPlayerId(playerId);
+    const bearing = ((hash % 360) * Math.PI) / 180;
+    const min = settings.world.testNeighbourMinKm;
+    const max = settings.world.testNeighbourMaxKm;
+    const distance = min + ((hash >>> 9) % 1000) / 1000 * (max - min);
+    let fallback: { x: number; y: number } | null = null;
+    for (let attempt = 0; attempt < 72; attempt += 1) {
+      const angle = bearing + attempt * (Math.PI / 36);
+      const candidate = {
+        x: firstOther.x + Math.sin(angle) * distance,
+        y: firstOther.y - Math.cos(angle) * distance,
+      };
+      if (!isInsideMapFrame(candidate.x, candidate.y) || isLandAt(candidate.x, candidate.y)) continue;
+      fallback ??= candidate;
+      if (hasOffshoreClearance(candidate.x, candidate.y, settings.route.clearanceKm)) {
+        fallback = candidate;
+        break;
+      }
+    }
+    if (fallback) {
+      return {
+        x: fallback.x,
+        y: fallback.y,
+        headingRad: Math.atan2(firstOther.x - fallback.x, fallback.y - firstOther.y),
+      };
+    }
+  }
   const offsetX = initial.x - centre.x;
   const offsetY = initial.y - centre.y;
   const radius = Math.hypot(offsetX, offsetY);
@@ -775,6 +812,7 @@ export function addPlayer(
   playerId: string,
   classId: ShipClassId = world.startShipClass,
   startMoney: number = world.startMoney,
+  navy: NavyId = world.navy,
 ): Ship {
   const existing = world.players.get(playerId);
   if (existing) {
@@ -799,13 +837,13 @@ export function addPlayer(
     spot.x,
     spot.y,
     spot.headingRad,
-    world.navy,
+    navy,
     initialShipName(world, playerId),
   );
   // Starting ships are ready for sea at once. Only bought ships arrive empty.
   ship.crew = ship.fullCrew;
   ship.damage.crew = ship.crew;
-  ship.stores = fullStores(shipTypeFor(world.navy, classId));
+  ship.stores = fullStores(shipTypeFor(navy, classId));
   world.players.set(playerId, ship);
   world.fleets.set(playerId, [ship]);
   world.owners.set(playerId, { money: startMoney, selectedShipId: ship.id });
@@ -1518,10 +1556,48 @@ export function setPlayerRepair(
   return true;
 }
 
+/** A water point at a distance from an anchor, with the route clearance. */
+function enemySpawnPoint(
+  anchor: { x: number; y: number },
+  distanceKm: number,
+  bearingRad: number,
+): { x: number; y: number; bearingRad: number } {
+  let fallback: { x: number; y: number; bearingRad: number } | null = null;
+  for (let attempt = 0; attempt < 96; attempt += 1) {
+    // East is the first choice, then walk round the circle. This keeps the
+    // common case exactly "about 3 km east" without putting a ship on a coast.
+    const angle = attempt === 0 ? Math.PI / 2 : bearingRad + attempt * (Math.PI / 48);
+    const candidate = {
+      x: anchor.x + Math.sin(angle) * distanceKm,
+      y: anchor.y - Math.cos(angle) * distanceKm,
+    };
+    if (!isInsideMapFrame(candidate.x, candidate.y) || isLandAt(candidate.x, candidate.y)) continue;
+    const point = { ...candidate, bearingRad: angle };
+    fallback ??= point;
+    if (hasOffshoreClearance(candidate.x, candidate.y, settings.route.clearanceKm)) return point;
+  }
+  return fallback ?? { x: anchor.x + distanceKm, y: anchor.y, bearingRad: Math.PI / 2 };
+}
+
+function compassWord(bearingRad: number): string {
+  const names = ["north", "north-east", "east", "south-east", "south", "south-west", "west", "north-west"];
+  const index = Math.round(((bearingRad % (Math.PI * 2)) + Math.PI * 2) % (Math.PI * 2) / (Math.PI / 4)) % 8;
+  return names[index]!;
+}
+
+function enemyNumberWord(count: number): string {
+  return count === 1 ? "one enemy" : `${count} enemy`;
+}
+
 /** Test/dev helper: spawn a small enemy squadron about three kilometres away. */
-export function spawnTestEnemyFleet(world: World, playerId: string, spec: string): number {
+export function spawnTestEnemyFleet(
+  world: World,
+  playerId: string,
+  spec: string,
+  options: { navy?: NavyId; dummy?: DummyBehaviour; force?: boolean } = {},
+): number {
   if (world.kind === "normal") return 0;
-  if (world.testEnemiesSpawned.has(playerId)) return 0;
+  if (!options.force && world.testEnemiesSpawned.has(playerId)) return 0;
   world.testEnemiesSpawned.add(playerId);
   const own = shipsForOwner(world, playerId);
   const leader = own[0];
@@ -1536,33 +1612,29 @@ export function spawnTestEnemyFleet(world: World, playerId: string, spec: string
     if (!classId || count < 1) return -1;
     wanted.push({ classId, count });
   }
-  if (wanted.reduce((sum, entry) => sum + entry.count, 0) === 0) return 0;
+  const total = wanted.reduce((sum, entry) => sum + entry.count, 0);
+  if (total === 0) return 0;
+  if (total > settings.testing.maxEnemySpawn) return -1;
 
-  const enemyNavy: NavyId = world.navy === "French" ? "British" : "French";
+  const enemyNavy = options.navy ?? NAVY_IDS.find((navy) => navy !== leader.navy) ?? "French";
+  const dummy = options.dummy ?? "fights";
   const ownerId = "TEST-ENEMY";
   const fleet = world.botFleets.get(ownerId) ?? [];
   let made = 0;
+  let firstBearing = Math.PI / 2;
   for (const entry of wanted) {
     for (let index = 0; index < entry.count; index += 1) {
-      let x = leader.x + 3;
-      let y = leader.y;
-      for (let attempt = 0; attempt < 96; attempt += 1) {
-        const angle = (attempt / 96) * Math.PI * 2;
-        const candidate = {
-          x: leader.x + Math.sin(angle) * 3,
-          y: leader.y - Math.cos(angle) * 3,
-        };
-        if (isInsideMapFrame(candidate.x, candidate.y) && !isLandAt(candidate.x, candidate.y)) {
-          x = candidate.x;
-          y = candidate.y;
-          break;
-        }
-      }
+      const point = enemySpawnPoint(
+        leader,
+        settings.testing.enemySpawnDistanceKm,
+        Math.PI / 2 + index * 0.08,
+      );
+      if (made === 0) firstBearing = point.bearingRad;
       const ship = createShip(
         `enemy-${world.nextShipId++}`,
         entry.classId,
-        x + (index % 4) * 0.18,
-        y,
+        point.x,
+        point.y,
         leader.headingRad,
         enemyNavy,
         `Enemy ${entry.classId}`,
@@ -1570,6 +1642,7 @@ export function spawnTestEnemyFleet(world: World, playerId: string, spec: string
       ship.crew = ship.fullCrew;
       ship.damage.crew = ship.crew;
       ship.stores = fullStores(shipTypeFor(enemyNavy, entry.classId));
+      ship.dummyBehaviour = dummy;
       ship.order = null;
       ship.speedKnots = 0;
       fleet.push(ship);
@@ -1577,7 +1650,66 @@ export function spawnTestEnemyFleet(world: World, playerId: string, spec: string
     }
   }
   world.botFleets.set(ownerId, fleet);
+  if (made > 0) {
+    const classes = [...new Set(wanted.map((entry) => entry.classId))];
+    const noun = classes.length === 1 ? `${classes[0]}s` : "ships";
+    pushPlayerNotice(
+      world,
+      playerId,
+      `Spawned ${enemyNumberWord(made)} ${noun}, about ${settings.testing.enemySpawnDistanceKm} km ${compassWord(firstBearing)}.`,
+    );
+  }
   return made;
+}
+
+/** Test tools: add another group even if the URL helper already ran. */
+export function spawnTestEnemies(
+  world: World,
+  playerId: string,
+  classId: ShipClassId,
+  navy: NavyId,
+  count: number,
+  dummy: DummyBehaviour,
+): number {
+  if (!Number.isInteger(count) || count < 1 || count > settings.testing.maxEnemySpawn) return 0;
+  return spawnTestEnemyFleet(world, playerId, `${classId}:${count}`, {
+    navy,
+    dummy,
+    force: true,
+  });
+}
+
+/** Test tools: remove every dummy enemy in the room. */
+export function removeTestDummies(world: World): number {
+  const fleet = world.botFleets.get("TEST-ENEMY");
+  const removed = fleet?.length ?? 0;
+  world.botFleets.delete("TEST-ENEMY");
+  world.testEnemiesSpawned.clear();
+  return removed;
+}
+
+/** Test tools: refill every area and all ammunition on this player's ships. */
+export function refillPlayerShips(world: World, playerId: string): number {
+  const ships = shipsForOwner(world, playerId);
+  for (const ship of ships) {
+    const spec = shipSpecFor(ship);
+    ship.crew = ship.fullCrew;
+    ship.stores = fullStores(spec);
+    ship.damage = createShipDamage(spec, ship.fullCrew);
+    ship.starving = false;
+    ship.repairEnabled = true;
+    ship.portRepair = undefined;
+    ship.reloadReadyRealSeconds = 0;
+    ship.reloadStartedRealSeconds = 0;
+    ship.lastCombatRealMs = null;
+  }
+  if (ships.length > 0) pushPlayerNotice(world, playerId, "Ships refilled and repaired.");
+  return ships.length;
+}
+
+/** Export the one short-message path for the server and test helpers. */
+export function pushPlayerNotice(world: World, playerId: string, text: string): void {
+  pushNotice(world, playerId, text);
 }
 
 /** Give an order to a whole fleet, optionally appending it to the queue. */
@@ -2450,6 +2582,17 @@ function resolveCombat(world: World): void {
     const firstTargetExchange = target.lastCombatRealMs === null;
     own.lastCombatRealMs = nowMs;
     target.lastCombatRealMs = nowMs;
+    // Being aimed at is enough: a first broadside that misses still starts
+    // the battle and still warns the target. Only the damage log needs a hit.
+    if (firstOwnExchange) {
+      pushNoticeOnce(world, engagement.ownerId, own.id, "battle", "Battle begun.");
+    }
+    if (targetEntry) {
+      if (firstTargetExchange) {
+        pushNoticeOnce(world, targetEntry.ownerId, target.id, "battle", "Battle begun.");
+      }
+      pushNoticeOnce(world, targetEntry.ownerId, target.id, "underFire", "Ship under fire.");
+    }
     own.stores.ammunition = Math.max(0, own.stores.ammunition - result.ammunitionUsed);
     target.damage = result.damage;
     target.crew = target.damage.crew;
@@ -2477,12 +2620,6 @@ function resolveCombat(world: World): void {
         if (targetEntry) {
           pushBattleLog(world, targetEntry.ownerId, `${own.name} hit your ${target.name}: ${summary}.`);
         }
-      }
-      if (firstOwnExchange) {
-        pushNoticeOnce(world, engagement.ownerId, own.id, "battle", "Battle begun.");
-      }
-      if (targetEntry) {
-        pushNoticeOnce(world, targetEntry.ownerId, target.id, "underFire", "Ship under fire.");
       }
       if (targetEntry && crewTooLow(target.damage, damageCapacities(shipSpecFor(target)))) {
         pushNoticeOnce(world, targetEntry.ownerId, target.id, "crewLow", "Crew too low.");
@@ -4068,6 +4205,7 @@ export function visibleStateFor(
   };
   if (events.length > 0) state.events = events;
   if (battleLog && battleLog.length > 0) state.log = battleLog.slice(-settings.combat.maxBattleLogLines);
+  if (world.startPort) state.sp = world.startPort.name;
   if (world.kind !== "normal") state.h = world.hungerMultiplier;
   return state;
 }

@@ -21,6 +21,9 @@ import {
   hireCrew,
   disbandPlayerFleet,
   removePlayer,
+  removeTestDummies,
+  refillPlayerShips,
+  spawnTestEnemies,
   rejoinPlayerShip,
   requestChartResume,
   resupplyShip,
@@ -46,6 +49,7 @@ import { GhostCleanup, PlayerSessions } from "@naval/shared/player-sessions";
 import { BlockSendBudget } from "@naval/shared/block-batch";
 import { findPortByName, type PlacedPort } from "@naval/shared/ports";
 import { parseNavy, type NavyId } from "@naval/shared/navies";
+import { chooseJoinNavy, parseDummyBehaviour, type DummyBehaviour } from "@naval/shared/test-setup";
 import { parseShipClass } from "@naval/shared/ship-rules";
 import type { ShipClassId } from "@naval/shared/ships";
 import { roomKindForCode } from "@naval/shared/fog";
@@ -96,6 +100,8 @@ export class GameRoom {
     let shipClass: ShipClassId | null = null;
     let startMoney: number | undefined;
     let hungerMultiplier: number | undefined;
+    let enemyNavy: NavyId | null = null;
+    let dummy: DummyBehaviour = "fights";
     if (kind !== "normal") {
       const rawNavy = url.searchParams.get("navy");
       if (rawNavy !== null) {
@@ -153,6 +159,24 @@ export class GameRoom {
         }
         hungerMultiplier = parsed;
       }
+
+      const rawEnemyNavy = url.searchParams.get("enemynavy");
+      if (rawEnemyNavy !== null) {
+        enemyNavy = parseNavy(rawEnemyNavy);
+        if (!enemyNavy) {
+          return new Response("Enemy navy must be british, french, spanish or dutch.", {
+            status: 400,
+          });
+        }
+      }
+
+      const parsedDummy = parseDummyBehaviour(url.searchParams.get("dummy"));
+      if (parsedDummy === null) {
+        return new Response("Dummy must be passive, fights, runs or surrenders.", {
+          status: 400,
+        });
+      }
+      dummy = parsedDummy;
     }
 
     if (room !== this.world.roomCode) {
@@ -189,13 +213,28 @@ export class GameRoom {
     server.accept();
 
     // A new player gets the room's first ship; a returning id keeps its fleet.
+    // In a test room, two devices may not both take the same navy: the second
+    // gets the next navy in the fixed order and is told why.
     this.ghosts.reconnected(playerId);
+    const returning = this.world.players.has(playerId);
+    const takenNavies = [...this.world.players.values()].map((ship) => ship.navy);
+    const chosen = returning
+      ? { navy: this.world.players.get(playerId)!.navy, changed: false }
+      : chooseJoinNavy(navy, takenNavies);
     addPlayer(
       this.world,
       playerId,
       shipClass ?? shipClassForRoom(room),
       startMoney ?? this.world.startMoney,
+      chosen.navy,
     );
+    if (chosen.changed) {
+      // The gameRoom imports the shared notice helper separately below.
+      this.world.notices.set(playerId, [
+        ...(this.world.notices.get(playerId) ?? []),
+        `Same navy requested: you are ${chosen.navy}.`,
+      ]);
+    }
     const rawFleet = url.searchParams.get("fleet");
     if (kind !== "normal" && rawFleet !== null) {
       if (spawnTestFleet(this.world, playerId, rawFleet) < 0) {
@@ -206,8 +245,11 @@ export class GameRoom {
     }
     const rawEnemy = url.searchParams.get("enemy");
     if (kind !== "normal" && rawEnemy !== null) {
-      if (spawnTestEnemyFleet(this.world, playerId, rawEnemy) < 0) {
-        return new Response("Enemy must look like frigate:2,line:1.", {
+      if (spawnTestEnemyFleet(this.world, playerId, rawEnemy, {
+        navy: enemyNavy ?? undefined,
+        dummy,
+      }) < 0) {
+        return new Response("Enemy must look like frigate:2,line:1 with at most 6 ships.", {
           status: 400,
         });
       }
@@ -399,6 +441,18 @@ export class GameRoom {
       setPlayerRepair(this.world, playerId, order.ship, order.enabled);
     } else if (order.t === "portRepair") {
       repairAtPort(this.world, playerId, order.ship, order.port, order.mode);
+    } else if (order.t === "spawnEnemies") {
+      const classId = typeof order.type === "string" ? parseShipClass(order.type) : null;
+      const chosenNavy = typeof order.name === "string" ? parseNavy(order.name) : null;
+      const behaviour = parseDummyBehaviour(typeof order.mode === "string" ? order.mode : null);
+      const count = typeof order.count === "number" ? order.count : 0;
+      if (classId && chosenNavy && behaviour) {
+        spawnTestEnemies(this.world, playerId, classId, chosenNavy, count, behaviour);
+      }
+    } else if (order.t === "removeEnemies") {
+      removeTestDummies(this.world);
+    } else if (order.t === "refillShips") {
+      refillPlayerShips(this.world, playerId);
     }
   }
 }

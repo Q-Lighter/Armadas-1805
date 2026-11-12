@@ -177,6 +177,10 @@
     "./combat-ui": {
       "types": "./dist/combat-ui.d.ts",
       "default": "./dist/combat-ui.js"
+    },
+    "./test-setup": {
+      "types": "./dist/testSetup.d.ts",
+      "default": "./dist/testSetup.js"
     }
   },
   "files": [

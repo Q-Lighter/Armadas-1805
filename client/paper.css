@@ -2576,3 +2576,75 @@ body.game {
   .damage-panel { top: 48px; max-height: calc(100vh - 58px); }
   .battle-log { display: none; }
 }
+
+/* Test and dev rooms only. The panel is removed with the temporary tools. */
+.test-tools {
+  position: fixed;
+  z-index: 24;
+  right: 18px;
+  top: 74px;
+  width: min(420px, calc(100vw - 36px));
+  max-height: calc(100vh - 100px);
+  overflow: auto;
+  padding: 14px;
+}
+.test-tools[hidden] { display: none; }
+.test-tools-warning {
+  margin: 0 0 12px;
+  padding: 6px 8px;
+  border: 1px dashed #8c1d1d;
+  color: #8c1d1d;
+  font-weight: 700;
+}
+.test-tools-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+.test-tools-grid label {
+  display: grid;
+  gap: 4px;
+  font-size: 0.9rem;
+  font-weight: 600;
+}
+.test-tools-grid select,
+.test-tools-grid input,
+.test-invite input {
+  min-height: 44px;
+  width: 100%;
+  box-sizing: border-box;
+  font: inherit;
+  color: inherit;
+  background: rgba(255, 250, 235, 0.72);
+  border: 1px solid #6b5540;
+  border-radius: 3px;
+  padding: 6px 8px;
+}
+.test-tools-actions {
+  display: grid;
+  gap: 8px;
+  margin-top: 12px;
+}
+.test-tools-actions .btn,
+.test-invite .btn {
+  min-height: 44px;
+}
+.test-invite {
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid rgba(80, 55, 30, 0.35);
+}
+.test-invite h3 { margin: 0 0 4px; font-size: 1rem; }
+.test-invite p { margin: 0 0 8px; font-size: 0.88rem; }
+.test-invite input { margin-bottom: 8px; }
+.test-invite-note { opacity: 0.8; }
+@media (max-width: 640px) {
+  .test-tools {
+    left: 8px;
+    right: 8px;
+    top: 54px;
+    width: auto;
+    max-height: calc(100vh - 62px);
+  }
+  .test-tools-grid { grid-template-columns: 1fr; }
+}

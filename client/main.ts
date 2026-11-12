@@ -68,6 +68,12 @@ import { GRAPHICS_RESET_NOTICE, GraphicsRecovery } from "@naval/shared/graphics-
 import { formatGameClock, gameClockAt } from "@naval/shared/time";
 import { navyColorNumber, parseNavy, type NavyId } from "@naval/shared/navies";
 import {
+  inviteSecondDeviceLink,
+  otherNavy,
+  parseDummyBehaviour,
+  testJoinQuery,
+} from "@naval/shared/test-setup";
+import {
   shipTypeFor,
   type BuyableShipClassId,
 } from "@naval/shared/ships";
@@ -635,6 +641,18 @@ async function start(): Promise<void> {
   const menuButton = element<HTMLButtonElement>("menu-btn");
   const menuPanel = element<HTMLElement>("menu-panel");
   const menuClose = element<HTMLButtonElement>("menu-close");
+  const testToolsButton = element<HTMLButtonElement>("test-tools-btn");
+  const testTools = element<HTMLElement>("test-tools");
+  const testToolsClose = element<HTMLButtonElement>("test-tools-close");
+  const testEnemyClass = element<HTMLSelectElement>("test-enemy-class");
+  const testEnemyNavy = element<HTMLSelectElement>("test-enemy-navy");
+  const testEnemyCount = element<HTMLInputElement>("test-enemy-count");
+  const testDummyBehaviour = element<HTMLSelectElement>("test-dummy-behaviour");
+  const testSpawn = element<HTMLButtonElement>("test-spawn");
+  const testRemove = element<HTMLButtonElement>("test-remove");
+  const testRefill = element<HTMLButtonElement>("test-refill");
+  const testInviteLink = element<HTMLInputElement>("test-invite-link");
+  const testCopyLink = element<HTMLButtonElement>("test-copy-link");
   const debugSection = element<HTMLDetailsElement>("debug-info");
   const shipPanel = element<HTMLElement>("ship-panel");
   const shipExpand = element<HTMLButtonElement>("ship-expand");
@@ -668,6 +686,7 @@ async function start(): Promise<void> {
   const requestedStart = query.get("start");
   const requestedShip = query.get("ship");
   const requestedCash = query.get("cash");
+  let startPortName = requestedStart ?? "";
   const identity: PlayerIdentity = resolvePlayerIdentity(
     browserStorage("localStorage"),
     browserStorage("sessionStorage"),
@@ -3962,6 +3981,7 @@ async function start(): Promise<void> {
       )?.id ?? null;
     }
     hungerMultiplier = finiteNumber(state.h) ?? undefined;
+    if (typeof state.sp === "string" && state.sp.length > 0) startPortName = state.sp;
     money = Number.isFinite(state.m) ? Math.max(0, Math.floor(state.m)) : 0;
     playerNavy = fleetShips[0]?.navy ?? playerNavy;
     const serverSelection = typeof state.sel === "string" ? state.sel : "";
@@ -3983,6 +4003,8 @@ async function start(): Promise<void> {
     roomKind = validRoomKind(state.k) ? state.k : "normal";
     bordersButton.hidden = roomKind === "normal";
     debugSection.hidden = roomKind === "normal";
+    testToolsButton.hidden = roomKind === "normal";
+    if (roomKind === "normal") testTools.hidden = true;
     layoutAudit.hidden = roomKind === "normal";
     if (roomKind === "normal") {
       bordersVisible = false;
@@ -4191,13 +4213,10 @@ async function start(): Promise<void> {
     const botsQuery = requestedBots === null
       ? ""
       : `&bots=${encodeURIComponent(requestedBots)}`;
-    const fleetQuery = roomKindForCode(room) === "normal"
-      ? ""
-      : `${requestedNavy === null ? "" : `&navy=${encodeURIComponent(requestedNavy)}`}` +
-        `${requestedStart === null ? "" : `&start=${encodeURIComponent(requestedStart)}`}` +
-        `${requestedShip === null ? "" : `&ship=${encodeURIComponent(requestedShip)}`}` +
-        `${requestedCash === null ? "" : `&cash=${encodeURIComponent(requestedCash)}`}`;
-    const url = `${scheme}://${location.host}/ws?room=${encodeURIComponent(room)}&player=${encodeURIComponent(identity.id)}${botsQuery}${fleetQuery}`;
+    // Every test option must reach /ws. This was the missing-enemy bug: the
+    // old code forwarded start and ship but silently dropped `enemy`.
+    const testQuery = testJoinQuery(location.search);
+    const url = `${scheme}://${location.host}/ws?room=${encodeURIComponent(room)}&player=${encodeURIComponent(identity.id)}${botsQuery}${testQuery}`;
     const next = new WebSocket(url);
     socket = next;
 
@@ -4877,10 +4896,72 @@ async function start(): Promise<void> {
   menuButton.addEventListener("click", () => {
     menuPanel.hidden = !menuPanel.hidden;
     menuButton.setAttribute("aria-expanded", String(!menuPanel.hidden));
+    if (!menuPanel.hidden) closeTestTools();
   });
   menuClose.addEventListener("click", () => {
     menuPanel.hidden = true;
     menuButton.setAttribute("aria-expanded", "false");
+  });
+
+  function closeTestTools(): void {
+    testTools.hidden = true;
+  }
+
+  function refreshTestInvite(): void {
+    const ownClass = fleetShips[0]?.classId ?? requestedShip ?? "frigate";
+    testInviteLink.value = inviteSecondDeviceLink(location.href, {
+      room,
+      navy: otherNavy(playerNavy),
+      startPort: startPortName || null,
+      shipClass: ownClass,
+    });
+  }
+
+  testToolsButton.addEventListener("click", () => {
+    menuPanel.hidden = true;
+    menuButton.setAttribute("aria-expanded", "false");
+    closePortPanel();
+    closeFleetPanel();
+    closeDamagePanel();
+    closeTestTools();
+    testTools.hidden = false;
+    refreshTestInvite();
+  });
+  testToolsClose.addEventListener("click", closeTestTools);
+  testSpawn.addEventListener("click", () => {
+    const classId = testEnemyClass.value;
+    const navy = parseNavy(testEnemyNavy.value);
+    const count = Number(testEnemyCount.value);
+    const dummy = parseDummyBehaviour(testDummyBehaviour.value);
+    if (!navy || !dummy || !Number.isInteger(count) || count < 1 || count > 6) {
+      showNotice("Choose a navy, type, count from 1 to 6 and a behaviour.");
+      return;
+    }
+    sendCommand({ t: "spawnEnemies", type: classId, name: navy, count, mode: dummy });
+  });
+  testRemove.addEventListener("click", () => {
+    sendCommand({ t: "removeEnemies" });
+    showNotice("Dummy ships removed.");
+  });
+  testRefill.addEventListener("click", () => {
+    sendCommand({ t: "refillShips" });
+    showNotice("Refilling and repairing your ships.");
+  });
+  testCopyLink.addEventListener("click", () => {
+    refreshTestInvite();
+    const text = testInviteLink.value;
+    const copied = (): void => showNotice("Invite link copied.");
+    if (navigator.clipboard?.writeText) {
+      void navigator.clipboard.writeText(text).then(copied).catch(() => {
+        testInviteLink.select();
+        document.execCommand("copy");
+        copied();
+      });
+    } else {
+      testInviteLink.select();
+      document.execCommand("copy");
+      copied();
+    }
   });
 
   let shipExpanded = !window.matchMedia("(max-width: 640px)").matches;

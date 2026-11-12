@@ -2045,3 +2045,46 @@ winding`):
 - No usable capturable port exists in a normal room until port ownership is
   built, so the port repair buttons were tested through the shared world and
   the damage sheet, not by clicking them in a normal game.
+
+## 3C-a: two-device test setup and notification fixes
+
+- **Actual missing-enemy cause:** the page read `&enemy=` but `connect()` built
+  the `/ws` address from only `navy`, `start`, `ship`, `cash`, bots and fleet.
+  The enemy option never reached `GameRoom`, so no dummy fleet was spawned. The
+  room, port, fog and client navy filters were not the cause. A shared list now
+  forwards every test option: `navy`, `start`, `ship`, `cash`, `hunger`,
+  `enemy`, `enemynavy`, `dummy` and `fleet`.
+- Added `&enemynavy=british|french|spanish|dutch`; the default is the first
+  navy in the fixed order that differs from the spawning player. Enemy spawn
+  points now prefer 3 km east and require water plus the 8 km route clearance,
+  walking round the circle if the coast blocks it. Spawning is once per player
+  id, so a refresh cannot duplicate it. The server sends the on-screen notice
+  "Spawned 2 enemy frigates, about 3 km east."
+- Added `&dummy=passive|fights|runs|surrenders` on dummy ships. Passive and
+  fights are used now; runs and surrenders are consumed by 3C-b.
+- Added the test-only Test tools panel from the Menu: spawn 1-6 enemies with
+  type, navy and behaviour, remove all dummies, refill and repair my ships,
+  and an invite link with a Copy button. The panel is labelled "Test tools -
+  removed before release" and fits the phone layout with 44 px controls.
+- Two devices can join a test room as two players. The second player at the
+  same start port spawns 2-4 km from the first, facing them. A second request
+  for the same navy gets the next navy in the order british, french, spanish,
+  dutch, with a on-screen notice. Different navies are required to attack.
+- Invite links keep the room, start port and ship type and switch the navy.
+  No QR code was added: the project has no QR library and no new dependency
+  was justified.
+- Battle and under-fire notices now trigger on firing, whether the first
+  volley hits or misses. The target also gets the first "Battle begun" notice,
+  and all notices keep the one-per-ship-per-real-minute limit.
+
+### Checks
+
+- `npm test`: **280/280 passing**.
+- `npm run build`: passing.
+- Node tests cover the exact `test-13` Kingston address, two simulated
+  players at 2-4 km, mutual visibility, a Sink attack damaging the other
+  player, the missing-enemy forwarding, no duplicate spawn, navy choice,
+  dummy parsing, invite links, and a first volley that misses completely.
+- Browser layout was not checked: `npm run ui-test` is still missing and this
+  image has no working headless Chromium. The Test tools panel is a render-plan
+  and CSS layout, not a viewed screenshot.

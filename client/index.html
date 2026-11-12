@@ -202,6 +202,7 @@
       <div class="menu-actions">
         <button class="btn" id="known-ports-btn" type="button" hidden>Known ports</button>
         <button class="btn" id="borders-btn" type="button" aria-pressed="false" hidden>Show borders</button>
+        <button class="btn" id="test-tools-btn" type="button" hidden>Test tools</button>
       </div>
       <div class="size-picker" role="group" aria-label="UI size">
         <span class="size-label">Text size</span>
@@ -217,6 +218,61 @@
           <ul id="layout-audit-list"></ul>
         </details>
       </details>
+    </section>
+
+    <!-- Test and dev rooms only. This whole panel is removed before release. -->
+    <section class="test-tools paper" id="test-tools" role="dialog" aria-labelledby="test-tools-title" hidden>
+      <div class="panel-head">
+        <div>
+          <p class="kicker">Temporary</p>
+          <h2 id="test-tools-title">Test tools</h2>
+        </div>
+        <button class="btn panel-close" id="test-tools-close" type="button">Close</button>
+      </div>
+      <p class="test-tools-warning">Test tools - removed before release.</p>
+      <div class="test-tools-grid">
+        <label>Enemy type
+          <select id="test-enemy-class">
+            <option value="frigate" selected>Frigate</option>
+            <option value="flagship">Flagship</option>
+            <option value="line">Line</option>
+            <option value="escort">Escort</option>
+            <option value="raider">Raider</option>
+            <option value="trade">Trade</option>
+          </select>
+        </label>
+        <label>Enemy navy
+          <select id="test-enemy-navy">
+            <option value="french" selected>French</option>
+            <option value="british">British</option>
+            <option value="spanish">Spanish</option>
+            <option value="dutch">Dutch</option>
+          </select>
+        </label>
+        <label>How many
+          <input id="test-enemy-count" type="number" min="1" max="6" step="1" value="2" inputmode="numeric" />
+        </label>
+        <label>Behaviour
+          <select id="test-dummy-behaviour">
+            <option value="passive">Passive (never fires)</option>
+            <option value="fights" selected>Fights back</option>
+            <option value="runs">Runs below 50% hull</option>
+            <option value="surrenders">Surrenders below 30% hull</option>
+          </select>
+        </label>
+      </div>
+      <div class="test-tools-actions">
+        <button class="btn btn-seal" id="test-spawn" type="button">Spawn enemies</button>
+        <button class="btn" id="test-remove" type="button">Remove all dummies</button>
+        <button class="btn" id="test-refill" type="button">Refill and repair my ships</button>
+      </div>
+      <div class="test-invite">
+        <h3>Invite second device</h3>
+        <p>Same room, same port and ship, different navy.</p>
+        <input id="test-invite-link" type="text" readonly aria-label="Second device link" />
+        <button class="btn btn-seal" id="test-copy-link" type="button">Copy link</button>
+        <p class="test-invite-note">No QR code: the game has no QR library and I did not add a dependency for one.</p>
+      </div>
     </section>
 
     <p class="chart-notice" id="notice" role="status" aria-live="polite" hidden></p>

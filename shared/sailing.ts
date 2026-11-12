@@ -114,6 +114,8 @@ export interface Ship {
   lastCombatRealMs: number | null;
   /** The player's repair toggle. Repairs still stop while in combat. */
   repairEnabled: boolean;
+  /** Test-room dummy behaviour. Human ships leave this undefined. */
+  dummyBehaviour?: import("./testSetup.js").DummyBehaviour;
   /** A repair job running while docked at a usable port. */
   portRepair?: {
     mode: "stores" | "pay";

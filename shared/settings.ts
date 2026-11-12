@@ -480,6 +480,21 @@ export const settings = {
     startRadiusKm: 6,
     /** New ships are never placed closer than this to each other. */
     minimumSeparationKm: 1.5,
+    /** Draft: a second test-room player starts this far from the first. */
+    testNeighbourMinKm: 2,
+    testNeighbourMaxKm: 4,
+  },
+
+  /** Draft: test-room helpers. The whole panel is removed before release. */
+  testing: {
+    /** Enemy dummies appear this far from the spawning player. Draft: 3 km. */
+    enemySpawnDistanceKm: 3,
+    /** The test tools panel can spawn at most this many at once. Draft: 6. */
+    maxEnemySpawn: 6,
+    /** A dummy with `runs` runs below this hull share. Draft: 50%. */
+    dummyRunHullShare: 0.5,
+    /** A dummy with `surrenders` strikes below this hull share. Draft: 30%. */
+    dummySurrenderHullShare: 0.3,
   },
 
   /** What happens when a ship meets land or the chart edge. */

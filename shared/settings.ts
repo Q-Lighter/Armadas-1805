@@ -328,6 +328,89 @@ export const settings = {
     crewSkillSpeedMultiplier: 1,
     moraleSpeedMultiplier: 1,
     crewSkillReloadMultiplier: 1,
+
+    /** Draft: boarding, captured crews, fire and friendly fire (3D). */
+    transferRangeM: 300,
+    /** Draft: crew transfer is instant for now. */
+    transferSeconds: 0,
+    /** Draft: an abandoned hull loses this share of its hull each game hour. */
+    abandonedDecayPerHour: 0.015,
+    /** Draft: the Board order closes to this range. */
+    boardingRangeM: 60,
+    /** Draft: the attacker must match the target's speed this closely. */
+    boardingSpeedMatchKnots: 3,
+    /** Draft: attacker odds are A^exponent / (A^exponent + D^exponent). */
+    boardingExponent: 2,
+    /** Draft: a boarding fight lasts 60-120 real seconds, 90 by default. */
+    boardingMinSeconds: 60,
+    boardingMaxSeconds: 120,
+    boardingDefaultSeconds: 90,
+    /** Draft: this strength ratio ends the fight at once. */
+    boardingOutnumberRatio: 3,
+    /** Draft: the loser loses this share of its surviving crew. */
+    boardingLoserCrewLossShare: 0.8,
+    /** Draft: the winner loses at most this share, scaled by closeness. */
+    boardingWinnerMaxLoss: 0.4,
+    /** Draft: auto-boarding needs at least these odds. */
+    boardingAutoOdds: 0.5,
+    /** Draft: a weakened target has crew or sails and masts below these shares. */
+    boardingWeakenedCrewShare: 0.5,
+    boardingWeakenedRigShare: 0.2,
+    /** Draft: at most this share of a prize's full crew may become prisoners. */
+    capturedPrisonerMaxShare: 0.2,
+    /** Draft: a captured crew choice defaults to Join after this long. */
+    capturedChoiceSeconds: 120,
+    /** Draft: a prisoner eats this share of a normal crewman's provisions. */
+    prisonerProvisionShare: 0.5,
+    /** AGREED: a port pays this bounty for each prisoner handed over. */
+    prisonerBounty: 20,
+    /** Draft: sea state multiplier hook until weather arrives. */
+    boardingSeaStateModifier: 1,
+    /** Draft: very rough seas make boarding impossible; not built yet. */
+    boardingMaxSeaState: 6,
+    /** Neutral crew quality, morale and health until later prompts. */
+    boardingCrewQuality: 1,
+    boardingMorale: 1,
+    boardingCrewHealth: 1,
+
+    /** Draft: each landed hit starts a fire in 1 hit in 40. */
+    fireIgniteChance: 1 / 40,
+    /** Draft: a hit on a burning ship adds this much fire strength. */
+    fireAddStrength: 10,
+    /** Draft fire strength runs 0-100, starting at 20 and growing 0.5/s. */
+    fireMaxStrength: 100,
+    fireStartStrength: 20,
+    fireGrowthPerSecond: 0.5,
+    /** Draft: strength x this share of hull per second, x this share of crew. */
+    fireHullDamagePerStrengthSecond: 0.00005,
+    fireCrewDamagePerStrengthSecond: 0.00003,
+    /** AGREED: fire fighting costs repair materials and crew time. */
+    fireFightStrengthPerSecond: 1.5,
+    fireFightMaterialsPerSecond: 0.01,
+    /** Draft: without repair materials fire fighting works at this share. */
+    fireFightNoMaterialsShare: 0.3,
+    /** AGREED: fire may spread about 100 m, modified by the wind. */
+    fireSpreadRangeM: 100,
+    fireSpreadChancePerStrengthSecond: 0.0001,
+    fireSpreadDownwindMultiplier: 2.5,
+    fireSpreadUpwindMultiplier: 0.3,
+    fireSpreadConeDeg: 45,
+    /** Draft: explosion chance below 15% hull, 4% per real minute. */
+    explosionHullShare: 0.15,
+    explosionChancePerMinute: 0.04,
+    blastRangeM: 100,
+    blastHullShare: 0.05,
+    blastCrewShare: 0.05,
+
+    /** Draft: a miss may land on a friendly ship in a 12 degree cone. */
+    friendlyFireChance: 0.05,
+    friendlyFireRangeM: 100,
+    friendlyFireConeDeg: 12,
+    /** Filled by Phase 4: allies list. Empty until then. */
+    allies: [] as readonly string[],
+
+    /** Draft: a sinking ship stays visible for this long before removal. */
+    sinkSeconds: 20,
   },
 
   /** Automatic route planning around discovered land. Draft values. */

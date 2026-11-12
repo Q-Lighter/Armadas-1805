@@ -2175,3 +2175,23 @@ winding`):
 - `npm run test:server`: **SIMULATION PASSED**.
 - Worker export and Durable Object migration remain `GameRoom` / `v1`; no server or wrangler change.
 - No browser is available here: the rendered page, error banner and fixed sea view still need the user's screenshot.
+
+## 3D-a: boarding, abandoned ships, fire and friendly-fire rules
+
+- Added `shared/boarding.ts` with pure, seeded rules for crew transfer,
+  abandoned ships and claims, boarding odds and casualties, auto-boarding,
+  captured crew and prisoners, fire growth/fighting/spread/explosion,
+  friendly fire and the 20 second sinking state.
+- Added every 3D Draft number to `shared/settings.ts` and documented the new
+  rules in the "Combat and damage" section of `RULES.md`. No AGREED number was
+  changed. Later systems plug in through neutral quality, morale, health, sea
+  state and empty-allies hooks.
+- Added `tests/boarding.test.ts` for the limits, exemptions, odds, timers,
+  casualties, choices, fire rates and friendly-fire cone.
+
+### Checks
+
+- `npm test`: **322/322 passing**.
+- `npm run build`: passing.
+- No browser is available; these are pure rule tests, with server and screens
+  following in 3D-b and 3D-c.

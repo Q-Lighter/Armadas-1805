@@ -98,6 +98,63 @@ Read this file at the start of every prompt, then follow it for the whole sessio
   uses half the repair-material capacity, shared by damage points. Crew
   cannot be repaired. No repairs until 30 real seconds after the last shot.
   A drifting ship with no repair materials loses 0.2% hull per game hour.
+- Crew may move between two of the same player's ships within 300 m. The
+  donor keeps at least 10% and the receiver never exceeds full crew. Transfer
+  is instant until the design says otherwise.
+- A ship that has had at least 10% crew and then falls below it is ABANDONED.
+  It has no owner, leaves its fleet, control group and 30-ship count, cannot
+  sail or fire, drifts at the sailless rate, and keeps its damage, cargo,
+  ammunition and upgrades. It loses 1.5% of hull per game hour until claimed
+  or sunk. A ship that never had the minimum (a new purchase, or a prize with
+  no crew) is NOT abandoned; it stays owned and shows "needs crew".
+- Any player, including the former owner, may claim an abandoned ship by
+  moving crew from a ship within 300 m to bring it back to at least 10%. The
+  first success wins: ownership and navy colours change, the name and all
+  damage stay, and decay stops. A claim is refused at 30 ships. Enemy ships
+  may still fire on an abandoned ship.
+- Boarding strength is crew x quality (1.0) x morale (1.0) x crew health
+  (1.0). Attacker odds are A^2 / (A^2 + D^2), rounded to 5% for the player.
+  Very rough seas make boarding impossible through a weather hook.
+- The Board order sails alongside within 60 m and matches speed within 3
+  knots, then grapples for 60-120 real seconds (90 default). The two ships
+  drift together, cannot sail away and do not fire at each other; other ships
+  may still fire on them. A side three times stronger wins at once. Surrendered
+  ships use Accept and abandoned ships use Claim, never Board.
+- The winner is decided from the odds and seed at the start. The loser loses
+  80% of its surviving crew. The winner loses 40% times closeness, where
+  closeness is the loser's strength divided by the winner's, capped at 1.
+  If the attacker wins, the ship is captured like an accepted surrender and
+  its survivors become captured crew. If the defender wins, the attacker
+  keeps its ship and its losses.
+- Auto-board is on by default per ship and fleet. It starts a Board order
+  only with a Capture objective, odds of at least 50%, and a target whose
+  crew is below 50% or whose sails and masts are both below 20%. Below 50%
+  odds the player must order boarding. A ship cannot refuse being boarded.
+- On a boarding win or accepted surrender the captured crew are chosen once:
+  Join (stay as the prize's crew), Kill (the prize then needs crew), or Take
+  prisoners (at most 20% of the prize's full crew; overflow must join or be
+  killed). If nobody chooses within 120 real seconds they Join. Prisoners stay
+  aboard, eat half a crewman's provisions, cannot rebel, and are lost if the
+  ship sinks. A usable port pays 20 pieces for each prisoner handed over.
+- Each landed hit has a 1 in 40 chance to start a fire, or adds 10 to an
+  existing fire. Fire strength runs 0-100, starts at 20 and grows 0.5 a second.
+  It removes strength x 0.005% of hull and strength x 0.003% of full crew each
+  second. Fighting it removes 1.5 x crew% / 100 a second, uses 0.01 t of repair
+  materials a second, and pauses normal repairs; with no materials it works at
+  30%. At zero the fire is out. A burning ship may ignite any ship within
+  100 m, including friends: chance a second is 0.01 x strength / 100, x2.5
+  downwind within 45 degrees and x0.3 upwind. Burning ships do not re-ignite.
+- A ship under 15% hull may explode, 4% per real minute checked each second.
+  It is destroyed with all hands. Ships within 100 m lose 5% hull and 5% crew.
+- A missed shot has a 5% chance to hit the nearest friendly ship within 100 m
+  behind the target and inside a 12 degree cone. Friendly means the same
+  player or navy; the Phase 4 allies list is empty for now. Surrendered and
+  abandoned ships are not friendly. It is an ordinary hit with normal
+  ammunition, fire and sinking. Attacks on friends cannot be ordered. A
+  flagship sunk this way only records the "flagship lost" event for 3E.
+- At 0% hull a ship sinks for 20 real seconds. It cannot act, be boarded or
+  claimed, and its cargo, ammunition, crew and prisoners are lost. The "ship
+  sunk" event is sent when sinking starts, then the ship is removed.
 
 ## Ways of working
 

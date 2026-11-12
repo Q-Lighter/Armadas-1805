@@ -154,6 +154,10 @@
       "types": "./dist/fleetUi.d.ts",
       "default": "./dist/fleetUi.js"
     },
+    "./combat": {
+      "types": "./dist/combat.d.ts",
+      "default": "./dist/combat.js"
+    },
     "./trade-view": {
       "types": "./dist/tradeView.d.ts",
       "default": "./dist/tradeView.js"

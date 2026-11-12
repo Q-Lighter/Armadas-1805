@@ -83,8 +83,8 @@ export const ALL_SHIP_TYPES: readonly ShipType[] = [
   },
   {
     navy: "British", classId: "line", name: "Third rate 74",
-    guns: 74, crew: 590, cruiseKnots: 7, topKnots: 10, cargoTonnes: 204,
-    storesDays: 47, heavyGuns: 28, mediumGuns: 28, lightGuns: 18,
+    guns: 57, crew: 590, cruiseKnots: 7, topKnots: 10, cargoTonnes: 204,
+    storesDays: 47, heavyGuns: 28, mediumGuns: 28, lightGuns: 1,
     broadsideLb: 640, reloadGameMinutes: 3, hull: 11000,
     closestAngleDeg: 68, turn90GameMinutes: 6, draughtM: 6.5,
   },
@@ -126,8 +126,8 @@ export const ALL_SHIP_TYPES: readonly ShipType[] = [
   },
   {
     navy: "French", classId: "line", name: "74-gun (Temeraire class)",
-    guns: 74, crew: 700, cruiseKnots: 7, topKnots: 10.5, cargoTonnes: 228,
-    storesDays: 43, heavyGuns: 28, mediumGuns: 30, lightGuns: 16,
+    guns: 59, crew: 700, cruiseKnots: 7, topKnots: 10.5, cargoTonnes: 228,
+    storesDays: 43, heavyGuns: 28, mediumGuns: 30, lightGuns: 1,
     broadsideLb: 650, reloadGameMinutes: 3, hull: 10000,
     closestAngleDeg: 67, turn90GameMinutes: 6, draughtM: 6.5,
   },
@@ -162,15 +162,15 @@ export const ALL_SHIP_TYPES: readonly ShipType[] = [
 
   {
     navy: "Spanish", classId: "flagship", name: "Santisima Trinidad (four-decker)",
-    guns: 136, crew: 1050, cruiseKnots: 5.5, topKnots: 8, cargoTonnes: 360,
-    storesDays: 50, heavyGuns: 62, mediumGuns: 52, lightGuns: 22,
+    guns: 116, crew: 1050, cruiseKnots: 5.5, topKnots: 8, cargoTonnes: 360,
+    storesDays: 50, heavyGuns: 62, mediumGuns: 52, lightGuns: 2,
     broadsideLb: 1300, reloadGameMinutes: 4, hull: 26000,
     closestAngleDeg: 76, turn90GameMinutes: 10, draughtM: 8,
   },
   {
     navy: "Spanish", classId: "line", name: "74-gun (Monarca class)",
-    guns: 74, crew: 650, cruiseKnots: 6.5, topKnots: 9.5, cargoTonnes: 228,
-    storesDays: 45, heavyGuns: 28, mediumGuns: 30, lightGuns: 16,
+    guns: 59, crew: 650, cruiseKnots: 6.5, topKnots: 9.5, cargoTonnes: 228,
+    storesDays: 45, heavyGuns: 28, mediumGuns: 30, lightGuns: 1,
     broadsideLb: 650, reloadGameMinutes: 3, hull: 12000,
     closestAngleDeg: 70, turn90GameMinutes: 7, draughtM: 6.8,
   },
@@ -205,15 +205,15 @@ export const ALL_SHIP_TYPES: readonly ShipType[] = [
 
   {
     navy: "Dutch", classId: "flagship", name: "76-gun (Brutus type)",
-    guns: 76, crew: 650, cruiseKnots: 5.5, topKnots: 8, cargoTonnes: 204,
-    storesDays: 50, heavyGuns: 30, mediumGuns: 30, lightGuns: 16,
+    guns: 61, crew: 650, cruiseKnots: 5.5, topKnots: 8, cargoTonnes: 204,
+    storesDays: 50, heavyGuns: 30, mediumGuns: 30, lightGuns: 1,
     broadsideLb: 680, reloadGameMinutes: 3, hull: 15000,
     closestAngleDeg: 76, turn90GameMinutes: 9, draughtM: 6.2,
   },
   {
     navy: "Dutch", classId: "line", name: "68-gun (Joan de Witt type)",
-    guns: 68, crew: 520, cruiseKnots: 6, topKnots: 8.5, cargoTonnes: 180,
-    storesDays: 45, heavyGuns: 26, mediumGuns: 28, lightGuns: 14,
+    guns: 55, crew: 520, cruiseKnots: 6, topKnots: 8.5, cargoTonnes: 180,
+    storesDays: 45, heavyGuns: 26, mediumGuns: 28, lightGuns: 1,
     broadsideLb: 600, reloadGameMinutes: 3, hull: 9000,
     closestAngleDeg: 74, turn90GameMinutes: 7, draughtM: 5.5,
   },

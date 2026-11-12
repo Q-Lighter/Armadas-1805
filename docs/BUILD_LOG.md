@@ -1912,3 +1912,35 @@ winding`):
   dotted lines have therefore not been checked in a browser or screenshotted.
   The render-plan tests cover the viewport breakpoints and menu contents, not
   rendered pixels.
+
+
+## 3B-a: gunnery and damage rules
+
+- Corrected all 24 ship records to the supplied combat table, including the
+  line ships' single light gun and the class totals that follow from it. The
+  broadside pounds remain the truth; `gunPounds` scales the 14/7/3 gun weights
+  until they add back to that number.
+- Added `shared/combat.ts`: seeded firing and hit resolution, broadside/bow/
+  stern arcs, range bands and the upwind bonus, ammunition and ammunition
+  types, size damage modifiers, the six-area damage model, Sink/Capture area
+  weights, sunken and crew-too-low states, repair costs and rates, the combat
+  timer, drifting damage, and one sailing-performance function for damaged
+  speed, turn and drift.
+- `shared/settings.ts` now holds the Draft combat numbers. Neutral sea-state,
+  crew-skill, crew-accuracy and morale multipliers are present at 1.0 for the
+  later prompts.
+- Added the "Combat and damage" rules summary to `RULES.md`.
+
+### Checks
+
+- `npm test`: **255/255 passing**, including the 24-ship table, edges of all
+  three range bands, both area-weight distributions over 10,000 seeded hits,
+  ammunition use, repair exhaustion and the low-crew stop.
+- `npm run build`: passing.
+- `node scripts/simulate-duels.mjs`: 100 seeded duels at 450 m, beam-on, Sink
+  orders: raider **1.75 real minutes** (target about 1), frigate **2.84**
+  (2-3), line **3.23** (3-5), flagship **4.10** (6-10). The frigate and line
+  are inside their targets. The raider and flagship are outside; the agreed
+  hull points, broadside weights, hit chances and battle clock leave no Draft
+  number that moves those two in opposite directions without changing an
+  agreed value. I did not change an AGREED number to hide this.

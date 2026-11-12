@@ -213,6 +213,84 @@ export const settings = {
     maxBreadcrumbs: 160,
   },
 
+  /** Guns, damage, repairs and battle timing. Draft unless marked AGREED. */
+  combat: {
+    /** AGREED: one game minute of battle lasts one real second. */
+    battleSecondsPerGameMinute: 1,
+    /** AGREED: a broadside bears within this angle of side-on. */
+    broadsideArcDeg: 30,
+    /** AGREED: bow and stern guns bear within this angle of the centreline. */
+    bowSternArcDeg: 30,
+    /** AGREED hit chances by range, checked in order. Nothing beyond 1 km. */
+    hitChanceBands: [
+      { maxKm: 0.3, chance: 0.5 },
+      { maxKm: 0.6, chance: 0.3 },
+      { maxKm: 1, chance: 0.12 },
+    ],
+    /** AGREED: the upwind ship multiplies its hit chance by this. */
+    upwindHitMultiplier: 1.1,
+    /** Draft damage split of one broadside across gun classes. */
+    gunWeightLb: { heavy: 14, medium: 7, light: 3 },
+    /** Draft light bow and stern guns. They are not part of the broadside. */
+    bowSternGunsByClass: {
+      flagship: { bow: 0, stern: 2 },
+      line: { bow: 0, stern: 2 },
+      frigate: { bow: 2, stern: 2 },
+      escort: { bow: 2, stern: 2 },
+      raider: { bow: 2, stern: 2 },
+      trade: { bow: 0, stern: 0 },
+    },
+    /** Draft size groups for the light- and heavy-gun damage rules. */
+    smallClasses: ["raider", "escort", "fireShip"],
+    bigClasses: ["flagship", "line"],
+    /** Draft: light guns do this share of damage against BIG ships. */
+    lightGunVsBigMultiplier: 0.5,
+    /** Draft: heavy guns do this multiple against SMALL ships. */
+    heavyGunVsSmallMultiplier: 1.5,
+    /** Draft damage capacity shares of the hull points, by area. */
+    damageAreaShareOfHull: { sails: 0.3, masts: 0.4, rudder: 0.2, guns: 0.3 },
+    /** Draft share of a broadside's pounds that hits the hull. Area weights:
+     *  hull, sails, masts, rudder, guns, crew. They must total 100. */
+    objectiveAreaWeights: {
+      sink: { hull: 70, sails: 5, masts: 5, rudder: 5, guns: 10, crew: 5 },
+      capture: { hull: 10, sails: 3, masts: 5, rudder: 7, guns: 30, crew: 45 },
+    },
+    /** Draft: one crewman is lost for this many pounds of damage. */
+    crewKillPounds: 10,
+    /** AGREED: grape at x2 only within this range; otherwise round at x1. */
+    grapeRangeKm: 0.3,
+    /** AGREED: chain does this multiple against sails and masts. */
+    chainDamageMultiplier: 2,
+    /** AGREED: grape does this multiple against crew. */
+    grapeDamageMultiplier: 2,
+    /** Draft reload time multiplier at full and minimum useful crew. The
+     *  value moves in a straight line between them. */
+    reloadMultiplierAtFullCrew: 1,
+    reloadMultiplierAtMinimumCrew: 3,
+    /** Draft: sailing with no effective sail drifts at this share of wind speed. */
+    driftWindSpeedShare: 0.1,
+    /** Draft: a ship with no rudder still turns at this share of normal rate. */
+    zeroRudderTurnShare: 0.1,
+    /** Draft: a repairing ship must be out of combat this many real seconds. */
+    combatSeconds: 30,
+    /** Draft: a full 0-to-100 repair of the five areas uses this share of the
+     *  ship's repair-material capacity. */
+    repairMaterialShareForFullRestore: 0.5,
+    /** Draft repair rates at full crew, in percentage points per game hour. */
+    repairRatePctPerGameHour: { hull: 1.5, sails: 4, masts: 2, rudder: 3, guns: 2.5 },
+    /** Draft: a drifting ship with no repair materials loses this share of
+     *  maximum hull per game hour. */
+    driftHullDamageSharePerGameHour: 0.002,
+    /** Neutral values for systems that arrive later. Keep at 1.0 for now. */
+    seaStateHitMultiplier: 1,
+    crewAccuracyMultiplier: 1,
+    moraleHitMultiplier: 1,
+    seaStateSpeedMultiplier: 1,
+    crewSkillSpeedMultiplier: 1,
+    moraleSpeedMultiplier: 1,
+    crewSkillReloadMultiplier: 1,
+  },
+
   /** Automatic route planning around discovered land. Draft values. */
   route: {
     /** Search grid around the ship and destination. */

@@ -103,6 +103,15 @@ import {
   type PortRepairMode,
   type SeededRandom,
 } from "./combat.js";
+import {
+  abandonedHullAfter, autoBoardingAllowed, boardingCasualties, boardingOdds,
+  boardingProblem, boardingStrength, capturedCrewPlan, capturedChoiceAfterTimeout,
+  claimAbandoned, explosionBlast, explosionChance, fightFire, fireDamage,
+  fireSpreadChance, friendlyFireTarget, growFire, igniteFire, minimumCrewFor,
+  prisonerBounty, provisionCrewEquivalent, shouldAbandon, startSinking,
+  sinkingComplete, transferCrew, withinRange, type CapturedChoice, type FireState,
+  type SinkingState,
+} from "./boarding.js";
 import { NAVY_IDS, type NavyId } from "./navies.js";
 import type { DummyBehaviour } from "./testSetup.js";
 import {
@@ -278,6 +287,36 @@ export interface World {
   battleLogs: Map<string, string[]>;
   /** Next battle-log sequence number. */
   nextBattleLogId: number;
+  /** 3D: ownerless abandoned hulls, still afloat and decaying. */
+  abandonedShips: Ship[];
+  /** 3D: actively boarding pairs, keyed by attacker ship id. */
+  boardingFights: Map<string, BoardingFight>;
+  /** 3D: ships that have started sinking and will be removed shortly. */
+  sinkingShips: SinkingShip[];
+}
+
+/** One boarding fight, decided at the start and played out over time. */
+export interface BoardingFight {
+  attackerId: string;
+  defenderId: string;
+  attackerOwnerId: string;
+  defenderOwnerId: string;
+  startedRealMs: number;
+  endsRealMs: number;
+  winner: "attacker" | "defender";
+  attackerLost: number;
+  defenderLost: number;
+  capturedCrew: number;
+  applied: boolean;
+  fullSeconds: number;
+}
+
+/** A hull that reached zero is greyed and removed after 20 seconds. */
+export interface SinkingShip {
+  ship: Ship;
+  ownerId: string;
+  startedRealMs: number;
+  state: SinkingState;
 }
 
 /**
@@ -392,6 +431,16 @@ export interface OwnShipSnapshot {
   battleOrder?: import("./battleOrders.js").BattleOrder;
   surrendered?: boolean;
   running?: boolean;
+  /** 3D private details, own ships only. */
+  abandoned?: boolean;
+  burning?: boolean;
+  fireStrength?: number;
+  prisoners?: number;
+  capturedCrew?: number;
+  capturedChoiceSeconds?: number;
+  autoBoard?: boolean;
+  boardingProgress?: number;
+  boardingSecondsLeft?: number;
 }
 
 /** One dotted order line for the selected ship or fleet. */
@@ -475,7 +524,14 @@ export type CombatEventKind =
   | "hit"
   | "miss"
   | "sunk"
-  | "flagshipLost";
+  | "flagshipLost"
+  | "fireStarted"
+  | "fireOut"
+  | "explosion"
+  | "boarding"
+  | "claim"
+  | "friendlyFire"
+  | "sinking";
 
 export interface CombatEvent {
   id: number;
@@ -540,6 +596,11 @@ export interface StateMessage {
   h?: number;
   /** TEMP-DEBUG: dev-room load-test counters. */
   d?: DebugStats;
+  /** 3D public flags. No crew, prisoner or fire-strength numbers. */
+  abandoned?: string[];
+  burning?: string[];
+  grappled?: Array<[string, string]>;
+  sinking?: string[];
 }
 
 export interface WorldOptions {
@@ -647,6 +708,9 @@ export function createWorld(roomCode = "main", options: WorldOptions = {}): Worl
     noticeCooldowns: new Map(),
     battleLogs: new Map(),
     nextBattleLogId: 1,
+    abandonedShips: [],
+    boardingFights: new Map(),
+    sinkingShips: [],
   };
 }
 
@@ -1329,6 +1393,18 @@ function pushNoticeOnce(world: World, ownerId: string, shipId: string, kind: str
   pushNotice(world, ownerId, text);
 }
 
+function isFriendlyShip(
+  world: World,
+  shooterOwnerId: string,
+  shooterNavy: string,
+  otherOwnerId: string,
+  other: Ship,
+): boolean {
+  if (other.surrendered || other.abandoned) return false;
+  if (otherOwnerId === shooterOwnerId) return true;
+  return other.navy === shooterNavy || settings.combat.allies.includes(otherOwnerId);
+}
+
 function damageLogText(damageByArea: Partial<Record<string, number>>): string {
   const parts: string[] = [];
   for (const area of ["hull", "sails", "masts", "rudder", "guns", "crew"]) {
@@ -1830,6 +1906,13 @@ export function acceptShipSurrender(world: World, playerId: string, shipId: unkn
   target.lastAttackedRealMs = undefined;
   holdPosition(target);
   world.fleets.set(playerId, [...accepting, target]);
+  // 3D: the prize's surviving crew are captured and choose Join/Kill/prisoners.
+  target.capturedCrew = target.crew;
+  target.crew = 0;
+  target.damage.crew = 0;
+  target.hadMinimumCrew = false;
+  target.capturedChoiceDeadlineRealMs =
+    combatRealSeconds(world) * 1000 + settings.combat.capturedChoiceSeconds * 1000;
   if (target.classId === "flagship" && !world.flagshipLost.some((event) => event.shipId === target.id)) {
     world.flagshipLost.push({ ownerId: oldOwner, shipId: target.id, atGameMs: world.gameMs });
     pushCombatEvent(world, { kind: "flagshipLost", x: target.x, y: target.y, shipId: target.id });
@@ -2955,6 +3038,7 @@ function allShips(world: World): Array<{ ownerId: string; ship: Ship }> {
   for (const [ownerId, fleet] of world.botFleets) {
     for (const ship of fleet) ships.push({ ownerId, ship });
   }
+  for (const ship of world.abandonedShips) ships.push({ ownerId: "", ship });
   return ships;
 }
 
@@ -2982,6 +3066,11 @@ function removeSunkShips(world: World, sunkIds: Set<string>): void {
         if (world.players.has(ownerId)) pushNotice(world, ownerId, "Flagship lost.");
       }
       if (world.players.has(ownerId)) pushNotice(world, ownerId, `Ship sunk: ${ship.name}.`);
+      if (!world.sinkingShips.some((entry) => entry.ship.id === ship.id)) {
+        const nowMs = combatRealSeconds(world) * 1000;
+        world.sinkingShips.push({ ship, ownerId, startedRealMs: nowMs, state: startSinking(nowMs) });
+        pushCombatEvent(world, { kind: "sinking", x: ship.x, y: ship.y, shipId: ship.id });
+      }
       for (const [shipId, engagement] of [...world.engagements]) {
         if (shipId === ship.id || engagement.targetShipId === ship.id) {
           clearEngagement(world, shipId);
@@ -3051,6 +3140,7 @@ function resolveCombat(world: World): void {
       if (!target) clearEngagement(world, plan.shipId);
       continue;
     }
+    if (own.boardingShipId === target.id || target.boardingShipId === own.id) continue;
     const distance = Math.hypot(target.x - own.x, target.y - own.y);
     if (distance > 1) continue;
     if (now < own.reloadReadyRealSeconds) continue;
@@ -3110,6 +3200,15 @@ function resolveCombat(world: World): void {
     });
     if (result.hits > 0) {
       pushCombatEvent(world, { kind: "hit", x: target.x, y: target.y });
+      // 3D: each landed hit may start a fire, or feed an existing one.
+      for (let hit = 0; hit < result.hits; hit += 1) {
+        const before = target.fire?.burning === true;
+        target.fire = igniteFire(target.fire ?? { burning: false, strength: 0 }, world.combatRandom, settings.combat.fireIgniteChance);
+        if (target.fire.burning && !before) {
+          pushCombatEvent(world, { kind: "fireStarted", x: target.x, y: target.y, shipId: target.id });
+          if (targetEntry && world.players.has(targetEntry.ownerId)) pushNotice(world, targetEntry.ownerId, "Fire aboard");
+        }
+      }
       const summary = damageLogText(result.damageByArea);
       if (summary) {
         pushBattleLog(world, plan.ownerId, `Your ${own.name} hit ${target.name}: ${summary}.`);
@@ -3129,6 +3228,58 @@ function resolveCombat(world: World): void {
         x: target.x + Math.sin(angle) * offset,
         y: target.y - Math.cos(angle) * offset,
       });
+      // 3D: a missed shot can strike the nearest friend behind the target.
+      const friendlyCandidates = allShips(world)
+        .filter(({ ship }) => ship.id !== own.id)
+        .filter(({ ownerId, ship }) => {
+          const friend = isFriendlyShip(world, plan.ownerId, own.navy, ownerId, ship);
+          return friend && Math.hypot(ship.x - target.x, ship.y - target.y) * 1000 <=
+            settings.combat.friendlyFireRangeM;
+        })
+        .map(({ ownerId, ship }) => ({
+          id: ship.id, ownerId, navy: ship.navy, x: ship.x, y: ship.y,
+          friendly: true,
+        }));
+      if (friendlyCandidates.length > 0) {
+        const hit = friendlyFireTarget({
+          shooter: own,
+          target,
+          candidates: friendlyCandidates,
+          random: world.combatRandom,
+          addresseeOwnerId: plan.ownerId,
+          addresseeNavy: own.navy,
+        });
+        if (hit) {
+          const friendlyEntry = shipEntry(world, hit.id);
+          const friendly = friendlyEntry?.ship;
+          if (friendly) {
+            const friendlyResult = resolveFiring({
+              spec: shipSpecFor(own),
+              damage: friendly.damage,
+              targetClass: friendly.classId,
+              distanceKm: Math.hypot(friendly.x - own.x, friendly.y - own.y),
+              targetBearingRad: bearingRad(own, friendly),
+              headingRad: own.headingRad,
+              ammunitionTonnes: own.stores.ammunition,
+              objective: "sink",
+              random: world.combatRandom,
+            });
+            if (friendlyResult.fired) {
+              own.stores.ammunition = Math.max(0, own.stores.ammunition - friendlyResult.ammunitionUsed);
+              friendly.damage = friendlyResult.damage;
+              friendly.crew = friendlyResult.damage.crew;
+              friendly.fire = igniteFire(friendly.fire ?? { burning: false, strength: 0 }, world.combatRandom, settings.combat.fireIgniteChance);
+              pushCombatEvent(world, { kind: "friendlyFire", x: friendly.x, y: friendly.y, shipId: friendly.id });
+              pushNotice(world, plan.ownerId, `Friendly fire! Your ${own.name} hit your ${friendly.name}`);
+              if (friendlyEntry && world.players.has(friendlyEntry.ownerId)) {
+                pushNotice(world, friendlyEntry.ownerId, `Friendly fire! ${own.name} hit your ${friendly.name}`);
+              }
+              pushBattleLog(world, plan.ownerId, `Friendly fire! Your ${own.name} hit your ${friendly.name}.`);
+              if (friendlyResult.sunk) sunk.add(friendly.id);
+            }
+          }
+        }
+      }
     }
     if (own.stores.ammunition <= 0) {
       pushNoticeOnce(world, plan.ownerId, own.id, "noAmmo", "Out of ammunition.");
@@ -3158,7 +3309,7 @@ function updateRepairs(world: World, dtGameSeconds: number): void {
     syncDamageCrew(ship);
     const spec = shipSpecFor(ship);
     const capacities = shipStoreCapacities(spec);
-    if (!isInCombat(ship.lastCombatRealMs, nowMs) && ship.repairEnabled) {
+    if (!isInCombat(ship.lastCombatRealMs, nowMs) && ship.repairEnabled && !ship.fire?.burning) {
       const result = repairShip(
         ship.damage,
         spec,
@@ -4380,6 +4531,687 @@ function stepOwnerShip(
   finishPortOrder(world, ownerId, ship);
 }
 
+
+// --- 3D: crew, claims, boarding, fire and sinking -------------------------
+
+function removeFromOwner(world: World, ownerId: string, shipId: string): void {
+  const fleet = world.fleets.get(ownerId);
+  if (fleet) {
+    const kept = fleet.filter((ship) => ship.id !== shipId);
+    if (kept.length > 0) world.fleets.set(ownerId, kept);
+    else world.fleets.delete(ownerId);
+    const alias = world.players.get(ownerId);
+    if (alias?.id === shipId) {
+      if (kept[0]) world.players.set(ownerId, kept[0]);
+      else world.players.delete(ownerId);
+    }
+    syncPlayerFleets(world, ownerId);
+  }
+  const bots = world.botFleets.get(ownerId);
+  if (bots) {
+    const kept = bots.filter((ship) => ship.id !== shipId);
+    if (kept.length > 0) world.botFleets.set(ownerId, kept);
+    else world.botFleets.delete(ownerId);
+  }
+}
+
+function clearBoarding(world: World, ship: Ship | undefined): void {
+  if (!ship) return;
+  const otherId = ship.boardingShipId;
+  ship.boardingShipId = null;
+  ship.boardingAttacker = false;
+  if (otherId) {
+    const other = shipEntry(world, otherId)?.ship;
+    if (other && other.boardingShipId === ship.id) {
+      other.boardingShipId = null;
+      other.boardingAttacker = false;
+    }
+  }
+  world.boardingFights.delete(ship.id);
+}
+
+/** Move a prize into the accepting player's fleet, with all its damage. */
+function takePrize(
+  world: World,
+  target: Ship,
+  oldOwner: string,
+  acceptingOwner: string,
+  acceptingNavy: NavyId,
+): boolean {
+  const accepting = shipsForOwner(world, acceptingOwner);
+  if (accepting.length >= settings.ships.maxShipsPerPlayer) {
+    pushNotice(world, acceptingOwner, "Fleet full (30 ships)");
+    return false;
+  }
+  removeFromOwner(world, oldOwner, target.id);
+  world.abandonedShips = world.abandonedShips.filter((ship) => ship.id !== target.id);
+  for (const [shipId, engagement] of [...world.engagements]) {
+    if (shipId === target.id || engagement.targetShipId === target.id) clearEngagement(world, shipId);
+  }
+  world.shipCommands.delete(target.id);
+  const oldGroups = world.controlGroups.get(oldOwner);
+  if (oldGroups) {
+    for (const ids of Object.values(oldGroups)) {
+      const index = ids.indexOf(target.id);
+      if (index >= 0) ids.splice(index, 1);
+    }
+  }
+  target.navy = acceptingNavy;
+  target.fleetId = null;
+  target.detached = false;
+  target.surrendered = false;
+  target.battleOrder = undefined;
+  target.runState = undefined;
+  target.lastAttackerShipId = undefined;
+  target.lastAttackedRealMs = undefined;
+  target.abandoned = false;
+  target.boardingShipId = null;
+  target.boardingAttacker = false;
+  holdPosition(target);
+  world.fleets.set(acceptingOwner, [...shipsForOwner(world, acceptingOwner), target]);
+  if (target.classId === "flagship" && !world.flagshipLost.some((event) => event.shipId === target.id)) {
+    world.flagshipLost.push({ ownerId: oldOwner, shipId: target.id, atGameMs: world.gameMs });
+    pushCombatEvent(world, { kind: "flagshipLost", x: target.x, y: target.y, shipId: target.id });
+  }
+  return true;
+}
+
+function minCrew(ship: Ship): number {
+  return minimumCrewFor(ship.fullCrew);
+}
+
+/** Crew transfer between two of the player's ships, within 300 m. */
+export function previewCrewTransfer(
+  world: World,
+  playerId: string,
+  donorId: unknown,
+  receiverId: unknown,
+  amount: unknown,
+): { ok: boolean; message: string } {
+  if (typeof donorId !== "string" || typeof receiverId !== "string") {
+    return { ok: false, message: "Choose two of your ships." };
+  }
+  const fleet = shipsForOwner(world, playerId);
+  const donor = fleet.find((ship) => ship.id === donorId);
+  const receiver = fleet.find((ship) => ship.id === receiverId);
+  if (!donor || !receiver || donor === receiver) return { ok: false, message: "Choose two of your ships." };
+  if (!withinRange(donor, receiver, settings.combat.transferRangeM)) {
+    return { ok: false, message: "Ships must be within 300 m." };
+  }
+  const wanted = typeof amount === "number" ? amount : 0;
+  const result = transferCrew(donor, receiver, wanted);
+  return { ok: result.ok, message: result.problem ?? "" };
+}
+
+export function transferPlayerCrew(
+  world: World,
+  playerId: string,
+  donorId: unknown,
+  receiverId: unknown,
+  amount: unknown,
+): boolean {
+  const check = previewCrewTransfer(world, playerId, donorId, receiverId, amount);
+  if (!check.ok) {
+    pushNotice(world, playerId, check.message);
+    return false;
+  }
+  const fleet = shipsForOwner(world, playerId);
+  const donor = fleet.find((ship) => ship.id === donorId)!;
+  const receiver = fleet.find((ship) => ship.id === receiverId)!;
+  const result = transferCrew(donor, receiver, amount as number);
+  donor.crew = result.donorCrew;
+  receiver.crew = result.receiverCrew;
+  syncDamageCrew(donor);
+  syncDamageCrew(receiver);
+  if (receiver.crew >= minCrew(receiver)) receiver.hadMinimumCrew = true;
+  pushNotice(world, playerId, `Moved ${Math.floor(amount as number)} crew.`);
+  return true;
+}
+
+/** The Board sheet's odds; the server uses the real numbers. */
+export function boardingOddsFor(
+  world: World,
+  playerId: string,
+  shipId: unknown,
+  targetId: unknown,
+): number | null {
+  if (typeof shipId !== "string" || typeof targetId !== "string") return null;
+  const ship = shipsForOwner(world, playerId).find((candidate) => candidate.id === shipId);
+  const target = shipEntry(world, targetId)?.ship;
+  if (!ship || !target || ship.surrendered || ship.abandoned || target.abandoned || target.navy === ship.navy) {
+    return null;
+  }
+  if (!ownerCanSeeShip(world, playerId, target)) return null;
+  return boardingOdds(boardingStrength(ship.crew), boardingStrength(target.crew));
+}
+
+/** Start the Board order: close to 60 m, then grapple. */
+export function orderBoarding(
+  world: World,
+  playerId: string,
+  shipId: unknown,
+  targetId: unknown,
+): boolean {
+  if (typeof shipId !== "string" || typeof targetId !== "string") return false;
+  const ship = shipsForOwner(world, playerId).find((candidate) => candidate.id === shipId);
+  const targetEntry = shipEntry(world, targetId);
+  if (!ship || !targetEntry || !world.players.has(playerId)) return false;
+  const target = targetEntry.ship;
+  if (target.navy === ship.navy || target.abandoned || target.surrendered) {
+    pushNotice(world, playerId, target.abandoned
+      ? "Use Claim on an abandoned ship."
+      : target.surrendered ? "Use Accept on a surrendered ship." : "That ship cannot be boarded.");
+    return false;
+  }
+  if (!ownerCanSeeShip(world, playerId, target)) return false;
+  if (ship.boardingShipId) cancelBoarding(world, playerId, ship.id);
+  if (target.boardingShipId) return false;
+  clearEngagement(world, ship.id);
+  clearRun(ship);
+  ship.order = { type: "sailTo", x: target.x, y: target.y };
+  ship.stationSpeedLimit = target.speedKnots;
+  ship.boardingShipId = target.id;
+  ship.boardingAttacker = true;
+  ship.battleOrder = "capture";
+  target.boardingShipId = ship.id;
+  target.boardingAttacker = false;
+  world.shipCommands.delete(ship.id);
+  pushBattleLog(world, playerId, `Your ${ship.name} is closing to board the ${target.name}.`);
+  return true;
+}
+
+export function cancelBoarding(world: World, playerId: string, shipId: unknown): boolean {
+  if (typeof shipId !== "string") return false;
+  const ship = shipsForOwner(world, playerId).find((candidate) => candidate.id === shipId);
+  if (!ship || !ship.boardingShipId) return false;
+  if (world.boardingFights.has(ship.id)) return false;
+  clearBoarding(world, ship);
+  holdPosition(ship);
+  return true;
+}
+
+/** Auto-board starts only under the AGREED conditions. */
+function updateAutoBoarding(world: World): void {
+  for (const engagement of [...world.engagements.values()]) {
+    if (engagement.objective !== "capture") continue;
+    const ship = shipEntry(world, engagement.shipId)?.ship;
+    const target = shipEntry(world, engagement.targetShipId)?.ship;
+    if (!ship || !target || ship.autoBoard === false || ship.boardingShipId) continue;
+    if (target.abandoned || target.surrendered) continue;
+    const odds = boardingOdds(boardingStrength(ship.crew), boardingStrength(target.crew));
+    const percents = damagePercents(target.damage, damageCapacities(shipSpecFor(target)));
+    if (autoBoardingAllowed({
+      objective: "capture",
+      odds,
+      targetCrewShare: percents.crew / 100,
+      targetSailsShare: percents.sails / 100,
+      targetMastsShare: percents.masts / 100,
+      autoBoard: true,
+    })) {
+      orderBoarding(world, engagement.ownerId, ship.id, target.id);
+    }
+  }
+}
+
+export function setAutoBoard(world: World, playerId: string, shipId: unknown, enabled: unknown): boolean {
+  if (typeof shipId !== "string" || typeof enabled !== "boolean") return false;
+  const ship = shipsForOwner(world, playerId).find((candidate) => candidate.id === shipId);
+  if (!ship) return false;
+  ship.autoBoard = enabled;
+  return true;
+}
+
+/** The same toggle for every member of a saved fleet. */
+export function setFleetAutoBoard(
+  world: World,
+  playerId: string,
+  fleetId: unknown,
+  enabled: unknown,
+): boolean {
+  if (typeof fleetId !== "string" || typeof enabled !== "boolean") return false;
+  const fleet = fleetFor(world, playerId, fleetId);
+  if (!fleet) return false;
+  for (const ship of shipsForOwner(world, playerId)) {
+    if (fleet.members.includes(ship.id)) ship.autoBoard = enabled;
+  }
+  return true;
+}
+
+
+function beginBoarding(world: World, attacker: Ship, defender: Ship, nowRealSeconds: number): void {
+  const attackerEntry = shipEntry(world, attacker.id);
+  const defenderEntry = shipEntry(world, defender.id);
+  if (!attackerEntry || !defenderEntry) return;
+  const result = boardingCasualties({
+    attackerCrew: attacker.crew,
+    defenderCrew: defender.crew,
+    attackerStrength: boardingStrength(attacker.crew),
+    defenderStrength: boardingStrength(defender.crew),
+    random: world.combatRandom,
+  });
+  const seconds = settings.combat.boardingDefaultSeconds;
+  world.boardingFights.set(attacker.id, {
+    attackerId: attacker.id,
+    defenderId: defender.id,
+    attackerOwnerId: attackerEntry.ownerId,
+    defenderOwnerId: defenderEntry.ownerId,
+    startedRealMs: nowRealSeconds * 1000,
+    endsRealMs: (nowRealSeconds + seconds) * 1000,
+    winner: result.winner,
+    attackerLost: result.attackerLost,
+    defenderLost: result.defenderLost,
+    capturedCrew: result.capturedCrew,
+    applied: false,
+    fullSeconds: seconds,
+  });
+  attacker.speedKnots = 0;
+  defender.speedKnots = 0;
+  attacker.order = null;
+  defender.order = null;
+  attacker.route = null;
+  defender.route = null;
+  attacker.stationSpeedLimit = undefined;
+  defender.stationSpeedLimit = undefined;
+  clearEngagement(world, attacker.id);
+  clearEngagement(world, defender.id);
+  pushCombatEvent(world, { kind: "boarding", x: defender.x, y: defender.y, shipId: defender.id });
+  for (const id of [attackerEntry.ownerId, defenderEntry.ownerId]) {
+    if (world.players.has(id)) pushNotice(world, id, `Boarding begun: ${attacker.name} and ${defender.name}.`);
+  }
+}
+
+function updateBoarding(world: World, nowRealSeconds: number): void {
+  for (const { ship } of allShips(world)) {
+    if (!ship.boardingShipId || !ship.boardingAttacker || world.boardingFights.has(ship.id)) continue;
+    const target = shipEntry(world, ship.boardingShipId)?.ship;
+    if (!target || target.abandoned || target.surrendered) {
+      clearBoarding(world, ship);
+      continue;
+    }
+    const distance = Math.hypot(target.x - ship.x, target.y - ship.y);
+    if (distance > settings.combat.boardingRangeM / 1000) {
+      ship.order = { type: "sailTo", x: target.x, y: target.y };
+      ship.stationSpeedLimit = target.speedKnots;
+      continue;
+    }
+    if (Math.abs(ship.speedKnots - target.speedKnots) > settings.combat.boardingSpeedMatchKnots) {
+      ship.speedKnots = target.speedKnots;
+    }
+    const problem = boardingProblem({
+      distanceM: distance * 1000,
+      speedDifferenceKnots: Math.abs(ship.speedKnots - target.speedKnots),
+      targetSurrendered: target.surrendered,
+      targetAbandoned: target.abandoned,
+      targetSinking: false,
+      attackerCrew: ship.crew,
+      attackerFullCrew: ship.fullCrew,
+      seaState: 0,
+    });
+    if (!problem) beginBoarding(world, ship, target, nowRealSeconds);
+  }
+
+  for (const [attackerId, fight] of [...world.boardingFights]) {
+    const attacker = shipEntry(world, attackerId)?.ship;
+    const defender = shipEntry(world, fight.defenderId)?.ship;
+    if (!attacker || !defender) {
+      world.boardingFights.delete(attackerId);
+      continue;
+    }
+    if (nowRealSeconds * 1000 < fight.endsRealMs) continue;
+    fight.applied = true;
+    attacker.crew = Math.max(0, attacker.crew - fight.attackerLost);
+    defender.crew = Math.max(0, defender.crew - fight.defenderLost);
+    syncDamageCrew(attacker);
+    syncDamageCrew(defender);
+    if (fight.winner === "attacker") {
+      const captured = defender.crew;
+      if (takePrize(world, defender, fight.defenderOwnerId, fight.attackerOwnerId,
+        shipsForOwner(world, fight.attackerOwnerId)[0]?.navy ?? attacker.navy)) {
+        defender.crew = 0;
+        defender.capturedCrew = captured;
+        defender.capturedChoiceDeadlineRealMs =
+          combatRealSeconds(world) * 1000 + settings.combat.capturedChoiceSeconds * 1000;
+        defender.hadMinimumCrew = false;
+        syncDamageCrew(defender);
+        pushNotice(world, fight.attackerOwnerId, `You captured the ${defender.name}.`);
+        pushNotice(world, fight.defenderOwnerId, `Your ship ${defender.name} was boarded and taken.`);
+        pushBattleLog(world, fight.attackerOwnerId, `Your ${attacker.name} captured the ${defender.name}.`);
+      }
+    } else {
+      pushNotice(world, fight.defenderOwnerId, `You beat off the boarding of ${defender.name}.`);
+      pushNotice(world, fight.attackerOwnerId, `Your boarding of ${defender.name} failed.`);
+      pushBattleLog(world, fight.attackerOwnerId, `Your ${attacker.name} lost the boarding of ${defender.name}.`);
+    }
+    pushCombatEvent(world, { kind: "boarding", x: defender.x, y: defender.y, shipId: defender.id });
+    clearBoarding(world, attacker);
+    clearBoarding(world, defender);
+    world.boardingFights.delete(attackerId);
+    attacker.speedKnots = 0;
+    defender.speedKnots = 0;
+    holdPosition(attacker);
+    if (!defender.abandoned) holdPosition(defender);
+  }
+}
+
+/** Apply Join / Kill / Take prisoners to one captured prize. */
+export function chooseCapturedCrew(
+  world: World,
+  playerId: string,
+  shipId: unknown,
+  choice: unknown,
+  prisonerCount = 0,
+): boolean {
+  if (typeof shipId !== "string") return false;
+  const ship = shipsForOwner(world, playerId).find((candidate) => candidate.id === shipId);
+  if (!ship || !(ship.capturedCrew && ship.capturedCrew > 0)) return false;
+  const wanted: CapturedChoice = choice === "join" || choice === "kill" || choice === "prisoners"
+    ? choice
+    : capturedChoiceAfterTimeout(null);
+  const plan = capturedCrewPlan(
+    ship.capturedCrew,
+    ship.fullCrew,
+    wanted,
+    typeof prisonerCount === "number" ? prisonerCount : 0,
+  );
+  if (plan.problem) pushNotice(world, playerId, plan.problem);
+  ship.capturedCrew = 0;
+  ship.capturedChoiceDeadlineRealMs = null;
+  if (wanted === "kill") {
+    ship.crew = 0;
+    ship.hadMinimumCrew = false;
+  } else {
+    ship.crew = Math.max(0, ship.crew + plan.join);
+    ship.prisoners = (ship.prisoners ?? 0) + plan.prisoners;
+    if (ship.crew >= minCrew(ship)) ship.hadMinimumCrew = true;
+  }
+  syncDamageCrew(ship);
+  pushNotice(world, playerId, wanted === "kill"
+    ? `Captured crew of ${ship.name} were killed.`
+    : wanted === "prisoners"
+      ? `${plan.prisoners} prisoners taken; ${plan.join} joined.`
+      : `Captured crew joined ${ship.name}.`);
+  return true;
+}
+
+function updateCapturedChoices(world: World, nowRealSeconds: number): void {
+  for (const { ship } of allShips(world)) {
+    if (!ship.capturedCrew || ship.capturedCrew <= 0) continue;
+    const deadline = ship.capturedChoiceDeadlineRealMs;
+    if (deadline !== null && deadline !== undefined && nowRealSeconds * 1000 < deadline) continue;
+    const ownerId = shipEntry(world, ship.id)?.ownerId ?? "";
+    if (ownerId && world.players.has(ownerId)) {
+      chooseCapturedCrew(world, ownerId, ship.id, "join");
+    }
+  }
+}
+
+/** Claim an abandoned hull with crew from one of the player's ships. */
+export function claimPlayerShip(
+  world: World,
+  playerId: string,
+  prizeId: unknown,
+  donorId: unknown,
+): boolean {
+  if (typeof prizeId !== "string" || typeof donorId !== "string") return false;
+  const prize = world.abandonedShips.find((ship) => ship.id === prizeId);
+  const donor = shipsForOwner(world, playerId).find((ship) => ship.id === donorId);
+  if (!prize || !donor) return false;
+  const fleet = shipsForOwner(world, playerId);
+  const result = claimAbandoned({
+    abandoned: prize.abandoned === true,
+    fleetCount: fleet.length,
+    inRange: withinRange(donor, prize, settings.combat.transferRangeM),
+    donor,
+    prize: { crew: prize.crew, fullCrew: prize.fullCrew },
+  });
+  if (!result.ok) {
+    pushNotice(world, playerId, result.problem ?? "Claim refused.");
+    return false;
+  }
+  donor.crew = result.donorCrew;
+  prize.crew = result.prizeCrew;
+  syncDamageCrew(donor);
+  syncDamageCrew(prize);
+  if (!takePrize(world, prize, "", playerId, fleet[0]?.navy ?? prize.navy)) return false;
+  prize.hadMinimumCrew = true;
+  syncDamageCrew(prize);
+  pushCombatEvent(world, { kind: "claim", x: prize.x, y: prize.y, shipId: prize.id });
+  pushNotice(world, playerId, `Claimed ${prize.name}.`);
+  pushBattleLog(world, playerId, `You claimed the abandoned ${prize.name}.`);
+  return true;
+}
+
+/** Hand prisoners over at a usable port for the AGREED bounty. */
+export function handOverPrisoners(
+  world: World,
+  playerId: string,
+  shipId: unknown,
+  portId: unknown,
+): boolean {
+  if (typeof shipId !== "string" || typeof portId !== "string") return false;
+  const ship = shipsForOwner(world, playerId).find((candidate) => candidate.id === shipId);
+  const owner = world.owners.get(playerId);
+  if (!ship || !owner || ship.dockedPortId !== portId) return false;
+  const port = world.ports.get(portId);
+  if (!port || !portUsableForBuying(world, port, playerId)) return false;
+  const count = Math.max(0, Math.floor(ship.prisoners ?? 0));
+  if (count <= 0) return false;
+  const money = prisonerBounty(count);
+  owner.money += money;
+  ship.prisoners = 0;
+  pushNotice(world, playerId, `Handed over ${count} prisoners for ${money} pieces.`);
+  return true;
+}
+
+function abandonNow(world: World, ownerId: string, ship: Ship): void {
+  if (ship.abandoned) return;
+  clearBoarding(world, ship);
+  ship.abandoned = true;
+  ship.hadMinimumCrew = true;
+  ship.route = null;
+  ship.order = null;
+  ship.stationSpeedLimit = undefined;
+  ship.speedKnots = 0;
+  ship.battleOrder = undefined;
+  ship.surrendered = false;
+  // Tell the former owner before the last-ship cleanup removes the player.
+  if (world.players.has(ownerId)) {
+    pushNotice(world, ownerId, `Your ship ${ship.name} was abandoned`);
+    pushBattleLog(world, ownerId, `Your ship ${ship.name} was abandoned.`);
+  }
+  removeFromOwner(world, ownerId, ship.id);
+  for (const [shipId, engagement] of [...world.engagements]) {
+    if (shipId === ship.id || engagement.targetShipId === ship.id) clearEngagement(world, shipId);
+  }
+  const groups = world.controlGroups.get(ownerId);
+  if (groups) {
+    for (const ids of Object.values(groups)) {
+      const index = ids.indexOf(ship.id);
+      if (index >= 0) ids.splice(index, 1);
+    }
+  }
+  world.abandonedShips.push(ship);
+}
+
+function updateAbandonment(world: World, dtGameSeconds: number): void {
+  for (const { ownerId, ship } of allShips(world)) {
+    if (ownerId === "" || ship.abandoned || ship.deliveryPortId) continue;
+    if (ship.crew >= minCrew(ship)) ship.hadMinimumCrew = true;
+    if (ship.capturedCrew && ship.capturedCrew > 0) continue;
+    if (shouldAbandon({
+      crew: ship.crew,
+      fullCrew: ship.fullCrew,
+      hadMinimumCrew: ship.hadMinimumCrew,
+      abandoned: false,
+    })) {
+      abandonNow(world, ownerId, ship);
+    }
+  }
+  const gameHours = dtGameSeconds / 3600;
+  const lost = new Set<string>();
+  for (const ship of world.abandonedShips) {
+    ship.damage.hull = abandonedHullAfter(ship.damage.hull, shipSpecFor(ship).hull, gameHours);
+    if (ship.damage.hull <= 0) lost.add(ship.id);
+  }
+  if (lost.size > 0) {
+    for (const ship of world.abandonedShips) {
+      if (!lost.has(ship.id)) continue;
+      const nowMs = combatRealSeconds(world) * 1000;
+      world.sinkingShips.push({ ship, ownerId: "", startedRealMs: nowMs, state: startSinking(nowMs) });
+      pushCombatEvent(world, { kind: "sunk", x: ship.x, y: ship.y, shipId: ship.id });
+    }
+    world.abandonedShips = world.abandonedShips.filter((ship) => !lost.has(ship.id));
+  }
+}
+
+
+/** Fires, fire fighting, spread, explosions and blast damage. */
+function updateFires(world: World, dtGameSeconds: number): void {
+  const seconds = dtGameSeconds / settings.time.sailingTimeScale;
+  const sunk = new Set<string>();
+  for (const { ownerId, ship } of allShips(world)) {
+    const fire = ship.fire ?? { burning: false, strength: 0 };
+    ship.fire = fire;
+    if (!fire.burning) continue;
+    const spec = shipSpecFor(ship);
+    const damage = fireDamage(fire.strength, spec.hull, spec.crew, seconds);
+    ship.damage.hull = Math.max(0, ship.damage.hull - damage.hullLoss);
+    ship.crew = Math.max(0, ship.crew - damage.crewLoss);
+    syncDamageCrew(ship);
+    const crewPct = crewPercent(ship.damage, damageCapacities(spec));
+    const fought = fightFire(fire, crewPct, ship.stores.repairMaterials, seconds);
+    ship.stores.repairMaterials = Math.max(0, ship.stores.repairMaterials - fought.materialsUsed);
+    ship.fire = { burning: fought.burning, strength: fought.strength };
+    if (!fought.burning) {
+      pushCombatEvent(world, { kind: "fireOut", x: ship.x, y: ship.y, shipId: ship.id });
+      if (ownerId && world.players.has(ownerId)) {
+        pushNotice(world, ownerId, "Fire out");
+        pushBattleLog(world, ownerId, `Fire out aboard ${ship.name}.`);
+      }
+    }
+    if (ship.damage.hull <= 0) sunk.add(ship.id);
+    const explosion = explosionChance(spec.hull, ship.damage.hull, seconds);
+    if (explosion > 0 && world.combatRandom() < explosion) {
+      ship.crew = 0;
+      ship.damage.crew = 0;
+      ship.damage.hull = 0;
+      sunk.add(ship.id);
+      pushCombatEvent(world, { kind: "explosion", x: ship.x, y: ship.y, shipId: ship.id });
+      for (const other of allShips(world)) {
+        if (other.ship.id === ship.id) continue;
+        if (Math.hypot(other.ship.x - ship.x, other.ship.y - ship.y) * 1000 > settings.combat.blastRangeM) continue;
+        const blast = explosionBlast(shipSpecFor(other.ship).hull, other.ship.fullCrew, true);
+        other.ship.damage.hull = Math.max(0, other.ship.damage.hull - blast.hullLoss);
+        other.ship.crew = Math.max(0, other.ship.crew - blast.crewLoss);
+        syncDamageCrew(other.ship);
+        if (other.ship.damage.hull <= 0) sunk.add(other.ship.id);
+      }
+      if (ownerId && world.players.has(ownerId)) {
+        pushNotice(world, ownerId, "Ship exploded");
+        pushBattleLog(world, ownerId, `Your ${ship.name} exploded.`);
+      }
+    }
+  }
+
+  // Spread to any ship within 100 m, including friends. A burning target is skipped.
+  for (const source of allShips(world)) {
+    if (!source.ship.fire?.burning) continue;
+    for (const target of allShips(world)) {
+      if (target.ship.id === source.ship.id || target.ship.fire?.burning) continue;
+      const distanceM = Math.hypot(target.ship.x - source.ship.x, target.ship.y - source.ship.y) * 1000;
+      const chance = fireSpreadChance({
+        strength: source.ship.fire.strength,
+        seconds,
+        bearingRad: bearingRad(source.ship, target.ship),
+        windFromDeg: settings.weather.windFromDeg,
+        targetBurning: false,
+        inRange: distanceM <= settings.combat.fireSpreadRangeM,
+      });
+      if (chance <= 0 || world.combatRandom() >= chance) continue;
+      target.ship.fire = { burning: true, strength: settings.combat.fireStartStrength };
+      pushCombatEvent(world, {
+        kind: "fireStarted", x: target.ship.x, y: target.ship.y, shipId: target.ship.id,
+      });
+      if (target.ownerId && world.players.has(target.ownerId)) {
+        pushNotice(world, target.ownerId, "Fire aboard");
+      }
+    }
+  }
+  if (sunk.size > 0) removeSunkShips(world, sunk);
+}
+
+/** A greyed sinking hull is removed after the agreed 20 seconds. */
+function updateSinkingShips(world: World): void {
+  const nowMs = combatRealSeconds(world) * 1000;
+  world.sinkingShips = world.sinkingShips.filter((entry) => !sinkingComplete(entry.state, nowMs));
+}
+
+/** Test/dev helper: abandoned hulls about 2 km from the player's start. */
+export function spawnTestAbandoned(
+  world: World,
+  playerId: string,
+  spec: string,
+): number {
+  if (world.kind === "normal") return 0;
+  const leader = shipsForOwner(world, playerId)[0];
+  if (!leader) return 0;
+  const parts = spec.split(",").map((part) => part.trim()).filter(Boolean);
+  let made = 0;
+  for (const part of parts) {
+    const [rawClass, rawCount] = part.split(":");
+    const classId = rawClass ? parseShipClass(rawClass) : null;
+    const count = rawCount && /^\d+$/.test(rawCount) ? Number(rawCount) : 0;
+    if (!classId || count < 1) return -1;
+    for (let index = 0; index < count; index += 1) {
+      const point = enemySpawnPoint(leader, 2, Math.PI / 2 + index * 0.12);
+      const ship = createShip(
+        `abandoned-${world.nextShipId++}`,
+        classId,
+        point.x,
+        point.y,
+        leader.headingRad,
+        world.navy,
+        `Abandoned ${classId}`,
+      );
+      ship.crew = 0;
+      ship.damage.crew = 0;
+      ship.damage.hull = Math.max(1, ship.damage.hull * 0.7);
+      ship.hadMinimumCrew = true;
+      ship.abandoned = true;
+      ship.fire = { burning: false, strength: 0 };
+      world.abandonedShips.push(ship);
+      made += 1;
+    }
+  }
+  if (made > 0) pushNotice(world, playerId, `Spawned ${made} abandoned ship${made === 1 ? "" : "s"}, about 2 km east.`);
+  return made;
+}
+
+/** Test/dev helper: set every dummy enemy's crew to a percent of full. */
+export function setTestEnemyCrew(world: World, percent: number): number {
+  if (world.kind === "normal" || !Number.isFinite(percent)) return 0;
+  let changed = 0;
+  for (const ship of world.botFleets.get("TEST-ENEMY") ?? []) {
+    ship.crew = Math.max(1, Math.round(ship.fullCrew * Math.max(0, Math.min(100, percent)) / 100));
+    ship.damage.crew = ship.crew;
+    if (ship.crew >= minCrew(ship)) ship.hadMinimumCrew = true;
+    changed += 1;
+  }
+  return changed;
+}
+
+/** Test/dev helper: set the selected ship alight. */
+export function setTestFire(world: World, playerId: string, shipId: unknown): boolean {
+  if (world.kind === "normal") return false;
+  if (typeof shipId !== "string") return false;
+  const ship = shipsForOwner(world, playerId).find((candidate) => candidate.id === shipId);
+  if (!ship) return false;
+  ship.fire = { burning: true, strength: settings.combat.fireStartStrength };
+  pushCombatEvent(world, { kind: "fireStarted", x: ship.x, y: ship.y, shipId: ship.id });
+  pushNotice(world, playerId, "Fire aboard");
+  return true;
+}
+
 export function stepWorld(
   world: World,
   dtGameSeconds: number,
@@ -4409,9 +5241,15 @@ export function stepWorld(
   updateFleetCommands(world);
   updateShipCommands(world);
   resolveCombat(world);
+  updateAutoBoarding(world);
+  updateBoarding(world, combatRealSeconds(world));
+  updateCapturedChoices(world, combatRealSeconds(world));
   updateRuns(world);
+  updateFires(world, dtGameSeconds);
+  updateAbandonment(world, dtGameSeconds);
   updateRepairs(world, dtGameSeconds);
   updatePortRepairs(world, dtGameSeconds);
+  updateSinkingShips(world);
   recordFleetPaths(world);
   refreshBotOrders(world);
   world.tick += 1;
@@ -4484,6 +5322,9 @@ export function visibleStateFor(
   const allShips: Ship[] = [];
   for (const fleet of world.fleets.values()) allShips.push(...fleet);
   for (const fleet of world.botFleets.values()) allShips.push(...fleet);
+  for (const entry of world.sinkingShips) {
+    if (!allShips.some((ship) => ship.id === entry.ship.id)) allShips.push(entry.ship);
+  }
 
   for (const ship of allShips) {
     if (ship.deliveryPortId) continue;
@@ -4673,9 +5514,26 @@ export function visibleStateFor(
       engagement: engagement
         ? { targetId: engagement.targetShipId, objective: engagement.objective }
         : null,
+      boardingProgress: world.boardingFights.get(ship.id)
+        ? Math.max(0, Math.min(1,
+            (nowRealMs - world.boardingFights.get(ship.id)!.startedRealMs) /
+            Math.max(1, world.boardingFights.get(ship.id)!.endsRealMs - world.boardingFights.get(ship.id)!.startedRealMs)))
+        : undefined,
+      boardingSecondsLeft: world.boardingFights.get(ship.id)
+        ? Math.max(0, Math.ceil((world.boardingFights.get(ship.id)!.endsRealMs - nowRealMs) / 1000))
+        : undefined,
       battleOrder: ship.battleOrder,
       surrendered: ship.surrendered === true,
       running: ship.runState !== undefined,
+      abandoned: ship.abandoned === true,
+      burning: ship.fire?.burning === true,
+      fireStrength: ship.fire?.burning ? Number((ship.fire.strength ?? 0).toFixed(1)) : 0,
+      prisoners: Math.max(0, Math.floor(ship.prisoners ?? 0)),
+      capturedCrew: Math.max(0, Math.floor(ship.capturedCrew ?? 0)),
+      capturedChoiceSeconds: ship.capturedChoiceDeadlineRealMs
+        ? Math.max(0, Math.ceil((ship.capturedChoiceDeadlineRealMs - nowRealMs) / 1000))
+        : 0,
+      autoBoard: true,
     };
   });
 
@@ -4694,6 +5552,21 @@ export function visibleStateFor(
       const entry = shipEntry(world, snapshot[0]);
       return entry?.ship.surrendered === true && !ownIds.has(snapshot[0]);
     })
+    .map((snapshot) => snapshot[0]);
+  const abandonedFlags = ships
+    .filter((snapshot) => world.abandonedShips.some((ship) => ship.id === snapshot[0]))
+    .map((snapshot) => snapshot[0]);
+  const burningFlags = ships
+    .filter((snapshot) => shipEntry(world, snapshot[0])?.ship.fire?.burning === true)
+    .map((snapshot) => snapshot[0]);
+  const grappled: Array<[string, string]> = [];
+  for (const fight of world.boardingFights.values()) {
+    if (visibleIds.has(fight.attackerId) && visibleIds.has(fight.defenderId)) {
+      grappled.push([fight.attackerId, fight.defenderId]);
+    }
+  }
+  const sinkingFlags = ships
+    .filter((snapshot) => world.sinkingShips.some((entry) => entry.ship.id === snapshot[0]))
     .map((snapshot) => snapshot[0]);
   const state: StateMessage = {
     t: "s",
@@ -4717,6 +5590,10 @@ export function visibleStateFor(
   if (battleLog && battleLog.length > 0) state.log = battleLog.slice(-settings.combat.maxBattleLogLines);
   if (world.startPort) state.sp = world.startPort.name;
   if (world.kind !== "normal") state.h = world.hungerMultiplier;
+  if (abandonedFlags.length > 0) state.abandoned = abandonedFlags;
+  if (burningFlags.length > 0) state.burning = burningFlags;
+  if (grappled.length > 0) state.grappled = grappled;
+  if (sinkingFlags.length > 0) state.sinking = sinkingFlags;
   return state;
 }
 

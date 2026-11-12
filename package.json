@@ -19,7 +19,8 @@
     "test:server": "npm run build && node scripts/simulate-clients.mjs",
     "deploy": "wrangler deploy",
     "benchmark:battle": "node scripts/benchmark-battle.mjs",
-    "benchmark:battle-zone": "node scripts/benchmark-battle-zone.mjs"
+    "benchmark:battle-zone": "node scripts/benchmark-battle-zone.mjs",
+    "benchmark:3d": "node scripts/benchmark-3d.mjs"
   },
   "engines": {
     "node": ">=20"

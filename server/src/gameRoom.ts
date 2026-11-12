@@ -10,6 +10,18 @@ import { LoadMetrics } from "@naval/shared/load-metrics";
 import {
   addPlayer,
   acceptShipSurrender,
+  boardingOddsFor,
+  cancelBoarding,
+  chooseCapturedCrew,
+  claimPlayerShip,
+  handOverPrisoners,
+  orderBoarding,
+  setAutoBoard,
+  setFleetAutoBoard,
+  spawnTestAbandoned,
+  setTestEnemyCrew,
+  setTestFire,
+  transferPlayerCrew,
   cancelShipSurrender,
   setFleetBattleOrder,
   setShipBattleOrder,
@@ -107,6 +119,8 @@ export class GameRoom {
     let hungerMultiplier: number | undefined;
     let enemyNavy: NavyId | null = null;
     let dummy: DummyBehaviour = "fights";
+    let abandonedSpec: string | null = null;
+    let enemyCrewPercent: number | null = null;
     if (kind !== "normal") {
       const rawNavy = url.searchParams.get("navy");
       if (rawNavy !== null) {
@@ -182,6 +196,21 @@ export class GameRoom {
         });
       }
       dummy = parsedDummy;
+
+      const rawAbandoned = url.searchParams.get("abandoned");
+      if (rawAbandoned !== null) {
+        if (!/^[a-zA-Z]+:\d+(?:,[a-zA-Z]+:\d+)*$/.test(rawAbandoned)) {
+          return new Response("Abandoned must look like frigate:1,line:1.", { status: 400 });
+        }
+        abandonedSpec = rawAbandoned;
+      }
+      const rawEnemyCrew = url.searchParams.get("enemycrew");
+      if (rawEnemyCrew !== null) {
+        if (!/^\d{1,3}$/.test(rawEnemyCrew) || Number(rawEnemyCrew) > 100) {
+          return new Response("Enemy crew must be a whole percent from 0 to 100.", { status: 400 });
+        }
+        enemyCrewPercent = Number(rawEnemyCrew);
+      }
     }
 
     if (room !== this.world.roomCode) {
@@ -258,6 +287,14 @@ export class GameRoom {
           status: 400,
         });
       }
+    }
+    if (abandonedSpec !== null && kind !== "normal") {
+      if (spawnTestAbandoned(this.world, playerId, abandonedSpec) < 0) {
+        return new Response("Abandoned must look like frigate:1,line:1.", { status: 400 });
+      }
+    }
+    if (enemyCrewPercent !== null && kind !== "normal") {
+      setTestEnemyCrew(this.world, enemyCrewPercent);
     }
     // A refresh, a new tab or a reconnect starts with an empty client chart.
     // Replay the stored record and all block geometry before normal changes.
@@ -405,6 +442,12 @@ export class GameRoom {
       ids?: unknown;
       enabled?: unknown;
       mode?: unknown;
+      target?: unknown;
+      donor?: unknown;
+      receiver?: unknown;
+      choice?: unknown;
+      prisoners?: unknown;
+      confirm?: unknown;
     };
 
     if (order.t === "o") {
@@ -474,6 +517,40 @@ export class GameRoom {
       acceptShipSurrender(this.world, playerId, order.ship);
     } else if (order.t === "cancelSurrender") {
       cancelShipSurrender(this.world, playerId, order.ship);
+    } else if (order.t === "board") {
+      const odds = boardingOddsFor(this.world, playerId, order.ship, order.target);
+      if (order.confirm !== true) {
+        const socket = this.sockets.get(playerId);
+        if (socket && odds !== null) {
+          socket.send(JSON.stringify({
+            t: "boardOdds",
+            target: order.target,
+            odds: Math.round(odds * 20) * 5,
+          }));
+        }
+      } else if (odds !== null) {
+        orderBoarding(this.world, playerId, order.ship, order.target);
+      }
+    } else if (order.t === "cancelBoard") {
+      cancelBoarding(this.world, playerId, order.ship);
+    } else if (order.t === "autoBoard") {
+      setAutoBoard(this.world, playerId, order.ship, order.enabled);
+    } else if (order.t === "fleetAutoBoard") {
+      setFleetAutoBoard(this.world, playerId, order.fleet, order.enabled);
+    } else if (order.t === "crewTransfer") {
+      transferPlayerCrew(this.world, playerId, order.donor, order.receiver, order.amount);
+    } else if (order.t === "claim") {
+      claimPlayerShip(this.world, playerId, order.ship, order.donor);
+    } else if (order.t === "capturedCrew") {
+      chooseCapturedCrew(this.world, playerId, order.ship, order.choice, typeof order.prisoners === "number" ? order.prisoners : 0);
+    } else if (order.t === "handOverPrisoners") {
+      handOverPrisoners(this.world, playerId, order.ship, order.port);
+    } else if (order.t === "spawnAbandoned" && this.world.kind !== "normal") {
+      if (typeof order.type === "string") spawnTestAbandoned(this.world, playerId, order.type);
+    } else if (order.t === "setEnemyCrew" && this.world.kind !== "normal") {
+      if (typeof order.count === "number") setTestEnemyCrew(this.world, order.count);
+    } else if (order.t === "setFire" && this.world.kind !== "normal") {
+      setTestFire(this.world, playerId, order.ship);
     }
   }
 }

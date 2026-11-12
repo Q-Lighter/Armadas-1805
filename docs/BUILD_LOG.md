@@ -2195,3 +2195,26 @@ winding`):
 - `npm run build`: passing.
 - No browser is available; these are pure rule tests, with server and screens
   following in 3D-b and 3D-c.
+
+## 3D-b: boarding, claims, fire and friendly fire on the server
+
+- The authoritative world now handles crew transfer, claims, the Board
+  approach and grapple, Auto-board, captured crew choices, prisoner handover,
+  abandonment and decay, fire, explosion and blast, friendly fire and sinking.
+- `visibleStateFor` exposes only public abandoned/burning/grappled/sinking
+  flags. Crew, prisoner and fire-strength numbers stay in each owner's fleet
+  details. Events follow the existing visible-spot filter.
+- Test/dev joins accept `&abandoned=frigate:1,line:1` and `&enemycrew=30`.
+  Server orders support Board (with a rounded-odds reply), cancel, Auto-board
+  per ship and fleet, crew transfer, claim, captured-crew choice, prisoner
+  handover and the three test tools.
+- `scripts/benchmark-3d.mjs` measures 100 ships with 20 fires and 5 boardings.
+
+### Checks
+
+- `npm test`: **330/330 passing**.
+- `npm run build`: passing.
+- `npm run benchmark:3d`: 2.45 ms per world step, 445,446 bytes per player per
+  second at 10 Hz (219,445 at 5 Hz), versus the 3C 1.52 ms / 480,981 bytes.
+  Local Node proxy, not Cloudflare CPU time.
+- Screens and the duel check remain for 3D-c. No browser is available here.

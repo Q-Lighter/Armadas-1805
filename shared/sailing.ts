@@ -126,6 +126,23 @@ export interface Ship {
   lastAttackerShipId?: string;
   /** Real milliseconds of that last aimed shot. */
   lastAttackedRealMs?: number;
+  /** 3D: true once this ship has ever had the 10% minimum crew. */
+  hadMinimumCrew: boolean;
+  /** 3D: abandoned, ownerless and decaying until claimed. */
+  abandoned?: boolean;
+  /** 3D: fire state; a burning ship is visible to anyone who sees it. */
+  fire?: { burning: boolean; strength: number };
+  /** 3D: captured crew awaiting Join/Kill/prisoners, and their deadline. */
+  capturedCrew?: number;
+  capturedChoiceDeadlineRealMs?: number | null;
+  /** 3D: prisoners held aboard. */
+  prisoners?: number;
+  /** 3D: Auto-board toggle, on by default. */
+  autoBoard?: boolean;
+  /** 3D: the enemy this ship is approaching or fighting while boarding. */
+  boardingShipId?: string | null;
+  /** True only on the ship that started the boarding. */
+  boardingAttacker?: boolean;
   /** A repair job running while docked at a usable port. */
   portRepair?: {
     mode: "stores" | "pay";
@@ -274,6 +291,10 @@ export function createShip(
     reloadReadyRealSeconds: 0,
     lastCombatRealMs: null,
     repairEnabled: true,
+    hadMinimumCrew: (crew ?? type.crew) >= Math.max(1, Math.ceil(type.crew * 0.1)),
+    fire: { burning: false, strength: 0 },
+    prisoners: 0,
+    autoBoard: true,
   };
 }
 

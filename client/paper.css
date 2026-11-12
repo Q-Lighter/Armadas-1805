@@ -2793,3 +2793,21 @@ body.game {
     max-height: none;
   }
 }
+
+/* A thrown update or draw layer shows this instead of a silent blank page. */
+.client-error {
+  position: fixed;
+  z-index: 80;
+  left: max(0.4rem, env(safe-area-inset-left));
+  right: max(0.4rem, env(safe-area-inset-right));
+  top: max(0.4rem, env(safe-area-inset-top));
+  margin: 0;
+  padding: 0.55rem 0.7rem;
+  border: 1px solid #8c1d1d;
+  color: #5b2a24;
+  background: #f4e4c7;
+  font: 0.82rem/1.35 "Source Sans 3", sans-serif;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+.client-error[hidden] { display: none; }

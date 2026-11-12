@@ -2160,3 +2160,18 @@ winding`):
   five-viewport fit/scroll checks are render-plan tests only. The screens
   were built and compiled but not viewed or screenshotted, so overlap,
   scrolling and touch behaviour in a real browser remain unverified.
+
+## 3C-fix: blank live page
+
+- **Actual cause:** `client/main.ts` began with `element("damage-battle")`, but the 3C-c edit to `client/index.html` did not include that element in the built page. `start()` threw `Missing element #damage-battle` before `connect()`, so the browser never opened a WebSocket: the HUD stayed at its static defaults (money 0, Day 1 08:00, dashes) and the sea stayed blank. The Worker, GameRoom, visibleStateFor, battle-zone send and test-option forwarding were all healthy; a wrangler probe with the bare `room=test` address and with `room=test-30&start=Kingston&ship=frigate` received player, ship, wind, money and clock in the first state.
+- Added the missing `#damage-battle` element. Added a page-level error banner and console reporter, a guarded `onState` callback, and `safeLayer` guards around the ship, chart, fog, sight, port, route, combat, wind, battle-bar and surrender draw work. One failed layer now reports instead of silently blanking the scene.
+- Added regression tests that check every `element(...)` lookup exists exactly once in the HTML, join a bare test room, join a fresh room, and re-parse a real snapshot with the optional 3C fields removed.
+
+### Checks
+
+- `npm test`: **306/306 passing**.
+- `npm run build`: passing; rebuilt `dist/index.html` contains `#damage-battle`.
+- `npx tsc -p client/tsconfig.json --noEmit`: passing.
+- `npm run test:server`: **SIMULATION PASSED**.
+- Worker export and Durable Object migration remain `GameRoom` / `v1`; no server or wrangler change.
+- No browser is available here: the rendered page, error banner and fixed sea view still need the user's screenshot.

@@ -10,6 +10,7 @@
   </head>
   <body class="game">
     <div id="game-root"></div>
+    <p class="client-error paper" id="client-error" role="alert" hidden></p>
 
     <header class="hud hud-top paper">
       <div class="money" id="money-panel" title="Pieces of eight">
@@ -205,6 +206,7 @@
         <dt>Turn</dt><dd id="damage-turn">–</dd>
       </dl>
       <p class="damage-hurts" id="damage-hurts"></p>
+      <div class="damage-battle" id="damage-battle" aria-label="Battle orders"></div>
       <label class="repair-toggle">
         <input id="damage-repair-toggle" type="checkbox" />
         Repair at sea when out of combat
@@ -585,6 +587,42 @@
 
     <p class="hud hint">Tap to sail. Drag to pan. Pinch or scroll to zoom.</p>
 
+    <script>
+      // Last-resort reporting. A thrown draw or state update must never leave
+      // a blank page without a readable reason.
+      (function () {
+        function show(message, where) {
+          try {
+            var box = document.getElementById("client-error");
+            if (box) {
+              box.textContent = "Something went wrong: " + message +
+                (where ? " (" + where + ")" : "");
+              box.hidden = false;
+            }
+            console.error("Armadas error:", message, where || "");
+          } catch (_) {
+            // The console fallback is all that is left if even this fails.
+          }
+        }
+        window.reportArmadasError = show;
+        window.addEventListener("error", function (event) {
+          var message = event.error && event.error.message
+            ? event.error.message
+            : event.message || "Unknown error";
+          var where = event.filename
+            ? event.filename + ":" + event.lineno + ":" + event.colno
+            : "window";
+          show(message, where);
+        });
+        window.addEventListener("unhandledrejection", function (event) {
+          var reason = event.reason;
+          var message = reason && reason.message
+            ? reason.message
+            : String(reason || "Unhandled rejection");
+          show(message, "unhandled promise");
+        });
+      })();
+    </script>
     <script src="./main.js" defer></script>
   </body>
 </html>

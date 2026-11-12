@@ -192,6 +192,31 @@ function element<T extends Element>(id: string): T {
   return node as unknown as T;
 }
 
+type ArmadasErrorWindow = Window & {
+  reportArmadasError?: (message: string, where: string) => void;
+};
+
+function errorText(error: unknown): string {
+  if (error instanceof Error) return `${error.name}: ${error.message}`;
+  return String(error);
+}
+
+/** Report a client failure to the readable banner and the console. */
+function reportClientError(error: unknown, where: string): void {
+  const message = errorText(error);
+  const reporter = (window as ArmadasErrorWindow).reportArmadasError;
+  if (reporter) {
+    reporter(message, where);
+    return;
+  }
+  console.error("Armadas error:", message, where);
+  const box = document.getElementById("client-error");
+  if (box) {
+    box.textContent = `Something went wrong: ${message} (${where})`;
+    box.hidden = false;
+  }
+}
+
 function makePlayerId(): string {
   const bytes = new Uint8Array(8);
   crypto.getRandomValues(bytes);
@@ -935,6 +960,15 @@ async function start(): Promise<void> {
   let playerNavy: NavyId = "British";
   let selectedPortId: string | null = null;
   let shipyardPortId: string | null = null;
+
+  /** One failed draw layer must not stop the rest of the scene. */
+  function safeLayer(name: string, draw: () => void): void {
+    try {
+      draw();
+    } catch (error) {
+      reportClientError(error, `draw layer: ${name}`);
+    }
+  }
   let namingClass: BuyableShipClassId | null = null;
   let hirePortId: string | null = null;
   let tradePortId: string | null = null;
@@ -4514,9 +4548,9 @@ async function start(): Promise<void> {
     if (!tradePanel.hidden) renderTradePanel();
     if (damageShipId && !shipById(damageShipId)) closeDamagePanel();
     if (!damagePanel.hidden) renderDamagePanel();
-    renderBattleLog(state.log);
-    renderBattleBar();
-    renderSurrenderOffer();
+    safeLayer("battle log", () => renderBattleLog(state.log));
+    safeLayer("battle bar", renderBattleBar);
+    safeLayer("surrender offer", renderSurrenderOffer);
 
     lastSeen = Array.isArray(state.l) ? state.l : [];
     drawLastSeen();
@@ -4545,7 +4579,13 @@ async function start(): Promise<void> {
     socket = next;
 
     next.addEventListener("open", () => setStatus("Connected"));
-    next.addEventListener("message", onState);
+    next.addEventListener("message", (event) => {
+      try {
+        onState(event);
+      } catch (error) {
+        reportClientError(error, "state update");
+      }
+    });
     next.addEventListener("error", () => setStatus("Could not reach the ship. Retrying…", true));
     next.addEventListener("close", (event) => {
       if (socket !== next) return;
@@ -5537,38 +5577,40 @@ async function start(): Promise<void> {
     const ease = 1 - Math.exp(-7 * dt);
     const flagScale = clamp(8 / Math.max(1, view.kmAcross), 0.65, 1.6);
     for (const ship of ships.values()) {
-      ship.x += (ship.targetX - ship.x) * ease;
-      ship.y += (ship.targetY - ship.y) * ease;
-      ship.heading += shortestRadians(ship.targetHeading - ship.heading) * ease;
+      safeLayer(`ship ${ship.id}`, () => {
+        ship.x += (ship.targetX - ship.x) * ease;
+        ship.y += (ship.targetY - ship.y) * ease;
+        ship.heading += shortestRadians(ship.targetHeading - ship.heading) * ease;
 
-      const screen = toScreen(ship.x, ship.y);
-      ship.hull.position.set(screen.x, screen.y);
-      ship.hull.rotation = ship.heading;
-      ship.ring.position.set(screen.x, screen.y);
-      ship.hull.visible =
-        screen.x > -90 && screen.x < app.screen.width + 90 &&
-        screen.y > -90 && screen.y < app.screen.height + 90;
-      ship.ring.visible = ship.own && ship.hull.visible;
-      ship.flag.position.set(screen.x, screen.y);
-      ship.flag.rotation = ship.heading;
-      ship.flag.scale.set(flagScale);
-      ship.flag.visible = whiteFlagVisible(ship.hull.visible, ship.surrendered);
-      ship.runInk.position.set(screen.x, screen.y);
-      ship.runInk.rotation = ship.heading;
-      ship.runInk.visible = ship.running && ship.hull.visible;
-      ship.runLabel.position.set(screen.x + 10, screen.y - 20);
-      ship.runLabel.visible = ship.running && ship.hull.visible;
+        const screen = toScreen(ship.x, ship.y);
+        ship.hull.position.set(screen.x, screen.y);
+        ship.hull.rotation = ship.heading;
+        ship.ring.position.set(screen.x, screen.y);
+        ship.hull.visible =
+          screen.x > -90 && screen.x < app.screen.width + 90 &&
+          screen.y > -90 && screen.y < app.screen.height + 90;
+        ship.ring.visible = ship.own && ship.hull.visible;
+        ship.flag.position.set(screen.x, screen.y);
+        ship.flag.rotation = ship.heading;
+        ship.flag.scale.set(flagScale);
+        ship.flag.visible = whiteFlagVisible(ship.hull.visible, ship.surrendered);
+        ship.runInk.position.set(screen.x, screen.y);
+        ship.runInk.rotation = ship.heading;
+        ship.runInk.visible = ship.running && ship.hull.visible;
+        ship.runLabel.position.set(screen.x + 10, screen.y - 20);
+        ship.runLabel.visible = ship.running && ship.hull.visible;
+      });
     }
 
-    refreshDiscoveredOutline(now);
-    refreshMap(now);
-    refreshFogPaper();
-    updateLiveCircles();
-    updateLayerOffset();
-    refreshPorts();
-    drawSelectedRoute();
-    drawCombatRange();
-    drawCombatFx(now);
+    safeLayer("discovered outline", () => refreshDiscoveredOutline(now));
+    safeLayer("chart", () => refreshMap(now));
+    safeLayer("fog paper", () => refreshFogPaper());
+    safeLayer("live sight", () => updateLiveCircles());
+    safeLayer("chart offset", () => updateLayerOffset());
+    safeLayer("ports", () => refreshPorts());
+    safeLayer("selected route", () => drawSelectedRoute());
+    safeLayer("combat range", () => drawCombatRange());
+    safeLayer("combat effects", () => drawCombatFx(now));
 
     for (let index = 0; index < lastSeenViews.length; index += 1) {
       const markerView = lastSeenViews[index];
@@ -5587,6 +5629,7 @@ async function start(): Promise<void> {
     }
 
     // Wind streaks blow towards the direction the wind is going to.
+    safeLayer("wind", () => {
     windLayer.clear();
     const angle = ((windFrom + 180) * Math.PI) / 180;
     const dx = Math.sin(angle);
@@ -5616,9 +5659,10 @@ async function start(): Promise<void> {
           cap: "round",
         });
     }
+    });
 
-    updateRuler();
-    drawBorders();
+    safeLayer("chart ruler", updateRuler);
+    safeLayer("borders", drawBorders);
     if (now - lastDebugLineAt >= 500) {
       lastDebugLineAt = now;
       updateDebugLine();
@@ -5650,8 +5694,9 @@ async function start(): Promise<void> {
 setUiSize(readSavedSize());
 void start().catch((error: unknown) => {
   const status = document.getElementById("status");
+  reportClientError(error, "client start");
   if (status) {
-    status.textContent = `The sea could not be drawn: ${error instanceof Error ? error.message : String(error)}`;
+    status.textContent = `The sea could not be drawn: ${errorText(error)}`;
     status.dataset.state = "error";
   }
 });

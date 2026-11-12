@@ -72,6 +72,7 @@ export function orderMenuItems(kind: OrderMenuKind): OrderMenuItem[] {
     return [
       { id: "attackSink", label: "Attack: Sink", primary: true },
       { id: "attackCapture", label: "Attack: Capture", primary: false },
+      { id: "board", label: "Board", primary: false },
       { id: "close", label: "Cancel", primary: false },
     ];
   }

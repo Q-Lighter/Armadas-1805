@@ -2811,3 +2811,20 @@ body.game {
   overflow-wrap: anywhere;
 }
 .client-error[hidden] { display: none; }
+
+/* 3D: fire, boarding, crew and prisoner rows */
+.damage-fire, .damage-boarding, .damage-actions, .port-prisoners {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 44px;
+  flex-wrap: wrap;
+  margin: 8px 0;
+}
+.damage-fire span, .damage-boarding span { font-size: 0.9rem; }
+.damage-fire span:nth-child(2) { font-weight: 600; color: #9b4a1f; }
+.damage-boarding { flex-direction: column; align-items: stretch; }
+.damage-boarding .damage-bar-track { min-height: 10px; }
+.port-prisoner-total { margin: 0; font-size: 0.9rem; }
+#crew-donor, #crew-receiver { min-height: 44px; width: 100%; margin: 4px 0 8px; }
+#crew-amount { width: 100%; min-height: 44px; }

@@ -2218,3 +2218,35 @@ winding`):
   second at 10 Hz (219,445 at 5 Hz), versus the 3C 1.52 ms / 480,981 bytes.
   Local Node proxy, not Cloudflare CPU time.
 - Screens and the duel check remain for 3D-c. No browser is available here.
+
+## 3D-c: boarding, crew, fire and abandoned ship screens
+
+- Added the Board sheet with server-rounded odds and confirm/cancel, a boarding
+  timer bar, the captured-crew sheet (Join, Kill, Take prisoners with the 120 s
+  default), the crew-transfer sheet with Minimum/Half/Full and a Claim mode,
+  the Auto-board toggle on ship and fleet cards, and port prisoner handover.
+- Abandoned ships draw a cheap grey broken mast scaled by `crewUi`, keep the
+  paper label, and open the transfer sheet from Claim. Burning ships get an
+  orange status glow, smoke at night and a Fire row with strength and fighting
+  state; sinking ships grey out and cannot be selected. New combat events feed
+  the existing effect layer.
+- `tests/crew-ui.test.ts` covers the 360x740, 412x915, 740x360, 768x1024 and
+  1280x800 render plans, odd rounding, minimum claim crew, bounty total, and
+  owner-only crew/prisoner details.
+
+### Checks
+
+- `npm test`: **338/338 passing**.
+- `npm run build`: passing.
+- `npm run test:server`: simulation passed (118 ticks, 63 updates, 1,888
+  typical bytes).
+- `npm run benchmark:3d` final: 1.86 ms per world step, 467,862 bytes per
+  player per second at 10 Hz (230,090 at 5 Hz), versus 1.52 ms / 480,981 bytes
+  in 3C and the earlier 6.39 ms load-test level.
+- Duel check with fires: raider 1.00, frigate 2.71, line 3.03, flagship 6.41
+  real minutes. The Draft fire hull/crew coefficients were tuned down to
+  0.00035%/0.00025% per strength-second so fires do not shorten the AGREED
+  duel bands. Without fires the same seeds give 1.03/2.84/3.23/7.42 minutes.
+- No browser or headless Chromium is available: the sheets and map drawing
+  were not visually inspected or touch-tested. Layout and state behaviour are
+  covered only by the render-plan and server tests above.

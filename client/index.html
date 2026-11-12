@@ -82,6 +82,53 @@
       <div class="battle-bar-actions" id="battle-bar-actions"></div>
     </section>
 
+    <!-- 3D: Board odds, crew transfer and captured-crew choices. -->
+    <section class="surrender-sheet paper" id="board-sheet" role="dialog" aria-labelledby="board-title" hidden>
+      <div class="panel-head">
+        <div><p class="kicker">Boarding</p><h2 id="board-title">Board</h2></div>
+        <button class="btn panel-close" id="board-close" type="button">Close</button>
+      </div>
+      <p class="surrender-offer-detail" id="board-detail"></p>
+      <p class="surrender-offer-fleet" id="board-odds"></p>
+      <div class="surrender-offer-actions">
+        <button class="btn" id="board-cancel" type="button">Cancel</button>
+        <button class="btn btn-seal" id="board-confirm" type="button">Board</button>
+      </div>
+    </section>
+
+    <section class="surrender-sheet paper" id="crew-sheet" role="dialog" aria-labelledby="crew-title" hidden>
+      <div class="panel-head">
+        <div><p class="kicker">Crew</p><h2 id="crew-title">Transfer crew</h2></div>
+        <button class="btn panel-close" id="crew-close" type="button">Close</button>
+      </div>
+      <p class="surrender-offer-detail" id="crew-hint"></p>
+      <label class="heading-value" for="crew-donor">Donor</label>
+      <select id="crew-donor"></select>
+      <label class="heading-value" for="crew-receiver">Receiver</label>
+      <select id="crew-receiver"></select>
+      <input id="crew-amount" type="range" min="1" max="1" step="1" value="1" aria-label="Crew to transfer" />
+      <p class="heading-preview" id="crew-preview">–</p>
+      <div class="surrender-offer-actions" id="crew-quick"></div>
+      <div class="heading-actions">
+        <button class="btn" id="crew-cancel" type="button">Cancel</button>
+        <button class="btn btn-seal" id="crew-confirm" type="button">Transfer</button>
+      </div>
+    </section>
+
+    <section class="surrender-sheet paper" id="captured-sheet" role="dialog" aria-labelledby="captured-title" hidden>
+      <div class="panel-head">
+        <div><p class="kicker">Prize</p><h2 id="captured-title">Captured crew</h2></div>
+        <button class="btn panel-close" id="captured-close" type="button">Close</button>
+      </div>
+      <p class="surrender-offer-detail" id="captured-detail"></p>
+      <p class="surrender-offer-reason" id="captured-rule"></p>
+      <div class="surrender-offer-actions">
+        <button class="btn btn-seal" id="captured-join" type="button">Join</button>
+        <button class="btn" id="captured-kill" type="button">Kill</button>
+        <button class="btn" id="captured-prisoners" type="button">Take prisoners</button>
+      </div>
+    </section>
+
     <!-- A surrender always asks once more before the flag goes up. -->
     <section class="surrender-confirm paper" id="surrender-confirm" role="dialog" aria-labelledby="surrender-confirm-title" hidden>
       <p class="kicker">Battle orders</p>
@@ -204,8 +251,24 @@
         <dt>State</dt><dd id="damage-state">–</dd>
         <dt>Speed</dt><dd id="damage-speed">–</dd>
         <dt>Turn</dt><dd id="damage-turn">–</dd>
+        <dt>Prisoners</dt><dd id="damage-prisoners">–</dd>
       </dl>
       <p class="damage-hurts" id="damage-hurts"></p>
+      <div class="damage-fire" id="damage-fire" hidden>
+        <span>Fire</span><span id="damage-fire-bar"></span><span id="damage-fire-status"></span>
+      </div>
+      <div class="damage-boarding" id="damage-boarding" hidden>
+        <span id="damage-boarding-label">Boarding</span>
+        <div class="damage-bar-track"><span class="damage-bar-fill" id="damage-boarding-fill"></span></div>
+      </div>
+      <div id="damage-captured-row" hidden>
+        <button class="btn" id="damage-captured" type="button">Captured crew</button>
+      </div>
+      <div class="damage-actions">
+        <button class="btn" id="damage-crew" type="button">Transfer crew</button>
+        <button class="btn" id="damage-claim" type="button" hidden>Claim</button>
+        <label class="repair-toggle"><input id="damage-auto-board" type="checkbox" /> Auto-board</label>
+      </div>
       <div class="damage-battle" id="damage-battle" aria-label="Battle orders"></div>
       <label class="repair-toggle">
         <input id="damage-repair-toggle" type="checkbox" />
@@ -381,6 +444,10 @@
       <p class="port-npc-note" id="port-npc-note" hidden>
         Neutral port: no ships for sale here. Capturable ports sell ships.
       </p>
+      <div class="port-prisoners" id="port-prisoners" hidden>
+        <button class="btn" id="port-handover" type="button">Hand over prisoners (20 each)</button>
+        <p id="port-prisoner-total"></p>
+      </div>
       <div class="port-actions">
         <button class="btn" id="port-sail" type="button" hidden>Sail to port</button>
         <button class="btn" id="port-undock" type="button" hidden>Undock</button>

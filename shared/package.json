@@ -182,6 +182,10 @@
       "types": "./dist/combat-ui.d.ts",
       "default": "./dist/combat-ui.js"
     },
+    "./crew-ui": {
+      "types": "./dist/crewUi.d.ts",
+      "default": "./dist/crewUi.js"
+    },
     "./test-setup": {
       "types": "./dist/testSetup.d.ts",
       "default": "./dist/testSetup.js"

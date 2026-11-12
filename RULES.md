@@ -138,8 +138,9 @@ Read this file at the start of every prompt, then follow it for the whole sessio
   ship sinks. A usable port pays 20 pieces for each prisoner handed over.
 - Each landed hit has a 1 in 40 chance to start a fire, or adds 10 to an
   existing fire. Fire strength runs 0-100, starts at 20 and grows 0.5 a second.
-  It removes strength x 0.005% of hull and strength x 0.003% of full crew each
-  second. Fighting it removes 1.5 x crew% / 100 a second, uses 0.01 t of repair
+  It removes strength x 0.00035% of hull and strength x 0.00025% of full
+  crew each second (tuned so fires do not dominate a duel). Fighting it
+  removes 1.5 x crew% / 100 a second, uses 0.01 t of repair
   materials a second, and pauses normal repairs; with no materials it works at
   30%. At zero the fire is out. A burning ship may ignite any ship within
   100 m, including friends: chance a second is 0.01 x strength / 100, x2.5

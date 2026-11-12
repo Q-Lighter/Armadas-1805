@@ -382,8 +382,8 @@ export const settings = {
     fireStartStrength: 20,
     fireGrowthPerSecond: 0.5,
     /** Draft: strength x this share of hull per second, x this share of crew. */
-    fireHullDamagePerStrengthSecond: 0.00005,
-    fireCrewDamagePerStrengthSecond: 0.00003,
+    fireHullDamagePerStrengthSecond: 0.0000035,
+    fireCrewDamagePerStrengthSecond: 0.0000025,
     /** AGREED: fire fighting costs repair materials and crew time. */
     fireFightStrengthPerSecond: 1.5,
     fireFightMaterialsPerSecond: 0.01,

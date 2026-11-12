@@ -203,8 +203,8 @@ test("fire starts at 20, grows, damages, and fighting uses materials", () => {
   assert.equal(growFire(started, 10).strength, 25);
 
   const damage = fireDamage(100, 10_000, 200, 10);
-  assert.ok(Math.abs(damage.hullLoss - 500) < 1e-9);
-  assert.ok(Math.abs(damage.crewLoss - 6) < 1e-9);
+  assert.ok(Math.abs(damage.hullLoss - 35) < 1e-9);
+  assert.ok(Math.abs(damage.crewLoss - 0.5) < 1e-9);
 
   const fought = fightFire({ burning: true, strength: 50 }, 100, 10, 10);
   assert.equal(fought.materialsUsed, 0.1);

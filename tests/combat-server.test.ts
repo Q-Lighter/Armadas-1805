@@ -280,3 +280,27 @@ test("a first broadside that misses still starts the battle and warns the target
   assert.ok((world.notices.get("q") ?? []).includes("Ship under fire."));
 });
 
+test("test rooms expose the why-not-firing line but normal rooms do not", () => {
+  const world = testWorld();
+  addPlayer(world, "p");
+  assert.equal(spawnTestEnemyFleet(world, "p", "frigate:1"), 1);
+  const own = shipsForOwner(world, "p")[0]!;
+  own.headingRad = 0;
+  const enemy = world.botFleets.get("TEST-ENEMY")![0]!;
+  own.stores.ammunition = 100;
+  enemy.x = own.x + 1;
+  enemy.y = own.y;
+  assert.equal(applyShipSpecialOrder(world, "p", own.id, {
+    type: "engage", shipId: enemy.id, objective: "sink",
+  }), true);
+  for (let index = 0; index < 100; index += 1) stepWorld(world, 14.4);
+  const snapshot = visibleStateFor(world, "p").fleet[0]!;
+  assert.match(snapshot.debugCombat ?? "", /^Order: Sink\. Step: /);
+  assert.match(snapshot.debugCombat ?? "", /(Not firing|Guns ready)/);
+  assert.ok(["Sailing", "Hove to", "In irons", "Drifting"].includes(snapshot.stateLabel ?? ""));
+
+  const normal = createWorld("normal-readout");
+  addPlayer(normal, "p");
+  assert.equal(visibleStateFor(normal, "p").fleet[0]?.debugCombat, undefined);
+  assert.equal(visibleStateFor(normal, "p").fleet[0]?.stateLabel, "Sailing");
+});

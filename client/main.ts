@@ -495,6 +495,8 @@ function parseOwnShip(raw: unknown): OwnShipSnapshot | null {
     autoBoard: source.autoBoard !== false,
     boardingProgress: finiteNumber(source.boardingProgress) ?? undefined,
     boardingSecondsLeft: finiteNumber(source.boardingSecondsLeft) ?? undefined,
+    stateLabel: typeof source.stateLabel === "string" ? source.stateLabel : undefined,
+    debugCombat: typeof source.debugCombat === "string" ? source.debugCombat : undefined,
     repairEnabled: source.repairEnabled !== false,
     crewTooLow: source.crewTooLow === true,
     effectiveSpeedKnots: finiteNumber(source.effectiveSpeedKnots) ?? undefined,
@@ -658,6 +660,7 @@ async function start(): Promise<void> {
   const damageTurn = element<HTMLElement>("damage-turn");
   const damagePrisoners = element<HTMLElement>("damage-prisoners");
   const damageHurts = element<HTMLElement>("damage-hurts");
+  const damageCombatReadout = element<HTMLElement>("damage-combat-readout");
   const damageRepairToggle = element<HTMLInputElement>("damage-repair-toggle");
   const damageClose = element<HTMLButtonElement>("damage-close");
   const portRepairBox = element<HTMLElement>("port-repair");
@@ -734,6 +737,7 @@ async function start(): Promise<void> {
   const shipTypeOut = element<HTMLElement>("ship-type");
   const shipCrewOut = element<HTMLElement>("ship-crew");
   const shipStateOut = element<HTMLElement>("ship-state");
+  const shipCombatReadout = element<HTMLElement>("ship-combat-readout");
   const shipyardPanel = element<HTMLElement>("shipyard-panel");
   const shipyardPortOut = element<HTMLElement>("shipyard-port");
   const shipyardMoney = element<HTMLElement>("shipyard-money");
@@ -3812,6 +3816,9 @@ async function start(): Promise<void> {
       "ship-state-needs-crew",
       viewRow?.needsCrew === true,
     );
+    const shipReadout = row?.debugCombat;
+    shipCombatReadout.textContent = shipReadout ?? "";
+    shipCombatReadout.hidden = !shipReadout;
 
     if (own) {
       const heading = own[4];
@@ -4266,11 +4273,15 @@ async function start(): Promise<void> {
     damageReload.textContent = row.reloadProgress === undefined
       ? "–"
       : `${Math.round(row.reloadProgress * 100)}% · ${(row.reloadLeftSeconds ?? 0).toFixed(1)}s`;
-    damageState.textContent = row.inCombat
+    const repairState = row.inCombat
       ? "In combat — repairs blocked"
       : row.canRepair
         ? "Can repair"
         : "Repairs blocked";
+    damageState.textContent = `${row.stateLabel ?? "Sailing"} · ${repairState}`;
+    const damageReadout = row.debugCombat;
+    damageCombatReadout.textContent = damageReadout ?? "";
+    damageCombatReadout.hidden = !damageReadout;
     damageSpeed.textContent = row.effectiveSpeedKnots === undefined
       ? "–"
       : `${row.effectiveSpeedKnots.toFixed(1)} / ${(row.normalSpeedKnots ?? 0).toFixed(1)} kn`;

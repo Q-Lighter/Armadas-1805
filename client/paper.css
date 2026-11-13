@@ -2828,3 +2828,14 @@ body.game {
 .port-prisoner-total { margin: 0; font-size: 0.9rem; }
 #crew-donor, #crew-receiver { min-height: 44px; width: 100%; margin: 4px 0 8px; }
 #crew-amount { width: 100%; min-height: 44px; }
+
+/* Test/dev combat readout: one plain line, never a new floating bar. */
+.combat-readout {
+  margin: 6px 0;
+  padding: 6px 8px;
+  border-left: 3px solid #7d2a20;
+  background: rgba(125, 42, 32, 0.06);
+  font-size: 0.85rem;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}

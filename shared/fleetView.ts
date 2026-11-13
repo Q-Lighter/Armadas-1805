@@ -108,7 +108,13 @@ export function buildShipStoreBars(ship: OwnShipSnapshot): ShipStoreBar[] {
       label: "Repair materials",
       percent: storePercent(s.repairMaterials, c.repairMaterials),
       amountText: `${formatTonnesWithUnit(s.repairMaterials)} / ${formatTonnesWithUnit(c.repairMaterials)}`,
-      detail: "Hull repairs later",
+      detail: ship.portRepair?.active
+        ? "Port repairs active"
+        : ship.repairEnabled === false
+          ? "Repairs off"
+          : ship.canRepair === false
+            ? "Repairs paused after combat"
+            : "Repairs ready",
       urgent: false,
     },
     {
@@ -116,7 +122,7 @@ export function buildShipStoreBars(ship: OwnShipSnapshot): ShipStoreBar[] {
       label: "Ammunition",
       percent: storePercent(s.ammunition, c.ammunition),
       amountText: `${formatTonnesWithUnit(s.ammunition)} / ${formatTonnesWithUnit(c.ammunition)}`,
-      detail: "Broadsides later",
+      detail: `${Math.floor(ship.ammunitionBroadsides ?? 0)} broadsides`,
       urgent: false,
     },
     {
@@ -149,7 +155,7 @@ export function buildFleetRow(
   } else if (ship.status === "docked") {
     stateText = `Docked at ${portName ?? "port"}`;
   } else {
-    stateText = STATUS_WORDS[ship.status];
+    stateText = ship.stateLabel ?? STATUS_WORDS[ship.status];
   }
 
   return {

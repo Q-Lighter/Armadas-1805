@@ -86,6 +86,7 @@ import type { DebugStats } from "./loadMetrics.js";
 import {
   ammunitionBroadsideCount,
   applyDriftingHullDamage,
+  bearingGunGroups,
   bearingRad,
   crewPercent,
   crewTooLow,
@@ -113,6 +114,7 @@ import {
   sinkingComplete, transferCrew, withinRange, type CapturedChoice, type FireState,
   type SinkingState,
 } from "./boarding.js";
+import { firingReadout, sailingStateLabel } from "./combatReadout.js";
 import { NAVY_IDS, type NavyId } from "./navies.js";
 import type { DummyBehaviour } from "./testSetup.js";
 import {
@@ -442,6 +444,10 @@ export interface OwnShipSnapshot {
   autoBoard?: boolean;
   boardingProgress?: number;
   boardingSecondsLeft?: number;
+  /** Hove to / In irons / Drifting / Sailing, from the real movement state. */
+  stateLabel?: string;
+  /** Test/dev only: order step and the first reason the guns are silent. */
+  debugCombat?: string;
 }
 
 /** One dotted order line for the selected ship or fleet. */
@@ -5691,6 +5697,50 @@ export function visibleStateFor(
         }
       }
     }
+    const boardingFight = [...world.boardingFights.values()].find(
+      (fight) => fight.attackerId === ship.id || fight.defenderId === ship.id,
+    );
+    const boardingTarget = ship.boardingShipId
+      ? shipEntry(world, ship.boardingShipId)?.ship
+      : null;
+    const combatTarget = engagement
+      ? shipEntry(world, engagement.targetShipId)?.ship
+      : boardingTarget;
+    const combatDistanceM = combatTarget
+      ? Math.hypot(combatTarget.x - ship.x, combatTarget.y - ship.y) * 1000
+      : undefined;
+    const targetBearing = combatTarget ? bearingRad(ship, combatTarget) : null;
+    const bearingOffBeam = targetBearing === null
+      ? undefined
+      : Math.abs(Math.abs(shortestTurnDegrees(ship.headingRad, targetBearing)) - 90);
+    const gunsBear = targetBearing === null
+      ? undefined
+      : bearingGunGroups(spec, ship.headingRad, targetBearing).length > 0;
+    const phase = boardingFight ? "grappled"
+      : ship.boardingShipId ? "boarding approach"
+      : ship.hoveTo ? "hove"
+      : engagement ? (combatDistanceM !== undefined && combatDistanceM > 450 ? "closing" : "in range")
+      : ship.order ? "sailing"
+      : "holding";
+    const stateLabel = sailingStateLabel({
+      hoveTo: ship.hoveTo,
+      hasOrder: Boolean(ship.order || engagement || ship.boardingShipId),
+      speedKnots: ship.speedKnots,
+      effectiveSailPercent: performance.effectiveSailPercent,
+      driftSpeedKnots: performance.driftSpeedKnots,
+    });
+    const debugCombat = world.kind === "normal" ? undefined : firingReadout({
+      order: ship.boardingShipId ? "board" : ship.battleOrder ?? null,
+      phase,
+      distanceM: combatDistanceM,
+      bearingOffBeamDeg: bearingOffBeam,
+      reloadSeconds: reloadLeft,
+      ammunitionBroadsides: ammunitionBroadsideCount(spec, ship.stores.ammunition),
+      crewTooLow: performance.crewTooLow,
+      gunsPercent: damage.guns,
+      hasTarget: combatTarget !== null && combatTarget !== undefined,
+      gunsBear,
+    });
     return {
       id: ship.id,
       name: ship.name,
@@ -5750,6 +5800,8 @@ export function visibleStateFor(
       boardingSecondsLeft: world.boardingFights.get(ship.id)
         ? Math.max(0, Math.ceil((world.boardingFights.get(ship.id)!.endsRealMs - nowRealMs) / 1000))
         : undefined,
+      stateLabel,
+      debugCombat,
       battleOrder: ship.battleOrder,
       surrendered: ship.surrendered === true,
       running: ship.runState !== undefined,

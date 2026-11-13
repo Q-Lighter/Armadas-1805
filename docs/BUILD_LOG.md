@@ -2279,3 +2279,30 @@ final 150 m, and stand-and-fire / Alongside fighting styles.
 
 - `npm test`: 345 passing.
 - Duel simulation: 1.00 / 2.71 / 3.03 / 6.41 real minutes.
+
+## Session 3D-fix-b: why-not-firing readout and state labels
+
+**Date:** 2026-11-13
+**Branch:** main
+
+### What was asked
+
+In test and dev rooms only, show the current order step and the first reason the
+guns are silent, show Hove to / In irons / Sailing / Drifting, and replace the
+"Hull repairs later" and "Broadsides later" placeholders.
+
+### What was built
+
+- `shared/combatReadout.ts` turns the real order, range, bearing, reload, crew,
+  guns and ammunition state into one line for the ship panel and damage sheet.
+  It is included in snapshots only outside normal rooms.
+- Ship state labels now come from the movement state: Hove to, In irons,
+  Drifting or Sailing.
+- Ship stores show repair readiness and the remaining whole broadsides instead
+  of placeholder text.
+- Added readout and snapshot tests.
+
+### Checks
+
+- `npm test`: 348 passing.
+- `npm run build`: passed.

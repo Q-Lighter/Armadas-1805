@@ -34,13 +34,25 @@ function equal(a: unknown, b: unknown): boolean {
 
 function changedFields(previous: StateMessage, current: StateMessage, includeFleet: boolean): Record<string, unknown> {
   const fields: Record<string, unknown> = {};
-  for (const key of ["m", "sel", "sp", "h", "d", "sv", "out", "go", "roster", "ports", "fleets", "groups", "chart", "l"] as const) {
+  for (const key of ["m", "sel", "sp", "h", "d", "sv", "out", "go", "roster", "ports", "fleets", "groups", "chart", "l", "trailAdds", "trailReset", "lostMarks"] as const) {
     if (!equal(previous[key], current[key])) fields[key] = current[key];
   }
   if (includeFleet) fields.fleet = current.fleet;
   // These small flag lists must be sent even when empty so the client clears
   // a flag that has gone away.
   fields.events = current.events ?? [];
+  // Trail lists are only needed when there is something new to append or a
+  // previous list that must be cleared; an empty full state stays compact.
+  if ((Object.keys(current.trailAdds ?? {}).length > 0) ||
+      (Object.keys(previous.trailAdds ?? {}).length > 0)) {
+    fields.trailAdds = current.trailAdds ?? {};
+  }
+  if ((current.trailReset?.length ?? 0) > 0 || (previous.trailReset?.length ?? 0) > 0) {
+    fields.trailReset = current.trailReset ?? [];
+  }
+  if ((current.lostMarks?.length ?? 0) > 0 || (previous.lostMarks?.length ?? 0) > 0) {
+    fields.lostMarks = current.lostMarks ?? [];
+  }
   fields.sf = current.sf ?? [];
   fields.abandoned = current.abandoned ?? [];
   fields.burning = current.burning ?? [];
@@ -220,5 +232,21 @@ export function newestStateWithEvents(states: readonly StateMessage[]): StateMes
       events.push(event);
     }
   }
-  return { ...newest, events };
+  // Skipped updates may contain trail additions. Merge them into the newest
+  // state so a slow frame never loses the older part of a journey.
+  const trailAdds: Record<string, Array<[number, number]>> = {};
+  const trailReset = new Set<string>();
+  for (const state of states) {
+    for (const [id, points] of Object.entries(state.trailAdds ?? {})) {
+      if (!Array.isArray(points)) continue;
+      (trailAdds[id] ??= []).push(...points);
+    }
+    for (const id of state.trailReset ?? []) trailReset.add(id);
+  }
+  for (const id of trailReset) delete trailAdds[id];
+  const merged: StateMessage = { ...newest, events };
+  if (Object.keys(trailAdds).length > 0) merged.trailAdds = trailAdds;
+  if (trailReset.size > 0) merged.trailReset = [...trailReset];
+  if (newest.lostMarks !== undefined) merged.lostMarks = newest.lostMarks;
+  return merged;
 }

@@ -2714,3 +2714,32 @@ planner's clearance waypoints without adding a sideways zigzag.
 
 - `npm test`: passed (406 tests including the new prediction and spline tests).
 - `npm run build`: passed.
+
+
+## 3E-sail-c: journey trails on the chart
+
+- Journeys live in `OwnerState`, so they survive a socket refresh or reconnect.
+  A journey starts on undock or on the first order at sea, keeps running while
+  docked, and ends only when the ship is lost, captured, abandoned, manually
+  stopped, or all trails are cleared.
+- Every 1 km (or 30 game seconds when slower) adds a trail point. The cap is
+  3,000 points per journey; when full, every other point in the older half is
+  dropped. Lost ships leave an X at their last point; manually stopped journeys
+  leave no X.
+- A full update carries a simplified trail of at most 300 points for my ships
+  only. Later updates carry at most 20 new points per ship; they never resend
+  the whole path. Full trails take 3,895 bytes for 283 points in the test; the
+  incremental sample was 50 bytes.
+- The Chart has Selected (default), All and None trail filters, a Clear all
+  trails button, dark-brown dotted trails drawn above the chart ground and
+  below ships, and X marks for losses. The ship card and Damage panel show
+  `Journey: N km, N.N game days` with an End journey button. Tap targets are
+  44 px.
+- Fog is unchanged: trails are built from the player's own owner state, and
+  only own ships are sent.
+
+### Checks
+
+- `npm test`: passed (413 tests including the journey, cap, privacy, reconnect
+  and chart-filter tests).
+- `npm run build`: passed.

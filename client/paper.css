@@ -3024,3 +3024,43 @@ body.game {
   vertical-align: middle;
 }
 .fleet-name .flagship-flag { color: var(--wax); margin-right: 0.2rem; }
+
+/* 3E-sail-c: small chart trail controls and journey readout. */
+.chart-trails {
+  position: fixed;
+  top: 64px;
+  right: 12px;
+  z-index: 40;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+  max-width: min(420px, calc(100vw - 24px));
+  padding: 6px 8px;
+}
+.chart-trails[hidden] { display: none; }
+.chart-trails-label {
+  font-size: 0.8rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+}
+.chart-trails-actions { display: flex; gap: 4px; }
+.chart-trail-option,
+.chart-trails-clear {
+  min-height: 44px;
+  min-width: 44px;
+  padding: 6px 10px;
+}
+.chart-trail-option[aria-pressed="true"] {
+  background: rgba(140, 112, 70, 0.24);
+  font-weight: 600;
+}
+.journey-line {
+  margin: 6px 0 4px;
+  font-size: 0.85rem;
+  color: #4a3220;
+}
+.ship-journey-end,
+.damage-journey-end {
+  min-height: 44px;
+}

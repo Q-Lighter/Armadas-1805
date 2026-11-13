@@ -38,6 +38,10 @@
       "types": "./dist/prediction.d.ts",
       "default": "./dist/prediction.js"
     },
+    "./journey": {
+      "types": "./dist/journey.d.ts",
+      "default": "./dist/journey.js"
+    },
     "./fog": {
       "types": "./dist/fog.d.ts",
       "default": "./dist/fog.js"

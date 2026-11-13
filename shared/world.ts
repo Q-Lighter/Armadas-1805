@@ -26,6 +26,7 @@ import {
   MAP_WIDTH_KM,
   isInsideMapFrame,
   lonLatToMap,
+  type MapPoint,
 } from "./map.js";
 import {
   createChart,
@@ -84,6 +85,8 @@ import {
   smoothRoute,
 } from "./route.js";
 import { predictRoutePath } from "./prediction.js";
+import { recordJourneys, simplifyTrail, startJourney, stopJourney, stopAllJourneys } from "./journey.js";
+import type { JourneyState } from "./journey.js";
 import type { DebugStats } from "./loadMetrics.js";
 import { SpatialGrid } from "./spatialGrid.js";
 import {
@@ -207,6 +210,10 @@ export const PORT_FULL_NOTICE = "Port is full: waiting at anchor.";
 export interface OwnerState {
   money: number;
   selectedShipId: string | null;
+  /** This player's own ship journeys, keyed by ship id. */
+  journeys: Map<string, JourneyState>;
+  /** X marks where this player's ships were lost, for the chart. */
+  lostMarks: MapPoint[];
 }
 
 /** One human player's identity and game record, kept after their ships go. */
@@ -270,6 +277,8 @@ export interface World {
   shipCommands: Map<string, ShipCommand>;
   /** Recent leader paths used by line ahead. */
   fleetPaths: Map<string, Array<{ x: number; y: number }>>;
+  /** Raw trail index already sent per player and ship. */
+  trailSent: Map<string, Map<string, number>>;
   /** Cached ghost paths for the owner's chart, by ship id. */
   routePredictions: Map<string, {
     points: Array<{ x: number; y: number }>;
@@ -460,6 +469,10 @@ export interface OwnShipSnapshot {
   route?: Array<[number, number]> | null;
   /** Real-steering prediction for the planned route, own ships only. */
   predictedPath?: Array<[number, number]> | null;
+  /** This ship's journey trail, own ships only, on a full fleet update. */
+  trail?: Array<[number, number]> | null;
+  /** Journey distance and start, own ships only. */
+  journey?: { distanceKm: number; startedGameMs: number } | null;
   /** Fleet membership and direct-order route geometry, own ships only. */
   fleetId?: string | null;
   detached?: boolean;
@@ -700,6 +713,12 @@ export interface StateMessage {
   roster?: Array<{ id: string; name: string; navy: NavyId }>;
   /** 3E: the final table, only after one navy has won. */
   go?: GameOverState;
+  /** New own trail points since the last update, never another player's. */
+  trailAdds?: Record<string, Array<[number, number]>>;
+  /** Own trails that ended or were cleared since the last update. */
+  trailReset?: string[];
+  /** Own lost-ship X marks, kept until the game ends. */
+  lostMarks?: Array<[number, number]>;
 }
 
 export interface WorldOptions {
@@ -779,6 +798,7 @@ export function createWorld(roomCode = "main", options: WorldOptions = {}): Worl
     fleetCommands: new Map(),
     shipCommands: new Map(),
     fleetPaths: new Map(),
+    trailSent: new Map(),
     routePredictions: new Map(),
     testFleetsSpawned: new Set(),
     nextFleetId: 1,
@@ -1041,7 +1061,7 @@ export function addPlayer(
     // room created before charts or fleets existed.
     if (!world.fleets.has(playerId)) world.fleets.set(playerId, [existing]);
     if (!world.owners.has(playerId)) {
-      world.owners.set(playerId, { money: startMoney, selectedShipId: existing.id });
+      world.owners.set(playerId, { money: startMoney, selectedShipId: existing.id, journeys: new Map(), lostMarks: [] });
     }
     if (!world.charts.has(playerId)) {
       const chart = createChart(world.kind);
@@ -1081,7 +1101,7 @@ export function addPlayer(
   ship.isFlagship = true;
   world.players.set(playerId, ship);
   world.fleets.set(playerId, [ship]);
-  world.owners.set(playerId, { money: startMoney, selectedShipId: ship.id });
+  world.owners.set(playerId, { money: startMoney, selectedShipId: ship.id, journeys: new Map(), lostMarks: [] });
   world.playerRecords.set(playerId, {
     id: playerId,
     name: playerId,
@@ -3500,6 +3520,7 @@ export function applyOrder(
 
   const ship = shipForOrder(world, playerId, shipId);
   if (!ship || ship.deliveryPortId) return false;
+  startJourney(world, playerId, ship);
   if (!fromFleet) {
     if (ship.runState) clearRun(ship);
     detachForDirectOrder(world, playerId, ship);
@@ -4062,8 +4083,19 @@ export function undock(world: World, playerId: string, shipId?: unknown): boolea
   ship.portOrderId = null;
   ship.waitingPortId = null;
   ship.arrived = true;
+  startJourney(world, playerId, ship);
   pushNotice(world, playerId, port ? `Undocked from ${port.name}.` : "Undocked.");
   return true;
+}
+
+/** End one own journey; the trail is cleared and no X is left. */
+export function endPlayerJourney(world: World, playerId: string, shipId: string): boolean {
+  return stopJourney(world, playerId, shipId);
+}
+
+/** Clear every own trail without adding lost-ship marks. */
+export function clearPlayerTrails(world: World, playerId: string): number {
+  return stopAllJourneys(world, playerId);
 }
 
 /** The player's money. Unknown and fake owners have none. */
@@ -6722,6 +6754,7 @@ export function stepWorld(
     : 0;
   world.gameMs += elapsedMs;
   world.gameSeconds = world.gameMs / 1000;
+  recordJourneys(world);
   updateHunger(world, dtGameSeconds);
   updatePortEconomy(world);
   updateCrewPools(world, dtGameSeconds);
@@ -7047,6 +7080,18 @@ export function visibleStateFor(
         Number(point.x.toFixed(2)),
         Number(point.y.toFixed(2)),
       ]) ?? null,
+      trail: owner?.journeys.get(ship.id)
+        ? simplifyTrail(owner.journeys.get(ship.id)!.trail).map((point) => [
+            Number(point.x.toFixed(2)),
+            Number(point.y.toFixed(2)),
+          ])
+        : null,
+      journey: owner?.journeys.get(ship.id)
+        ? {
+            distanceKm: Number(owner.journeys.get(ship.id)!.distanceKm.toFixed(2)),
+            startedGameMs: owner.journeys.get(ship.id)!.startedGameMs,
+          }
+        : null,
       fleetId: ship.fleetId,
       detached: ship.detached,
       stance: ship.stance,
@@ -7143,6 +7188,36 @@ export function visibleStateFor(
   const sinkingFlags = ships
     .filter((snapshot) => world.sinkingShips.some((entry) => entry.ship.id === snapshot[0]))
     .map((snapshot) => snapshot[0]);
+  const trailAdds: Record<string, Array<[number, number]>> = {};
+  const trailReset: string[] = [];
+  const sent = world.trailSent.get(playerId) ?? new Map<string, number>();
+  world.trailSent.set(playerId, sent);
+  if (includeFleet) {
+    // A full fleet update carries the simplified trail itself; start a new
+    // incremental cursor so later updates only carry the additions.
+    for (const [shipId, journey] of owner?.journeys ?? []) sent.set(shipId, journey.trail.length);
+    for (const shipId of [...sent.keys()]) {
+      if (!owner?.journeys.has(shipId)) sent.delete(shipId);
+    }
+  } else {
+    for (const [shipId, journey] of owner?.journeys ?? []) {
+      const from = sent.get(shipId) ?? 0;
+      if (journey.trail.length <= from) continue;
+      const fresh = journey.trail.slice(
+        from,
+        from + settings.journey.maxTrailUpdatePoints,
+      );
+      trailAdds[shipId] = fresh.map((point) => [point.x, point.y]);
+      sent.set(shipId, from + fresh.length);
+    }
+    for (const shipId of [...sent.keys()]) {
+      if (!owner?.journeys.has(shipId)) {
+        trailReset.push(shipId);
+        sent.delete(shipId);
+      }
+    }
+  }
+
   const state: StateMessage = {
     t: "s",
     tick: world.tick,
@@ -7160,6 +7235,11 @@ export function visibleStateFor(
     fleets: includeFleet ? fleetSnapshotsFor(world, playerId) : [],
     groups: world.controlGroups.get(playerId) ?? {},
   };
+  if (Object.keys(trailAdds).length > 0) state.trailAdds = trailAdds;
+  if (trailReset.length > 0) state.trailReset = trailReset;
+  if ((owner?.lostMarks.length ?? 0) > 0) {
+    state.lostMarks = (owner?.lostMarks ?? []).map((point) => [point.x, point.y]);
+  }
   if (events.length > 0) state.events = events;
   if (surrenderFlags.length > 0) state.sf = surrenderFlags;
   if (battleLog && battleLog.length > 0) state.log = battleLog.slice(-settings.combat.maxBattleLogLines);

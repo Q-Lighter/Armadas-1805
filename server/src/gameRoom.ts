@@ -61,6 +61,8 @@ import {
   takeNotice,
   transferGoods,
   undock,
+  endPlayerJourney,
+  clearPlayerTrails,
   visibleStateFor,
   battleZoneNear,
   shipsForOwner,
@@ -609,6 +611,10 @@ export class GameRoom {
       applyPortOrder(this.world, playerId, order.port, order.ship);
     } else if (order.t === "undock") {
       undock(this.world, playerId, order.ship);
+    } else if (order.t === "endJourney") {
+      if (typeof order.ship === "string") endPlayerJourney(this.world, playerId, order.ship);
+    } else if (order.t === "clearTrails") {
+      clearPlayerTrails(this.world, playerId);
     } else if (order.t === "select") {
       selectShip(this.world, playerId, order.ship);
     } else if (order.t === "buy") {

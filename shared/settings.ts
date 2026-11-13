@@ -512,6 +512,17 @@ export const settings = {
   },
 
   /** Automatic route planning around discovered land. Draft values. */
+  journey: {
+    /** A trail point every this many km, or after this many game seconds. */
+    trailPointKm: 1,
+    trailPointGameSeconds: 30,
+    maxTrailPoints: 3000,
+    maxSentPoints: 300,
+    /** New points sent in one delta; a full state sends the simplified path. */
+    maxTrailUpdatePoints: 20,
+    maxLostMarks: 200,
+    defaultChartTrail: "selected" as "selected" | "all" | "none",
+  },
   route: {
     /** Search grid around the ship and destination. */
     gridKm: 2,

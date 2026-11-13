@@ -63,6 +63,7 @@ import { isLandAt } from "@naval/shared/land";
 import { cameraScale, screenToWorld, worldToScreen } from "@naval/shared/camera";
 import { buildDiscoveredOutline, type OutlineRing } from "@naval/shared/discovered-outline";
 import { catmullRomPath, dotsAlongPath } from "@naval/shared/route-ink";
+import { trailIdsForMode, type ChartTrailMode } from "@naval/shared/journey";
 import { readTapToSail, resolveTap, writeTapToSail } from "@naval/shared/tap-to-sail";
 import { fogDebugLine, type FogDebugInfo } from "@naval/shared/fog-view";
 import { GRAPHICS_RESET_NOTICE, GraphicsRecovery } from "@naval/shared/graphics-safety";
@@ -525,6 +526,30 @@ function parseOwnShip(raw: unknown): OwnShipSnapshot | null {
         ? points
         : null;
     })(),
+    trail: (() => {
+      if (!Array.isArray(source.trail)) return null;
+      const points: Array<[number, number]> = [];
+      for (const rawPoint of source.trail) {
+        if (!Array.isArray(rawPoint) || rawPoint.length !== 2) return null;
+        const px = finiteNumber(rawPoint[0]);
+        const py = finiteNumber(rawPoint[1]);
+        if (px === null || py === null) return null;
+        points.push([px, py]);
+      }
+      return points.length > 0 && points.length <= settings.journey.maxSentPoints
+        ? points
+        : null;
+    })(),
+    journey: (() => {
+      const raw = source.journey;
+      if (!raw || typeof raw !== "object") return null;
+      const row = raw as Record<string, unknown>;
+      const distanceKm = finiteNumber(row.distanceKm);
+      const startedGameMs = finiteNumber(row.startedGameMs);
+      return distanceKm === null || startedGameMs === null
+        ? null
+        : { distanceKm: Math.max(0, distanceKm), startedGameMs: Math.max(0, startedGameMs) };
+    })(),
     fleetId: typeof source.fleetId === "string" ? source.fleetId : null,
     detached: source.detached === true,
     stance: typeof source.stance === "string"
@@ -708,6 +733,8 @@ async function start(): Promise<void> {
   const fleetSelectedCount = element<HTMLElement>("fleet-selected-count");
   const shipUndock = element<HTMLButtonElement>("ship-undock");
   const shipDamage = element<HTMLButtonElement>("ship-damage");
+  const shipJourney = element<HTMLElement>("ship-journey");
+  const shipEndJourney = element<HTMLButtonElement>("ship-end-journey");
   const damagePanel = element<HTMLElement>("damage-panel");
   const damageTitle = element<HTMLElement>("damage-title");
   const damageSummary = element<HTMLElement>("damage-summary");
@@ -719,6 +746,10 @@ async function start(): Promise<void> {
   const damageTurn = element<HTMLElement>("damage-turn");
   const damagePrisoners = element<HTMLElement>("damage-prisoners");
   const damageHurts = element<HTMLElement>("damage-hurts");
+  const damageJourney = element<HTMLElement>("damage-journey");
+  const damageEndJourney = element<HTMLButtonElement>("damage-end-journey");
+  const chartTrails = element<HTMLElement>("chart-trails");
+  const chartClearTrails = element<HTMLButtonElement>("chart-clear-trails");
   const damageCombatReadout = element<HTMLElement>("damage-combat-readout");
   const damageRepairToggle = element<HTMLInputElement>("damage-repair-toggle");
   const damageClose = element<HTMLButtonElement>("damage-close");
@@ -1012,9 +1043,10 @@ async function start(): Promise<void> {
 
   // The selected ship's planned route sits above the map and below ports.
   const routeLayer = new Container();
+  const trailInk = new Graphics();
   const routeInk = new Graphics();
   const routeLabels = new Container();
-  routeLayer.addChild(routeInk, routeLabels);
+  routeLayer.addChild(trailInk, routeInk, routeLabels);
   routeLayer.visible = false;
 
   // Screen-space progress ring for the press-and-hold order gesture.
@@ -1091,6 +1123,9 @@ async function start(): Promise<void> {
   };
 
   let mode: ViewMode = "ship";
+  let chartTrailMode: ChartTrailMode = settings.journey.defaultChartTrail;
+  const trailPoints = new Map<string, Array<[number, number]>>();
+  let lostMarks: Array<[number, number]> = [];
   let savedShipView: Camera = { ...view };
   let builtView = { x: view.x, y: view.y };
   let builtScale = 0;
@@ -2172,6 +2207,7 @@ async function start(): Promise<void> {
     points: Array<[number, number]>,
     colour = INK_COLOR,
     smooth = false,
+    graphics: Graphics = routeInk,
   ): number {
     if (points.length < 2) return 0;
     const spacing = quality.routeDetail
@@ -2183,7 +2219,7 @@ async function start(): Promise<void> {
       spacing,
     );
     for (const dot of dots) {
-      routeInk.circle(dot.x, dot.y, settings.view.routeDotRadiusPx).fill({ color: colour, alpha: 0.82 });
+      graphics.circle(dot.x, dot.y, settings.view.routeDotRadiusPx).fill({ color: colour, alpha: 0.82 });
     }
     return dots.length;
   }
@@ -2229,6 +2265,40 @@ async function start(): Promise<void> {
     }
     routeLayer.visible = drew;
     drawHeadingPreview();
+  }
+
+  /** Dark ink trails and lost-ship X marks, own ships only. */
+  function drawTrails(): void {
+    trailInk.clear();
+    let drew = false;
+    if (mode === "chart" && chartTrailMode !== "none") {
+      const selected = fleetShips.filter((ship) =>
+        multiSelect && selectedShipIds.size > 0
+          ? selectedShipIds.has(ship.id)
+          : ship.id === (selectedFleetShip()?.id ?? selectedShipId),
+      );
+      const ids = new Set(trailIdsForMode(
+        chartTrailMode,
+        fleetShips.map((ship) => ship.id),
+        selected.map((ship) => ship.id),
+      ));
+      for (const row of fleetShips) {
+        if (!ids.has(row.id)) continue;
+        const trail = trailPoints.get(row.id);
+        if (!trail || trail.length < 2) continue;
+        drew = drawDotted(trail, 0x4a3220, true, trailInk) > 0 || drew;
+      }
+    }
+    if (mode === "chart") {
+      for (const [x, y] of lostMarks) {
+        const at = toScreen(x, y);
+        trailInk.moveTo(at.x - 5, at.y - 5).lineTo(at.x + 5, at.y + 5)
+          .moveTo(at.x + 5, at.y - 5).lineTo(at.x - 5, at.y + 5)
+          .stroke({ width: 2, color: 0x4a3220 });
+        drew = true;
+      }
+    }
+    routeLayer.visible = routeLayer.visible || drew;
   }
 
   /** A faint 1 km ring and the two 30-degree beam arcs for engaged ships. */
@@ -4315,6 +4385,19 @@ async function start(): Promise<void> {
     shipStripProvisions.textContent = viewRow?.provisionsText ?? "–";
     shipUndock.hidden = row?.status !== "docked";
     shipDamage.disabled = !row || row.status === "delivery";
+    updateJourneyUi(row);
+  }
+
+  function updateJourneyUi(row: ReturnType<typeof selectedFleetShip>): void {
+    const journey = row?.journey;
+    const text = journey
+      ? `Journey: ${Math.round(journey.distanceKm)} km, ${Math.max(0, (clockShownMs - journey.startedGameMs) / (settings.time.hoursPerDay * 60 * 60 * 1000)).toFixed(1)} game days`
+      : "";
+    for (const line of [shipJourney, damageJourney]) {
+      line.textContent = text;
+      line.hidden = !journey;
+    }
+    for (const button of [shipEndJourney, damageEndJourney]) button.hidden = !journey;
   }
 
 
@@ -5362,6 +5445,37 @@ async function start(): Promise<void> {
         if (parsed) incomingFleet.push(parsed);
       }
       fleetShips = incomingFleet;
+      if (state.full === true) {
+        trailPoints.clear();
+        for (const row of incomingFleet) {
+          if (row.trail && row.trail.length > 0) trailPoints.set(row.id, [...row.trail]);
+        }
+      }
+    }
+    if (state.ships && Array.isArray(state.trailReset)) {
+      for (const id of state.trailReset) {
+        if (typeof id === "string") trailPoints.delete(id);
+      }
+    }
+    if (state.trailAdds && typeof state.trailAdds === "object") {
+      for (const [id, rawPoints] of Object.entries(state.trailAdds)) {
+        if (typeof id !== "string" || !Array.isArray(rawPoints)) continue;
+        const points = trailPoints.get(id) ?? [];
+        for (const rawPoint of rawPoints) {
+          if (!Array.isArray(rawPoint) || rawPoint.length !== 2) continue;
+          const px = finiteNumber(rawPoint[0]);
+          const py = finiteNumber(rawPoint[1]);
+          if (px !== null && py !== null) points.push([px, py]);
+        }
+        trailPoints.set(id, points);
+      }
+    }
+    if (Array.isArray(state.lostMarks)) {
+      lostMarks = state.lostMarks
+        .filter((point): point is [number, number] =>
+          Array.isArray(point) && point.length === 2 &&
+          Number.isFinite(point[0]) && Number.isFinite(point[1]))
+        .map(([x, y]) => [x, y]);
     }
     if (Array.isArray(state.fleets)) {
       playerFleets = state.fleets.map(parseFleet).filter((fleet): fleet is FleetSnapshot => fleet !== null);
@@ -5755,6 +5869,7 @@ async function start(): Promise<void> {
       chartButton.setAttribute("aria-pressed", "true");
       rulerLayer.visible = true;
       nightTint.visible = false;
+      chartTrails.hidden = false;
     } else {
       mode = "ship";
       view.x = savedShipView.x;
@@ -5768,6 +5883,7 @@ async function start(): Promise<void> {
       chartButton.textContent = "Chart";
       chartButton.setAttribute("aria-pressed", "false");
       rulerLayer.visible = false;
+      chartTrails.hidden = true;
     }
 
     updateKnownPortsButton();
@@ -6187,6 +6303,23 @@ async function start(): Promise<void> {
   fleetUndock.addEventListener("click", sendUndock);
   shipUndock.addEventListener("click", sendUndock);
   shipDamage.addEventListener("click", () => openDamagePanel());
+  const endJourney = (): void => {
+    const id = selectedFleetShip()?.id;
+    if (id) sendCommand({ t: "endJourney", ship: id });
+  };
+  shipEndJourney.addEventListener("click", endJourney);
+  damageEndJourney.addEventListener("click", endJourney);
+  chartClearTrails.addEventListener("click", () => sendCommand({ t: "clearTrails" }));
+  for (const button of document.querySelectorAll<HTMLButtonElement>(".chart-trail-option")) {
+    button.addEventListener("click", () => {
+      const mode = button.dataset.trailMode;
+      if (mode !== "selected" && mode !== "all" && mode !== "none") return;
+      chartTrailMode = mode;
+      for (const option of document.querySelectorAll<HTMLButtonElement>(".chart-trail-option")) {
+        option.setAttribute("aria-pressed", String(option.dataset.trailMode === mode));
+      }
+    });
+  }
   damageClose.addEventListener("click", closeDamagePanel);
   damageCrew.addEventListener("click", () => openCrewSheet(null));
   damageCaptured.addEventListener("click", () => {
@@ -6867,6 +7000,7 @@ async function start(): Promise<void> {
     safeLayer("chart offset", () => updateLayerOffset());
     safeLayer("ports", () => refreshPorts());
     safeLayer("selected route", () => drawSelectedRoute());
+    safeLayer("trails", () => drawTrails());
     safeLayer("combat range", () => drawCombatRange());
     safeLayer("combat effects", () => drawCombatFx(now));
 

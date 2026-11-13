@@ -198,6 +198,10 @@
         <button class="btn ship-undock" id="ship-undock" type="button" hidden>
           Undock
         </button>
+        <p class="journey-line" id="ship-journey" hidden></p>
+        <button class="btn ship-journey-end" id="ship-end-journey" type="button" hidden>
+          End journey
+        </button>
         <button class="btn ship-damage" id="ship-damage" type="button">
           Damage
         </button>
@@ -257,6 +261,10 @@
         <dt>Turn</dt><dd id="damage-turn">–</dd>
         <dt>Prisoners</dt><dd id="damage-prisoners">–</dd>
       </dl>
+      <p class="journey-line" id="damage-journey" hidden></p>
+      <button class="btn damage-journey-end" id="damage-end-journey" type="button" hidden>
+        End journey
+      </button>
       <p class="damage-hurts" id="damage-hurts"></p>
       <div class="damage-fire" id="damage-fire" hidden>
         <span>Fire</span><span id="damage-fire-bar"></span><span id="damage-fire-status"></span>
@@ -725,6 +733,15 @@
     </button>
 
     <p class="hud charting" id="charting" hidden>Charting…</p>
+    <div class="chart-trails paper" id="chart-trails" hidden aria-label="Chart trails">
+      <span class="chart-trails-label">Trails</span>
+      <div class="chart-trails-actions" role="group" aria-label="Trail filter">
+        <button class="btn chart-trail-option" type="button" data-trail-mode="selected" aria-pressed="true">Selected</button>
+        <button class="btn chart-trail-option" type="button" data-trail-mode="all" aria-pressed="false">All</button>
+        <button class="btn chart-trail-option" type="button" data-trail-mode="none" aria-pressed="false">None</button>
+      </div>
+      <button class="btn chart-trails-clear" id="chart-clear-trails" type="button">Clear all trails</button>
+    </div>
 
     <p class="hud hint">Tap to sail. Drag to pan. Pinch or scroll to zoom.</p>
 

@@ -6772,6 +6772,13 @@ function refreshPredictedRoutes(world: World, windFromDeg: number): void {
     const selectedId = world.owners.get(playerId)?.selectedShipId;
     for (const ship of fleet) {
       if (!ship.route || ship.dockedPortId || ship.deliveryPortId) continue;
+      // A formation gets one ghost path, for its leader. A detached ship has
+      // its own route and may draw its own.
+      if (ship.fleetId && !ship.detached) {
+        const formation = [...fleetMapFor(world, playerId).values()]
+          .find((candidate) => candidate.id === ship.fleetId);
+        if (formation && formation.leaderId !== ship.id) continue;
+      }
       candidates.push({ playerId, ship, selected: ship.id === selectedId });
     }
   }

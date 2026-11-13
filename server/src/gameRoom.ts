@@ -550,6 +550,8 @@ export class GameRoom {
       enabled?: unknown;
       mode?: unknown;
       target?: unknown;
+      deg?: unknown;
+      knots?: unknown;
       donor?: unknown;
       receiver?: unknown;
       choice?: unknown;
@@ -615,6 +617,27 @@ export class GameRoom {
       if (typeof order.ship === "string") endPlayerJourney(this.world, playerId, order.ship);
     } else if (order.t === "clearTrails") {
       clearPlayerTrails(this.world, playerId);
+    } else if (order.t === "routeLine") {
+      const owner = this.world.owners.get(playerId);
+      if (owner && typeof order.enabled === "boolean") {
+        owner.routeLineEnabled = order.enabled;
+        if (!order.enabled) this.world.routePredictions.clear();
+        const socket = this.sockets.get(playerId);
+        if (socket) this.sendState(playerId, socket, false);
+      }
+    } else if (order.t === "testWind" && this.world.kind !== "normal") {
+      const deg = typeof order.deg === "number" ? order.deg : NaN;
+      const knots = typeof order.knots === "number" ? order.knots : NaN;
+      if (Number.isFinite(deg)) {
+        this.world.windFromDeg = ((deg % 360) + 360) % 360;
+      }
+      if (Number.isFinite(knots)) {
+        this.world.windSpeedKnots = Math.max(
+          settings.weather.minStrengthKnots,
+          Math.min(settings.weather.maxStrengthKnots, knots),
+        );
+      }
+      this.world.routePredictions.clear();
     } else if (order.t === "select") {
       selectShip(this.world, playerId, order.ship);
     } else if (order.t === "buy") {

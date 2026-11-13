@@ -254,6 +254,15 @@ function reportClientError(error: unknown, where: string): void {
 }
 
 const FLAGSHIP_PENNANT_KEY = "armadas.flagshipPennant";
+const ROUTE_LINE_KEY = "armadas.routeLine";
+
+function readSavedRouteLine(): boolean {
+  try {
+    return localStorage.getItem(ROUTE_LINE_KEY) !== "0";
+  } catch {
+    return true;
+  }
+}
 
 function readSavedFlagshipPennant(): boolean {
   try {
@@ -868,6 +877,7 @@ async function start(): Promise<void> {
   const knownPortsClose = element<HTMLButtonElement>("known-ports-close");
   const bordersButton = element<HTMLButtonElement>("borders-btn");
   const flagshipPennantButton = element<HTMLButtonElement>("flagship-pennant-btn");
+  const routeLineButton = element<HTMLButtonElement>("route-line-btn");
   const menuButton = element<HTMLButtonElement>("menu-btn");
   const menuPanel = element<HTMLElement>("menu-panel");
   const menuClose = element<HTMLButtonElement>("menu-close");
@@ -897,6 +907,9 @@ async function start(): Promise<void> {
   const testEnemyNavy = element<HTMLSelectElement>("test-enemy-navy");
   const testEnemyCount = element<HTMLInputElement>("test-enemy-count");
   const testDummyBehaviour = element<HTMLSelectElement>("test-dummy-behaviour");
+  const testWindFrom = element<HTMLInputElement>("test-wind-from");
+  const testWindSpeed = element<HTMLInputElement>("test-wind-speed");
+  const testSetWind = element<HTMLButtonElement>("test-set-wind");
   const testSpawn = element<HTMLButtonElement>("test-spawn");
   const testRemove = element<HTMLButtonElement>("test-remove");
   const testRefill = element<HTMLButtonElement>("test-refill");
@@ -940,6 +953,7 @@ async function start(): Promise<void> {
   const query = new URLSearchParams(location.search);
   const room = query.get("room") ?? "test";
   const layoutDebug = query.get("layoutdebug") === "1";
+  const chartDebug = query.get("chartdebug") === "1";
   let perfVisible = query.get("perf") === "1";
   let perfAutoOpened = false;
   const qualityGovernor = new QualityGovernor();
@@ -1136,6 +1150,7 @@ async function start(): Promise<void> {
 
   let mode: ViewMode = "ship";
   let showFlagshipPennant = readSavedFlagshipPennant();
+  let showRouteLine = readSavedRouteLine();
   let chartTrailMode: ChartTrailMode = settings.journey.defaultChartTrail;
   const trailPoints = new Map<string, Array<[number, number]>>();
   let lostMarks: Array<[number, number]> = [];
@@ -1720,6 +1735,11 @@ async function start(): Promise<void> {
       const size = area.km * scale;
       chartGraphics.rect(left, top, size, size).fill(PAPER_COLOR);
 
+      // &chartdebug=1 colors the real discovery cells: red for undiscovered,
+      // green for discovered, with the paper/land drawn over them.
+      if (chartDebug && (roomKind === "test" || roomKind === "dev")) {
+        chartGraphics.rect(left, top, size, size).fill(0xc85a4a);
+      }
       // A discovered cell gets the pale remembered-sea wash. The chart must
       // not rely on a land block being present: open ocean has no geometry.
       if (chartAll) {
@@ -1740,7 +1760,7 @@ async function start(): Promise<void> {
             if (!discovered.has(row * chartColumns + column)) continue;
             chartGraphics
               .rect(column * chartCellKm * scale, row * chartCellKm * scale, chartCellKm * scale, chartCellKm * scale)
-              .fill(DIM_SEA_COLOR);
+              .fill(chartDebug ? 0x4a8c5a : DIM_SEA_COLOR);
           }
         }
       }
@@ -2237,14 +2257,14 @@ async function start(): Promise<void> {
     return dots.length;
   }
 
-  /** Every selected ship keeps all of its active order geometry on screen. */
+  /** Only the primary ship draws a route line. A fleet uses its leader. */
   function drawSelectedRoute(): void {
-    const selected = fleetShips.filter((ship) =>
-      multiSelect && selectedShipIds.size > 0
-        ? selectedShipIds.has(ship.id)
-        : ship.id === selectedFleetShip()?.id,
-    );
+    const primary = selectedFleetShip() ??
+      fleetShips.find((ship) => ship.id === selectedShipId) ??
+      null;
+    const selected = showRouteLine && primary ? [primary] : [];
     const key = JSON.stringify([
+      showRouteLine,
       selected.map((ship) => [ship.id, ship.predictedPath, ship.route, ship.orderLines]),
       view.x, view.y, view.kmAcross, quality.routeDetail,
       headingPreviewOn && !headingSheet.hidden,
@@ -5257,7 +5277,8 @@ async function start(): Promise<void> {
     );
     const debugLine = line === null
       ? null
-      : `${line} · suspicious segments: ${suspectSegments} · layout issues: ${layoutIssueCount}`;
+      : `${line} · suspicious segments: ${suspectSegments} · layout issues: ${layoutIssueCount}` +
+        (chartDebug ? ` · chart cells ${chartCellKm} km (red undiscovered, green discovered)` : "");
     fogDebugOut.textContent = debugLine ?? "";
     fogDebugOut.hidden = debugLine === null;
   }
@@ -5792,7 +5813,10 @@ async function start(): Promise<void> {
     const next = new WebSocket(url);
     socket = next;
 
-    next.addEventListener("open", () => setStatus("Connected"));
+    next.addEventListener("open", () => {
+      setStatus("Connected");
+      next.send(JSON.stringify({ t: "routeLine", enabled: showRouteLine }));
+    });
     next.addEventListener("message", (event) => {
       try {
         onState(event);
@@ -6457,10 +6481,44 @@ async function start(): Promise<void> {
     bordersButton.setAttribute("aria-pressed", String(bordersVisible));
     drawBorders();
   });
+  routeLineButton.setAttribute("aria-pressed", String(showRouteLine));
+  routeLineButton.textContent = `Show route line: ${showRouteLine ? "On" : "Off"}`;
+  routeLineButton.addEventListener("click", () => {
+    showRouteLine = !showRouteLine;
+    routeLineButton.setAttribute("aria-pressed", String(showRouteLine));
+    routeLineButton.textContent = `Show route line: ${showRouteLine ? "On" : "Off"}`;
+    try {
+      localStorage.setItem(ROUTE_LINE_KEY, showRouteLine ? "1" : "0");
+    } catch {
+      // Remembering the choice is optional.
+    }
+    if (socket?.readyState === WebSocket.OPEN) {
+      socket.send(JSON.stringify({ t: "routeLine", enabled: showRouteLine }));
+    }
+    lastRouteKey = "";
+    drawSelectedRoute();
+  });
   flagshipPennantButton.setAttribute("aria-pressed", String(showFlagshipPennant));
   flagshipPennantButton.addEventListener("click", () => {
     showFlagshipPennant = !showFlagshipPennant;
-    flagshipPennantButton.setAttribute("aria-pressed", String(showFlagshipPennant));
+    routeLineButton.setAttribute("aria-pressed", String(showRouteLine));
+  routeLineButton.textContent = `Show route line: ${showRouteLine ? "On" : "Off"}`;
+  routeLineButton.addEventListener("click", () => {
+    showRouteLine = !showRouteLine;
+    routeLineButton.setAttribute("aria-pressed", String(showRouteLine));
+    routeLineButton.textContent = `Show route line: ${showRouteLine ? "On" : "Off"}`;
+    try {
+      localStorage.setItem(ROUTE_LINE_KEY, showRouteLine ? "1" : "0");
+    } catch {
+      // Remembering the choice is optional.
+    }
+    if (socket?.readyState === WebSocket.OPEN) {
+      socket.send(JSON.stringify({ t: "routeLine", enabled: showRouteLine }));
+    }
+    lastRouteKey = "";
+    drawSelectedRoute();
+  });
+  flagshipPennantButton.setAttribute("aria-pressed", String(showFlagshipPennant));
     try {
       localStorage.setItem(FLAGSHIP_PENNANT_KEY, showFlagshipPennant ? "1" : "0");
     } catch {
@@ -6678,6 +6736,16 @@ async function start(): Promise<void> {
   testSpareShips.addEventListener("click", () => {
     sendCommand({ t: "spareShips" });
     showNotice("Three spare ships requested.");
+  });
+  testSetWind.addEventListener("click", () => {
+    const deg = Number(testWindFrom.value);
+    const knots = Number(testWindSpeed.value);
+    if (!Number.isFinite(deg) || !Number.isFinite(knots)) {
+      showNotice("Type a wind direction and speed.");
+      return;
+    }
+    sendCommand({ t: "testWind", deg, knots });
+    showNotice(`Wind set to ${((deg % 360) + 360) % 360}° at ${knots} knots.`);
   });
   testResetRoom.addEventListener("click", () => {
     sendCommand({ t: "resetRoom" });

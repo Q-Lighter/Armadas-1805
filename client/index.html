@@ -316,6 +316,7 @@
         <button class="btn" id="known-ports-btn" type="button" hidden>Known ports</button>
         <button class="btn" id="borders-btn" type="button" aria-pressed="false" hidden>Show borders</button>
         <button class="btn" id="flagship-pennant-btn" type="button" aria-pressed="false">Show flagship pennant on the map</button>
+        <button class="btn" id="route-line-btn" type="button" aria-pressed="true">Show route line: On</button>
         <button class="btn" id="test-tools-btn" type="button" hidden>Test tools</button>
         <button class="btn btn-seal" id="resign-btn" type="button">Resign</button>
       </div>
@@ -373,6 +374,12 @@
         <label>How many
           <input id="test-enemy-count" type="number" min="1" max="6" step="1" value="2" inputmode="numeric" />
         </label>
+        <label>Wind from (degrees)
+          <input id="test-wind-from" type="number" min="0" max="359" step="5" value="315" inputmode="numeric" />
+        </label>
+        <label>Wind speed (knots)
+          <input id="test-wind-speed" type="number" min="1" max="60" step="1" value="12" inputmode="numeric" />
+        </label>
         <label>Behaviour
           <select id="test-dummy-behaviour">
             <option value="passive">Passive (never fires)</option>
@@ -393,6 +400,7 @@
         <button class="btn" id="test-refill" type="button">Refill and repair my ships</button>
         <button class="btn" id="test-sink-flagship" type="button">Sink my flagship</button>
         <button class="btn" id="test-spare-ships" type="button">Give me 3 spare ships</button>
+        <button class="btn" id="test-set-wind" type="button">Set wind</button>
         <button class="btn" id="test-reset-room" type="button">Reset room</button>
         <button class="btn" id="perf-toggle" type="button" aria-pressed="false">Performance: off</button>
       </div>

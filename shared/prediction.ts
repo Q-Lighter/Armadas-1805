@@ -1,6 +1,6 @@
-// Predicted route paths. This module runs the same sailing step as the world
-// against a ghost copy of the ship, so the line on the chart is the path the
-// helm will actually steer: tacks, turn rate, final approach and all.
+// Full predicted route paths. The ghost runs the same stepShip function as the
+// real ship. A job can be advanced a little each server tick so the client
+// keeps the old line until the new one is complete.
 
 import { routeLookAheadPoint } from "./route.js";
 import { settings } from "./settings.js";
@@ -11,26 +11,36 @@ import {
   type ShipRoute,
   type ShipSpec,
 } from "./sailing.js";
-import type { MapPoint } from "./map.js";
 import { shipPerformance } from "./combat.js";
+import type { MapPoint } from "./map.js";
 
 export interface PredictedPath {
   points: MapPoint[];
-  steps?: number;
-  /** Game seconds simulated, for the budget report. */
+  steps: number;
   simulatedSeconds: number;
-  /** True when the prediction stopped at the 60-minute cap. */
+  /** True when the ghost could not reach the goal inside the safety horizon. */
   truncated: boolean;
+  reached: boolean;
 }
 
-function ghostSpec(ship: Ship): ShipSpec {
-  return shipSpecFor(ship);
+export interface PredictionJob {
+  points: MapPoint[];
+  elapsed: number;
+  steps: number;
+  done: boolean;
+  reached: boolean;
+  truncated: boolean;
+  ghost: Ship;
+  route: ShipRoute;
+  windFromDeg: number;
+  spec: ShipSpec;
 }
 
 function cloneShip(ship: Ship): Ship {
   return {
     ...ship,
     order: null,
+    helmTarget: undefined,
     route: null,
     stationSpeedLimit: undefined,
     formationStation: false,
@@ -80,56 +90,146 @@ export function simplifyPath(points: readonly MapPoint[], toleranceKm: number): 
 }
 
 /**
- * Predict a route from the ship's real steering. The ghost follows the same
- * pure-pursuit look-ahead and the same stepShip function as the live ship.
+ * Keep more samples near the ship: the first half of the points get twice the
+ * share of the 400-point budget. Both ends are always preserved.
  */
+export function predictionSendPoints(points: readonly MapPoint[]): MapPoint[] {
+  const limit = settings.route.predictionMaxPoints;
+  if (points.length <= limit) return points.map((point) => ({ ...point }));
+  const half = Math.floor(points.length / 2);
+  const nearLimit = Math.min(limit - 1, Math.ceil(limit * 2 / 3));
+  const farLimit = Math.max(1, limit - nearLimit);
+  const sample = (from: number, to: number, count: number): MapPoint[] => {
+    const result: MapPoint[] = [];
+    const stride = Math.max(1, Math.ceil((to - from) / Math.max(1, count)));
+    for (let index = from; index < to; index += stride) result.push({ ...points[index]! });
+    return result;
+  };
+  const near = sample(0, half, nearLimit);
+  const far = sample(half, points.length, farLimit);
+  const last = points[points.length - 1]!;
+  const combined = [...near, ...far];
+  if (combined[combined.length - 1]!.x !== last.x || combined[combined.length - 1]!.y !== last.y) {
+    if (combined.length >= limit) combined.pop();
+    combined.push({ ...last });
+  }
+  return combined;
+}
+
+/** Create a lazy ghost job. No step has run yet. */
+export function createPredictionJob(
+  ship: Ship,
+  route: ShipRoute,
+  windFromDeg: number,
+): PredictionJob {
+  const ghost = cloneShip(ship);
+  return {
+    points: [{ x: ghost.x, y: ghost.y }],
+    elapsed: 0,
+    steps: 0,
+    done: false,
+    reached: false,
+    truncated: false,
+    ghost,
+    route,
+    windFromDeg,
+    spec: shipSpecFor(ghost),
+  };
+}
+
+function nextAim(job: PredictionJob): { x: number; y: number } | null {
+  const { ghost, route } = job;
+  if (Math.hypot(ghost.x - route.goal.x, ghost.y - route.goal.y) <=
+    settings.sailing.arrivalRadiusKm) return null;
+  const path = route.curve && route.curve.length > 1 ? route.curve : route.waypoints;
+  const aim = routeLookAheadPoint(path, ghost, settings.route.steerLookAheadKm);
+  if (!aim || Math.hypot(aim.x - ghost.x, aim.y - ghost.y) <
+    settings.sailing.minOrderDistanceKm) return null;
+  return aim;
+}
+
+/** Advance one or more steps. Returns true when the job finishes. */
+export function advancePredictionJob(
+  job: PredictionJob,
+  maxMilliseconds = Number.POSITIVE_INFINITY,
+  maxSteps = Number.POSITIVE_INFINITY,
+): boolean {
+  const started = Date.now();
+  const performanceData = shipPerformance(job.spec, job.ghost.damage, job.windFromDeg);
+  let stepsThisCall = 0;
+  while (!job.done) {
+    if (stepsThisCall >= maxSteps) break;
+    if (job.steps > 0 && Date.now() - started >= maxMilliseconds) break;
+    if (!job.ghost.order) {
+      const aim = nextAim(job);
+      if (!aim) {
+        job.reached = true;
+        job.done = true;
+        break;
+      }
+      job.ghost.tackLine ??= {
+        startX: job.ghost.x,
+        startY: job.ghost.y,
+        targetX: job.route.goal.x,
+        targetY: job.route.goal.y,
+      };
+      job.ghost.order = { type: "sailTo", x: aim.x, y: aim.y };
+      job.ghost.arrived = false;
+    }
+    const step = job.elapsed < settings.route.predictionFineGameMinutes * 60
+      ? settings.route.predictionStepGameSeconds
+      : Math.max(
+          settings.route.predictionStepGameSeconds,
+          settings.route.predictionCoarseStepGameSeconds,
+        );
+    stepShip(job.ghost, step, job.windFromDeg, undefined, undefined, undefined, undefined, false, {
+      spec: job.spec,
+      performance: performanceData,
+    });
+    job.elapsed += step;
+    job.steps += 1;
+    stepsThisCall += 1;
+    job.points.push({ x: job.ghost.x, y: job.ghost.y });
+    if (!job.ghost.order) {
+      if (Math.hypot(job.ghost.x - job.route.goal.x, job.ghost.y - job.route.goal.y) <=
+        settings.sailing.arrivalRadiusKm) {
+        job.reached = true;
+        job.done = true;
+        break;
+      }
+      if (job.elapsed > settings.route.predictionMaxGameHours * 3600) {
+        job.truncated = true;
+        job.done = true;
+        break;
+      }
+    }
+    if (job.elapsed > settings.route.predictionMaxGameHours * 3600) {
+      job.truncated = true;
+      job.done = true;
+      break;
+    }
+  }
+  return job.done;
+}
+
+export function jobPath(job: PredictionJob): PredictedPath {
+  return {
+    points: predictionSendPoints(job.points),
+    steps: job.steps,
+    simulatedSeconds: job.elapsed,
+    truncated: job.truncated,
+    reached: job.reached,
+  };
+}
+
+/** Full synchronous prediction used by tests and one-shot callers. */
 export function predictRoutePath(
   ship: Ship,
   route: ShipRoute,
   windFromDeg: number,
-  maxGameSeconds: number = settings.route.predictionMaxGameMinutes * 60,
+  _maxGameSeconds?: number,
 ): PredictedPath {
-  const ghost = cloneShip(ship);
-  const path = route.curve && route.curve.length > 1 ? route.curve : route.waypoints;
-  const points: MapPoint[] = [{ x: ship.x, y: ship.y }];
-  const step = Math.max(0.5, settings.route.predictionStepGameSeconds);
-  let elapsed = 0;
-  let steps = 0;
-  let truncated = false;
-  const spec = ghostSpec(ghost);
-  const performance = shipPerformance(spec, ghost.damage, windFromDeg);
-
-  while (elapsed < maxGameSeconds) {
-    if (!ghost.order) {
-      if (Math.hypot(ghost.x - route.goal.x, ghost.y - route.goal.y) <=
-        settings.sailing.arrivalRadiusKm) break;
-      const aim = routeLookAheadPoint(path, ghost, settings.route.steerLookAheadKm);
-      if (!aim || Math.hypot(aim.x - ghost.x, aim.y - ghost.y) <
-        settings.sailing.minOrderDistanceKm) break;
-      ghost.tackLine ??= {
-        startX: ghost.x,
-        startY: ghost.y,
-        targetX: route.goal.x,
-        targetY: route.goal.y,
-      };
-      ghost.order = { type: "sailTo", x: aim.x, y: aim.y };
-      ghost.arrived = false;
-    }
-    stepShip(ghost, step, windFromDeg, undefined, undefined, undefined, undefined, false, { spec, performance });
-    elapsed += step;
-    steps += 1;
-    points.push({ x: ghost.x, y: ghost.y });
-    if (!ghost.order && Math.hypot(ghost.x - route.goal.x, ghost.y - route.goal.y) <=
-      settings.sailing.arrivalRadiusKm) break;
-  }
-  if (elapsed >= maxGameSeconds) truncated = true;
-  // Keep the two-second samples but cap the count. A stride is cheap and
-  // preserves the real steering shape better than a coarse geometric filter.
-  const simplified: MapPoint[] = [];
-  const stride = Math.max(1, Math.ceil(points.length / settings.route.predictionMaxPoints));
-  for (let index = 0; index < points.length; index += stride) simplified.push(points[index]!);
-  const finalPoint = points[points.length - 1]!;
-  if (simplified[simplified.length - 1] !== finalPoint) simplified.push(finalPoint);
-
-  return { points: simplified, simulatedSeconds: elapsed, truncated, steps };
+  const job = createPredictionJob(ship, route, windFromDeg);
+  advancePredictionJob(job);
+  return jobPath(job);
 }

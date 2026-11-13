@@ -2758,3 +2758,33 @@ planner's clearance waypoints without adding a sideways zigzag.
 
 - `npm test`: passed (414 tests, including the opt-in/default marker test).
 - `npm run build`: passed.
+
+
+## 3F-a: full route dots, route setting, chart holes
+
+- The predicted line now runs to the ordered goal with no 60-minute cap. It
+  uses the real `stepShip` ghost, 2-second steps for the first 60 game minutes
+  and 10-second steps after that, and sends at most 400 points with more detail
+  near the ship. A job advances for at most 2 ms per tick; the old line stays
+  visible until the replacement is ready. An unreachable goal shows "No route
+  to that point." instead of a truncated line.
+- Only each player's primary selected ship is computed and drawn. A selected
+  formation member resolves to its leader, so a fleet gets one line. Menu has
+  a remembered "Show route line" toggle (default On); off clears the line and
+  tells the server to stop computing and sending it.
+- Route invalidation: order change, 5 degrees of wind, 15% wind speed, 10%
+  speed/turn-rate damage change, 150 m off the line, or the 15-second fallback.
+  Test rooms have wind direction and speed controls.
+- The white chart circles were undiscovered cells inside explored sea. Sight
+  discovery tested only a cell's centre, so a diagonal course could leave a
+  cell untouched while all its neighbours were discovered; the smoothed
+  outline then punched that cell out as cream paper. Discovery now accepts any
+  overlap with the sight circle and fills one-cell enclosed holes. Test/dev
+  `&chartdebug=1` colors undiscovered cells red, discovered cells green, and
+  labels the 1 km cell size in the debug line.
+- Fog checks cover straight legs every 5 degrees at normal and 144x speed.
+
+### Checks
+
+- `npm test`: passed (419 tests).
+- `npm run build`: passed.

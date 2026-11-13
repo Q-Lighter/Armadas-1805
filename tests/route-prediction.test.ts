@@ -70,7 +70,7 @@ test("predicted path follows a 5 km reaching leg within 50 m", () => {
   const worst = compare(route, ship, predicted, world);
   console.log(`PREDICTED VS ACTUAL reaching: ${(worst * 1000).toFixed(1)} m, ${predicted.points.length} points`);
   assert.ok(worst < 0.05, `worst prediction gap ${(worst * 1000).toFixed(1)} m`);
-  assert.ok(predicted.points.length < 300);
+  assert.ok(predicted.points.length <= settings.route.predictionMaxPoints);
 });
 
 test("predicted path follows a tacking leg within 150 m", () => {
@@ -79,7 +79,7 @@ test("predicted path follows a tacking leg within 150 m", () => {
   const worst = compare(route, ship, predicted, world);
   console.log(`PREDICTED VS ACTUAL tacking: ${(worst * 1000).toFixed(1)} m, ${predicted.points.length} points`);
   assert.ok(worst < 0.15, `worst tacking prediction gap ${(worst * 1000).toFixed(1)} m`);
-  assert.ok(predicted.points.length < 300);
+  assert.ok(predicted.points.length <= settings.route.predictionMaxPoints);
 });
 
 test("the predicted path is private to the owner and reaches the state", () => {
@@ -88,7 +88,7 @@ test("the predicted path is private to the owner and reaches the state", () => {
   stepWorld(world, DT, WIND);
   const own = visibleStateFor(world, "alpha").fleet.find((row) => row.id === ship.id)!;
   assert.ok(own.predictedPath && own.predictedPath.length > 1);
-  assert.ok(own.predictedPath.length <= 300);
+  assert.ok(own.predictedPath.length <= settings.route.predictionMaxPoints);
   const other = visibleStateFor(world, "beta").fleet.find((row) => row.id === ship.id);
   assert.equal(other, undefined);
   assert.equal(world.routePredictions.has(ship.id), true);

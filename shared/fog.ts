@@ -150,8 +150,13 @@ export function revealCircle(
   for (let row = firstRow; row <= lastRow; row += 1) {
     const cellY = (row + 0.5) * chartCellKm;
     for (let column = firstColumn; column <= lastColumn; column += 1) {
+      // Discover a cell when ANY part of it lies inside the sight circle, not
+      // only when its centre does. Centre sampling left diagonal sailing
+      // courses with isolated undiscovered cells inside explored sea.
       const cellX = (column + 0.5) * chartCellKm;
-      if ((cellX - centreX) ** 2 + (cellY - centreY) ** 2 > radiusSq) continue;
+      const nearestX = Math.max(column * chartCellKm, Math.min(centreX, (column + 1) * chartCellKm));
+      const nearestY = Math.max(row * chartCellKm, Math.min(centreY, (row + 1) * chartCellKm));
+      if ((nearestX - centreX) ** 2 + (nearestY - centreY) ** 2 > radiusSq) continue;
 
       const index = row * chartColumns + column;
       const byte = index >> 3;
@@ -161,6 +166,56 @@ export function revealCircle(
       chart.bits[byte]! |= bit;
       chart.pendingCells.push(index);
       chart.pendingBlocks.add(blockIdForCell(index));
+    }
+  }
+  fillSingleCellHoles(chart, firstColumn - 1, firstRow - 1, lastColumn + 2, lastRow + 2);
+}
+
+/**
+ * Remove one-cell holes left by older charts or by a sight circle grazing a
+ * cell. A cell with all four cardinal neighbours discovered cannot be a real
+ * unexplored pocket, so it must not be punched out by the smoothed outline.
+ */
+export function fillSingleCellHoles(
+  chart: ChartState,
+  firstColumn = 0,
+  firstRow = 0,
+  lastColumn = chartColumns,
+  lastRow = chartRows,
+): void {
+  if (chart.all) return;
+  const discovered = (column: number, row: number): boolean => {
+    if (column < 0 || column >= chartColumns || row < 0 || row >= chartRows) return false;
+    const index = row * chartColumns + column;
+    return (chart.bits[index >> 3]! & (1 << (index & 7))) !== 0;
+  };
+  let changed = true;
+  while (changed) {
+    changed = false;
+    const rowStart = Math.max(0, firstRow);
+    const rowEnd = Math.min(chartRows, lastRow);
+    const columnStart = Math.max(0, firstColumn);
+    const columnEnd = Math.min(chartColumns, lastColumn);
+    for (let row = rowStart; row < rowEnd; row += 1) {
+      for (let column = columnStart; column < columnEnd; column += 1) {
+        if (discovered(column, row)) continue;
+        const cardinal =
+          discovered(column - 1, row) &&
+          discovered(column + 1, row) &&
+          discovered(column, row - 1) &&
+          discovered(column, row + 1);
+        const diagonal =
+          discovered(column - 1, row - 1) &&
+          discovered(column + 1, row - 1) &&
+          discovered(column - 1, row + 1) &&
+          discovered(column + 1, row + 1);
+        if (!cardinal && !diagonal) continue;
+        const index = row * chartColumns + column;
+        chart.bits[index >> 3]! |= 1 << (index & 7);
+        chart.pendingCells.push(index);
+        chart.pendingBlocks.add(blockIdForCell(index));
+        changed = true;
+      }
     }
   }
 }
@@ -234,6 +289,7 @@ function queueAllDiscoveredBlocks(chart: ChartState): void {
       chart.pendingBlocks.add(blockIdForCell(index));
     }
   }
+  fillSingleCellHoles(chart);
 }
 
 /** Move queued chart data into a websocket message. */

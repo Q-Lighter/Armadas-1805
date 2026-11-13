@@ -156,6 +156,9 @@ export const settings = {
     windFromDeg: 315,
     /** Constant placeholder strength in knots. Draft: 12. */
     windStrengthKnots: 12,
+    /** Test-room wind controls use this range. */
+    minStrengthKnots: 1,
+    maxStrengthKnots: 60,
   },
 
   /** How a ship moves under sail. */
@@ -551,16 +554,26 @@ export const settings = {
     steerLookAheadKm: 6,
     /** Predicted path is sampled in this many game seconds. Draft: 2. */
     predictionStepGameSeconds: 2,
-    /** Never predict more than this much game time. Draft: 60 minutes. */
-    predictionMaxGameMinutes: 60,
+    /** Fine two-second steps cover this many game minutes. Draft: 60. */
+    predictionFineGameMinutes: 60,
+    /** After the fine window, use this coarser game-second step. Draft: 10. */
+    predictionCoarseStepGameSeconds: 10,
+    /** Safety horizon for a route that never makes progress. Draft: 48 hours. */
+    predictionMaxGameHours: 48,
     /** Simplify a predicted path to this tolerance, in metres. Draft: 15 m. */
     predictionToleranceM: 15,
-    /** Hard ceiling on points in one predicted path. Draft: 300. */
-    predictionMaxPoints: 300,
-    /** Refresh a prediction at least this often, in game seconds. Draft: 20. */
-    predictionRefreshGameSeconds: 20,
-    /** Recompute when the wind moves by more than this. Draft: 10 degrees. */
-    predictionWindChangeDeg: 10,
+    /** Hard ceiling on points in one predicted path. Draft: 400. */
+    predictionMaxPoints: 400,
+    /** Refresh a prediction at least this often, in game seconds. Draft: 15. */
+    predictionRefreshGameSeconds: 15,
+    /** Recompute when the wind moves by more than this. Draft: 5 degrees. */
+    predictionWindChangeDeg: 5,
+    /** Recompute when wind strength changes by this share. Draft: 15%. */
+    predictionWindSpeedChangeShare: 0.15,
+    /** Recompute when damage changes speed or turn rate by this share. Draft: 10%. */
+    predictionPerformanceChangeShare: 0.10,
+    /** Recompute when the ship is this far from the drawn line. Draft: 150 m. */
+    predictionOffLineKm: 0.15,
     /** At most this many ships per player are refreshed in one pass. */
     predictionShipsPerRefresh: 6,
     /** Draft budget for the prediction job per server tick, in milliseconds. */

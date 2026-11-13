@@ -84,7 +84,12 @@ import {
   sampleRouteCurve,
   smoothRoute,
 } from "./route.js";
-import { predictRoutePath } from "./prediction.js";
+import {
+  advancePredictionJob,
+  createPredictionJob,
+  jobPath,
+  type PredictionJob,
+} from "./prediction.js";
 import { recordJourneys, simplifyTrail, startJourney, stopJourney, stopAllJourneys } from "./journey.js";
 import type { JourneyState } from "./journey.js";
 import type { DebugStats } from "./loadMetrics.js";
@@ -214,6 +219,8 @@ export interface OwnerState {
   journeys: Map<string, JourneyState>;
   /** X marks where this player's ships were lost, for the chart. */
   lostMarks: MapPoint[];
+  /** Menu setting; off stops route prediction work and sending. */
+  routeLineEnabled: boolean;
 }
 
 /** One human player's identity and game record, kept after their ships go. */
@@ -279,13 +286,22 @@ export interface World {
   fleetPaths: Map<string, Array<{ x: number; y: number }>>;
   /** Raw trail index already sent per player and ship. */
   trailSent: Map<string, Map<string, number>>;
-  /** Cached ghost paths for the owner's chart, by ship id. */
+  /** Cached and in-progress ghost paths for the owner's chart, by ship id. */
   routePredictions: Map<string, {
     points: Array<{ x: number; y: number }>;
     routeTick: number;
     windFromDeg: number;
+    windSpeedKnots: number;
     computedGameMs: number;
+    speedFactor: number;
+    turnRate: number;
+    reached: boolean;
+    truncated: boolean;
+    job?: PredictionJob;
   }>;
+  /** Placeholder weather authority until the weather phase. */
+  windFromDeg: number;
+  windSpeedKnots: number;
   /** Test/dev helper spawns only once per player id. */
   testFleetsSpawned: Set<string>;
   /** Next internal fleet id. */
@@ -800,6 +816,8 @@ export function createWorld(roomCode = "main", options: WorldOptions = {}): Worl
     fleetPaths: new Map(),
     trailSent: new Map(),
     routePredictions: new Map(),
+    windFromDeg: settings.weather.windFromDeg,
+    windSpeedKnots: settings.weather.windStrengthKnots,
     testFleetsSpawned: new Set(),
     nextFleetId: 1,
     owners: new Map(),
@@ -1061,7 +1079,7 @@ export function addPlayer(
     // room created before charts or fleets existed.
     if (!world.fleets.has(playerId)) world.fleets.set(playerId, [existing]);
     if (!world.owners.has(playerId)) {
-      world.owners.set(playerId, { money: startMoney, selectedShipId: existing.id, journeys: new Map(), lostMarks: [] });
+      world.owners.set(playerId, { money: startMoney, selectedShipId: existing.id, journeys: new Map(), lostMarks: [], routeLineEnabled: true });
     }
     if (!world.charts.has(playerId)) {
       const chart = createChart(world.kind);
@@ -1101,7 +1119,7 @@ export function addPlayer(
   ship.isFlagship = true;
   world.players.set(playerId, ship);
   world.fleets.set(playerId, [ship]);
-  world.owners.set(playerId, { money: startMoney, selectedShipId: ship.id, journeys: new Map(), lostMarks: [] });
+  world.owners.set(playerId, { money: startMoney, selectedShipId: ship.id, journeys: new Map(), lostMarks: [], routeLineEnabled: true });
   world.playerRecords.set(playerId, {
     id: playerId,
     name: playerId,
@@ -6698,7 +6716,7 @@ function enforceBoardingSpacing(world: World): void {
 export function stepWorld(
   world: World,
   dtGameSeconds: number,
-  windFromDeg: number = settings.weather.windFromDeg,
+  windFromDeg: number = world.windFromDeg,
 ): void {
   if (world.gameOver) return;
   for (const playerId of world.fleets.keys()) {
@@ -6764,49 +6782,128 @@ export function stepWorld(
   tryWaitingShips(world);
 }
 
-/** Refresh at most one ghost route per tick, selected ships first. */
+/** Advance each player's one active route line by a small shared budget. */
 function refreshPredictedRoutes(world: World, windFromDeg: number): void {
   if (world.gameOver) return;
-  const candidates: Array<{ playerId: string; ship: Ship; selected: boolean }> = [];
   for (const [playerId, fleet] of world.fleets) {
-    const selectedId = world.owners.get(playerId)?.selectedShipId;
-    for (const ship of fleet) {
-      if (!ship.route || ship.dockedPortId || ship.deliveryPortId) continue;
-      // A formation gets one ghost path, for its leader. A detached ship has
-      // its own route and may draw its own.
-      if (ship.fleetId && !ship.detached) {
-        const formation = [...fleetMapFor(world, playerId).values()]
-          .find((candidate) => candidate.id === ship.fleetId);
-        if (formation && formation.leaderId !== ship.id) continue;
-      }
-      candidates.push({ playerId, ship, selected: ship.id === selectedId });
+    const owner = world.owners.get(playerId);
+    if (!owner?.routeLineEnabled) {
+      for (const member of fleet) world.routePredictions.delete(member.id);
+      continue;
     }
+    if (!owner.selectedShipId) continue;
+    let ship = fleet.find((candidate) => candidate.id === owner.selectedShipId);
+    if (!ship) continue;
+    // A selected formation member still shows its leader's one line.
+    if (ship.fleetId && !ship.detached) {
+      const formation = [...fleetMapFor(world, playerId).values()]
+        .find((candidate) => candidate.id === ship!.fleetId);
+      const leader = formation
+        ? fleet.find((candidate) => candidate.id === formation.leaderId)
+        : undefined;
+      if (leader) ship = leader;
+    }
+    refreshOnePrediction(world, playerId, ship, windFromDeg);
   }
-  candidates.sort((a, b) => Number(b.selected) - Number(a.selected));
-  for (const candidate of candidates) {
-    const { ship } = candidate;
-    const route = ship.route;
-    if (!route) continue;
-    const cached = world.routePredictions.get(ship.id);
-    const windChanged = !cached ||
-      Math.abs(((windFromDeg - cached.windFromDeg + 540) % 360) - 180) >
-        settings.route.predictionWindChangeDeg;
-    const stale = !cached ||
-      cached.routeTick !== route.plannedTick ||
-      (world.gameMs - cached.computedGameMs) / 1000 >= settings.route.predictionRefreshGameSeconds ||
-      windChanged;
-    if (!stale) continue;
-    // The selected ship is first in the sorted list. One prediction per tick
-    // keeps the ghost job inside the two-millisecond world budget.
-    const predicted = predictRoutePath(ship, route, windFromDeg);
-    world.routePredictions.set(ship.id, {
-      points: predicted.points,
-      routeTick: route.plannedTick,
-      windFromDeg,
-      computedGameMs: world.gameMs,
-    });
+}
+
+function refreshOnePrediction(world: World, playerId: string, ship: Ship, windFromDeg: number): void {
+  const route = ship.route;
+  if (!route) {
+    world.routePredictions.delete(ship.id);
     return;
   }
+  const spec = shipSpecFor(ship);
+  const performanceData = shipPerformance(spec, ship.damage, windFromDeg);
+  const speedFactor = speedForHeading(spec, ship.headingRad, windFromDeg);
+  const turnRate = performanceData.turnRateDegPerSecond;
+  const cached = world.routePredictions.get(ship.id);
+  const activeJob = cached?.job;
+  if (activeJob) {
+    advancePredictionJob(activeJob, settings.route.predictionBudgetMs, 500);
+    // The first line has no old path to show; draw the growing job instead.
+    if (!activeJob.done && cached && cached.points.length <= 1) {
+      cached.points = activeJob.points.map((point) => ({ ...point }));
+    }
+    if (activeJob.done) {
+      const path = jobPath(activeJob);
+      world.routePredictions.set(ship.id, {
+        points: path.reached ? path.points : [],
+        routeTick: route.plannedTick,
+        windFromDeg,
+        windSpeedKnots: world.windSpeedKnots,
+        computedGameMs: world.gameMs,
+        speedFactor,
+        turnRate,
+        reached: path.reached,
+        truncated: path.truncated,
+      });
+      if (!path.reached) pushNotice(world, playerId, "No route to that point.");
+    }
+    return;
+  }
+  const windChanged = !cached ||
+    Math.abs(((windFromDeg - cached.windFromDeg + 540) % 360) - 180) >
+      settings.route.predictionWindChangeDeg;
+  const windSpeedChanged = !cached || Math.abs(world.windSpeedKnots - cached.windSpeedKnots) >
+    Math.max(1, cached.windSpeedKnots) * settings.route.predictionWindSpeedChangeShare;
+  const performanceChanged = !cached ||
+    Math.abs(speedFactor - cached.speedFactor) >
+      Math.max(0.1, Math.abs(cached.speedFactor)) * settings.route.predictionPerformanceChangeShare ||
+    Math.abs(turnRate - cached.turnRate) >
+      Math.max(0.01, cached.turnRate) * settings.route.predictionPerformanceChangeShare;
+  const offLine = cached && cached.points.length > 1 &&
+    distanceToPathKm({ x: ship.x, y: ship.y }, cached.points) > settings.route.predictionOffLineKm;
+  const stale = !cached || cached.routeTick !== route.plannedTick ||
+    (world.gameMs - cached.computedGameMs) / 1000 >= settings.route.predictionRefreshGameSeconds ||
+    windChanged || windSpeedChanged || performanceChanged || offLine;
+  if (!stale) return;
+  // Keep the old points visible while the replacement job runs.
+  const job = createPredictionJob(ship, route, windFromDeg);
+  world.routePredictions.set(ship.id, {
+    points: cached?.points?.length ? cached.points : job.points.map((point) => ({ ...point })),
+    routeTick: route.plannedTick,
+    windFromDeg: cached?.windFromDeg ?? windFromDeg,
+    windSpeedKnots: cached?.windSpeedKnots ?? world.windSpeedKnots,
+    computedGameMs: world.gameMs,
+    speedFactor: cached?.speedFactor ?? speedFactor,
+    turnRate: cached?.turnRate ?? turnRate,
+    reached: cached?.reached ?? true,
+    truncated: cached?.truncated ?? false,
+    job,
+  });
+  advancePredictionJob(job, settings.route.predictionBudgetMs, 500);
+  const entry = world.routePredictions.get(ship.id);
+  if (!entry) return;
+  if (job.done) {
+    const path = jobPath(job);
+    entry.points = path.reached ? path.points : [];
+    entry.reached = path.reached;
+    entry.truncated = path.truncated;
+    entry.windFromDeg = windFromDeg;
+    entry.windSpeedKnots = world.windSpeedKnots;
+    entry.computedGameMs = world.gameMs;
+    delete entry.job;
+    if (!path.reached) pushNotice(world, playerId, "No route to that point.");
+  } else if (entry.points.length <= 1) {
+    entry.points = job.points.map((point) => ({ ...point }));
+  }
+}
+
+function distanceToPathKm(point: MapPoint, path: ReadonlyArray<MapPoint>): number {
+  let best = Infinity;
+  for (let index = 0; index + 1 < path.length; index += 1) {
+    const a = path[index]!;
+    const b = path[index + 1]!;
+    const dx = b.x - a.x;
+    const dy = b.y - a.y;
+    const length = dx * dx + dy * dy;
+    const t = length > 1e-12
+      ? Math.max(0, Math.min(1, ((point.x - a.x) * dx + (point.y - a.y) * dy) / length))
+      : 0;
+    best = Math.min(best, Math.hypot(point.x - (a.x + dx * t), point.y - (a.y + dy * t)));
+  }
+  return best;
 }
 
 /** Normalise a heading in radians to whole compass degrees. */
@@ -7084,10 +7181,12 @@ export function visibleStateFor(
             Number(point.y.toFixed(2)),
           ])
         : null,
-      predictedPath: world.routePredictions.get(ship.id)?.points.map((point) => [
-        Number(point.x.toFixed(2)),
-        Number(point.y.toFixed(2)),
-      ]) ?? null,
+      predictedPath: owner?.routeLineEnabled && owner.selectedShipId === ship.id
+        ? world.routePredictions.get(ship.id)?.points.map((point) => [
+            Number(point.x.toFixed(2)),
+            Number(point.y.toFixed(2)),
+          ]) ?? null
+        : null,
       trail: owner?.journeys.get(ship.id)
         ? simplifyTrail(owner.journeys.get(ship.id)!.trail).map((point) => [
             Number(point.x.toFixed(2)),
@@ -7230,7 +7329,7 @@ export function visibleStateFor(
     t: "s",
     tick: world.tick,
     you: playerId,
-    w: settings.weather.windFromDeg,
+    w: world.windFromDeg,
     k: world.kind,
     g: Math.round(world.gameMs),
     ships,

@@ -122,6 +122,11 @@ import {
   shipTypeFor,
   type BuyableShipClassId,
 } from "@naval/shared/ships";
+import {
+  fireShipCardActions,
+  fireShipStatusText,
+  type FireShipActionId,
+} from "@naval/shared/fire-ship-ui";
 import { cleanShipName, suggestShipName } from "@naval/shared/ship-rules";
 import {
   buildFleetRow,
@@ -667,6 +672,7 @@ interface ShipView {
   abandoned: boolean;
   burning: boolean;
   sinking: boolean;
+  lantern: boolean;
   isFlagship: boolean;
   statusInk: Graphics;
   statusLabel: Text;
@@ -771,6 +777,13 @@ async function start(): Promise<void> {
   const fleetSelectedCount = element<HTMLElement>("fleet-selected-count");
   const shipUndock = element<HTMLButtonElement>("ship-undock");
   const shipDamage = element<HTMLButtonElement>("ship-damage");
+  const fireShipActionsOut = element<HTMLElement>("fire-ship-actions");
+  const fireShipStatusOut = element<HTMLElement>("fire-ship-status");
+  const fireShipButtonsOut = element<HTMLElement>("fire-ship-buttons");
+  const fireTargetBox = element<HTMLElement>("fire-ship-target");
+  const fireTargetText = element<HTMLElement>("fire-target-text");
+  const fireTargetConfirm = element<HTMLButtonElement>("fire-target-confirm");
+  const fireTargetCancel = element<HTMLButtonElement>("fire-target-cancel");
   const shipJourney = element<HTMLElement>("ship-journey");
   const shipEndJourney = element<HTMLButtonElement>("ship-end-journey");
   const damagePanel = element<HTMLElement>("damage-panel");
@@ -929,6 +942,10 @@ async function start(): Promise<void> {
   const testWindSpeed = element<HTMLInputElement>("test-wind-speed");
   const testSetWind = element<HTMLButtonElement>("test-set-wind");
   const testSpawn = element<HTMLButtonElement>("test-spawn");
+  const testAnchoredFleet = element<HTMLButtonElement>("test-anchored-fleet");
+  const testAnchoredStance = element<HTMLSelectElement>("test-anchored-stance");
+  const testTimeHour = element<HTMLInputElement>("test-time-hour");
+  const testTimeSet = element<HTMLButtonElement>("test-time-set");
   const testRemove = element<HTMLButtonElement>("test-remove");
   const testRefill = element<HTMLButtonElement>("test-refill");
   const testSinkFlagship = element<HTMLButtonElement>("test-sink-flagship");
@@ -1240,6 +1257,9 @@ async function start(): Promise<void> {
   const surrenderDismissed = new Set<string>();
   let battleBarKey = "";
   let boardTargetId: string | null = null;
+  let fireActionMode: "none" | "ignitePick" | "igniteConfirm" | "towPick" = "none";
+  let fireActionShipId: string | null = null;
+  let fireTargetId: string | null = null;
   let crewClaimPrizeId: string | null = null;
   let capturedShipId: string | null = null;
   let lastSunkAt: { x: number; y: number } | null = null;
@@ -2342,6 +2362,8 @@ async function start(): Promise<void> {
       selected.map((ship) => [ship.id, ship.predictedPath, ship.route, ship.orderLines]),
       view.x, view.y, view.kmAcross, quality.routeDetail,
       headingPreviewOn && !headingSheet.hidden,
+      fireActionMode, fireTargetId,
+      fleetShips.map((ship) => [ship.id, ship.towingId, ship.fireShipTargetId]),
     ]);
     if (key === lastRouteKey) {
       drawHeadingPreview();
@@ -2368,6 +2390,31 @@ async function start(): Promise<void> {
           label.position.set(point.x + 7, point.y - 15);
           routeLabels.addChild(label);
         }
+      }
+    }
+    // 3G: a dotted orange line for a contact attack, and a thin dotted tow
+    // rope with the towed ship's name. Both reuse the existing route ink.
+    const fireRow = selectedFleetShip();
+    const targetId = fireActionMode === "igniteConfirm"
+      ? fireTargetId
+      : fireRow?.fireShipTargetId ?? null;
+    const fireTarget = targetId ? ships.get(targetId) : undefined;
+    if (fireRow && fireTarget) {
+      drew = drawDotted([[fireRow.x, fireRow.y], [fireTarget.x, fireTarget.y]], 0xc25a1e) > 0 || drew;
+    }
+    for (const row of fleetShips) {
+      if (!row.towingId) continue;
+      const tow = fleetShips.find((ship) => ship.id === row.towingId);
+      if (!tow) continue;
+      drew = drawDotted([[row.x, row.y], [tow.x, tow.y]], 0x4a3220) > 0 || drew;
+      if (quality.routeDetail) {
+        const point = toScreen(tow.x, tow.y);
+        const label = new Text({
+          text: `Towing ${tow.name}`,
+          style: { fontFamily: "Source Sans 3", fontSize: 10, fill: 0x4a3220, fontWeight: "600" },
+        });
+        label.position.set(point.x + 8, point.y + 8);
+        routeLabels.addChild(label);
       }
     }
     routeLayer.visible = drew;
@@ -3529,7 +3576,7 @@ async function start(): Promise<void> {
     const card = shipyardCards(roomKind, stockSize(port), playerNavy).find(
       (candidate) => candidate.classId === classId,
     );
-    if (!card) return;
+    if (!card || card.locked) return;
     namingClass = classId;
     namingName.maxLength = settings.ships.maxNameLength;
     namingName.value = suggestShipName(playerNavy);
@@ -3545,7 +3592,7 @@ async function start(): Promise<void> {
     if (!shipyardPortId) return false;
     const port = portData.get(shipyardPortId);
     return !!port && shipyardCards(roomKind, stockSize(port), playerNavy).some(
-      (card) => card.classId === classId,
+      (card) => card.classId === classId && !card.locked,
     );
   }
 
@@ -3565,7 +3612,7 @@ async function start(): Promise<void> {
       const stats = document.createElement("dl");
       const buy = document.createElement("button");
 
-      article.className = "yard-card";
+      article.className = `yard-card${card.locked ? " is-locked" : ""}`;
       title.textContent = card.name;
       price.className = "yard-price";
       price.textContent = `${formatMoney(card.price)} pieces · ${card.deliveryText}`;
@@ -3590,9 +3637,9 @@ async function start(): Promise<void> {
       buy.type = "button";
       buy.className = "btn";
       buy.dataset.yardBuy = "true";
-      buy.textContent = "Buy";
-      buy.disabled = fleetShips.length >= settings.ships.maxShipsPerPlayer;
-      if (buy.disabled) buy.textContent = "Over ship limit";
+      buy.textContent = card.locked ? "Needs research" : "Buy";
+      buy.disabled = card.locked || fleetShips.length >= settings.ships.maxShipsPerPlayer;
+      if (!card.locked && buy.disabled) buy.textContent = "Over ship limit";
       buy.addEventListener("click", () => beginNaming(card.classId));
 
       article.append(title, price, stats, buy);
@@ -4517,6 +4564,7 @@ async function start(): Promise<void> {
       abandoned: false,
       burning: false,
       sinking: false,
+      lantern: false,
       isFlagship: false,
       statusInk,
       statusLabel,
@@ -4572,6 +4620,145 @@ async function start(): Promise<void> {
     shipStarvingOut.hidden = !ship.starving;
   }
 
+  function resetFireActionMode(): void {
+    fireActionMode = "none";
+    fireActionShipId = null;
+    fireTargetId = null;
+  }
+
+  function fireTowCandidates(): OwnShipSnapshot[] {
+    const tower = selectedFleetShip();
+    if (!tower) return [];
+    return fleetShips.filter((ship) =>
+      ship.classId === "fireShip" &&
+      ship.fireShipIgnited !== true &&
+      !ship.towedBy &&
+      Math.hypot(ship.x - tower.x, ship.y - tower.y) <= 0.3,
+    );
+  }
+
+  function renderFireShipActions(): void {
+    const row = selectedFleetShip();
+    if (!row) {
+      fireShipActionsOut.hidden = true;
+      resetFireActionMode();
+      return;
+    }
+    if (fireActionShipId && fireActionShipId !== row.id) resetFireActionMode();
+    const candidates = fireTowCandidates();
+    const actions = fireShipCardActions(row, candidates.length > 0);
+    const towName = row.towingId
+      ? fleetShips.find((ship) => ship.id === row.towingId)?.name ?? null
+      : null;
+    const status = fireShipStatusText(row, towName);
+    fireShipActionsOut.hidden = actions.length === 0 && !status;
+    fireShipStatusOut.textContent = status;
+    fireShipStatusOut.hidden = status.length === 0;
+
+    fireShipButtonsOut.replaceChildren();
+    for (const action of actions) {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = `btn${action.confirm ? " btn-seal" : ""}`;
+      button.dataset.fireAction = action.id;
+      button.textContent = action.label;
+      button.addEventListener("click", () => runFireShipAction(action.id));
+      fireShipButtonsOut.append(button);
+    }
+
+    if (fireActionMode === "none") {
+      fireTargetBox.hidden = true;
+      return;
+    }
+    fireTargetBox.hidden = false;
+    fireTargetConfirm.hidden = fireActionMode !== "igniteConfirm";
+    if (fireActionMode === "ignitePick") {
+      fireTargetText.textContent = "Ignite on contact: tap an enemy ship on the map.";
+    } else if (fireActionMode === "towPick") {
+      fireTargetText.textContent = "Tow: tap one of your fire ships within 300 m.";
+    } else {
+      const target = fireTargetId ? ships.get(fireTargetId) : undefined;
+      fireTargetText.textContent = target
+        ? `Target: ${target.navy} ${target.classId}. The dotted line shows the attack.`
+        : "Target lost. Cancel and choose another ship.";
+    }
+    fireTargetConfirm.disabled = fireActionMode === "igniteConfirm" &&
+      (!fireTargetId || !ships.has(fireTargetId));
+  }
+
+  function runFireShipAction(action: FireShipActionId): void {
+    const row = selectedFleetShip();
+    if (!row) return;
+    if (action === "lightsOn" || action === "lightsOff") {
+      sendCommand({ t: "lights", ship: row.id, on: action === "lightsOn" });
+      return;
+    }
+    if (action === "cancelContact") {
+      sendCommand({ t: "cancelIgnite", ship: row.id });
+      resetFireActionMode();
+      renderFireShipActions();
+      return;
+    }
+    if (action === "castOff") {
+      sendCommand({ t: "castOff", ship: row.id });
+      resetFireActionMode();
+      renderFireShipActions();
+      return;
+    }
+    if (action === "igniteNow") {
+      if (!window.confirm(`Set ${row.name} alight? The crew will escape and the ship is consumed.`)) {
+        return;
+      }
+      sendCommand({ t: "igniteFireShip", ship: row.id, mode: "now" });
+      return;
+    }
+    fireActionShipId = row.id;
+    fireTargetId = null;
+    if (action === "igniteContact") {
+      fireActionMode = "ignitePick";
+    } else if (action === "tow") {
+      fireActionMode = "towPick";
+    }
+    renderFireShipActions();
+  }
+
+  function handleFireTargetTap(screenX: number, screenY: number): boolean {
+    if (fireActionMode === "none") return false;
+    if (fireActionMode === "ignitePick") {
+      const foreign = anyShipAt(screenX, screenY);
+      if (foreign && !foreign.own) {
+        fireTargetId = foreign.id;
+        fireActionMode = "igniteConfirm";
+        renderFireShipActions();
+      } else {
+        showNotice("Tap an enemy ship, or Cancel.");
+      }
+      return true;
+    }
+    if (fireActionMode === "towPick") {
+      const ownShip = shipAt(screenX, screenY);
+      if (!ownShip) {
+        showNotice("Tap one of your fire ships within 300 m, or Cancel.");
+        return true;
+      }
+      const row = fleetShips.find((ship) => ship.id === ownShip.id);
+      if (!row || row.classId !== "fireShip") {
+        showNotice("The tow must be one of your fire ships.");
+        return true;
+      }
+      const tower = selectedFleetShip();
+      if (!tower || Math.hypot(row.x - tower.x, row.y - tower.y) > 0.3) {
+        showNotice("That fire ship is more than 300 m away.");
+        return true;
+      }
+      sendCommand({ t: "towShip", ship: tower.id, target: row.id });
+      resetFireActionMode();
+      renderFireShipActions();
+      return true;
+    }
+    return true;
+  }
+
   function updateHud(own: ShipSnapshot | undefined): void {
     const row = selectedFleetShip();
     const viewRow = row ? buildFleetRow(row, portName(row.portId)) : null;
@@ -4610,6 +4797,7 @@ async function start(): Promise<void> {
     shipStripProvisions.textContent = viewRow?.provisionsText ?? "–";
     shipUndock.hidden = row?.status !== "docked";
     shipDamage.disabled = !row || row.status === "delivery";
+    renderFireShipActions();
     updateJourneyUi(row);
   }
 
@@ -5999,6 +6187,8 @@ async function start(): Promise<void> {
       ship.abandoned = abandonedFlags.has(id) || ownRow?.abandoned === true;
       ship.burning = burningFlags.has(id) || ownRow?.burning === true;
       ship.sinking = sinkingFlags.has(id);
+      const night = gameClockAt(clockShownMs).daylight < 0.25;
+      ship.lantern = night && (ownRow ? ownRow.lightsOn !== false : true) && !ship.burning;
       ship.isFlagship = ownRow?.isFlagship === true;
       if (ship.sinking) ship.surrendered = false;
       if (id === selectedShipId) own = snapshot;
@@ -6313,6 +6503,7 @@ async function start(): Promise<void> {
   }
 
   function mapTapAction(screenX: number, screenY: number): void {
+    if (handleFireTargetTap(screenX, screenY)) return;
     const ownShip = shipAt(screenX, screenY);
     const portHit = portAt(screenX, screenY);
     const worldPoint = toWorld(screenX, screenY);
@@ -6603,6 +6794,21 @@ async function start(): Promise<void> {
   fleetUndock.addEventListener("click", sendUndock);
   shipUndock.addEventListener("click", sendUndock);
   shipDamage.addEventListener("click", () => openDamagePanel());
+  fireTargetCancel.addEventListener("click", () => {
+    resetFireActionMode();
+    renderFireShipActions();
+  });
+  fireTargetConfirm.addEventListener("click", () => {
+    if (!fireActionShipId || !fireTargetId) return;
+    sendCommand({
+      t: "igniteFireShip",
+      ship: fireActionShipId,
+      mode: "contact",
+      target: fireTargetId,
+    });
+    resetFireActionMode();
+    renderFireShipActions();
+  });
   const endJourney = (): void => {
     const id = selectedFleetShip()?.id;
     if (id) sendCommand({ t: "endJourney", ship: id });
@@ -6973,6 +7179,17 @@ async function start(): Promise<void> {
   });
   testToolsClose.addEventListener("click", closeTestTools);
   perfToggle.addEventListener("click", () => setPerfVisible(!perfVisible));
+  testAnchoredFleet.addEventListener("click", () => {
+    sendCommand({
+      t: "testAnchoredFleet",
+      stance: testAnchoredStance.value === "engage" ? "engage" : "fightIfAttacked",
+    });
+  });
+  testTimeSet.addEventListener("click", () => {
+    const hour = Math.max(0, Math.min(23, Math.floor(Number(testTimeHour.value))));
+    if (!Number.isFinite(hour)) return;
+    sendCommand({ t: "testTimeOfDay", hour });
+  });
   testSpawn.addEventListener("click", () => {
     const classId = testEnemyClass.value;
     const navy = parseNavy(testEnemyNavy.value);
@@ -7297,7 +7514,7 @@ async function start(): Promise<void> {
         // 3D status layers are pooled graphics. Rebuild the ink only when the
         // flags or zoom bucket change, not on every animation frame.
         const abandonedSize = abandonedMarkerSize(view.kmAcross);
-        const statusKey = `${ship.abandoned}|${ship.burning}|${ship.sinking}|${quality.fireGlow}|${abandonedSize}`;
+        const statusKey = `${ship.classId}|${ship.abandoned}|${ship.burning}|${ship.sinking}|${ship.lantern}|${quality.fireGlow}|${abandonedSize}`;
         if (statusKey !== ship.statusKey) {
           ship.statusKey = statusKey;
           ship.statusInk.clear();
@@ -7306,6 +7523,13 @@ async function start(): Promise<void> {
               .moveTo(-2, 8).lineTo(-2, -abandonedSize)
               .moveTo(-2, -abandonedSize + 4).lineTo(8, -abandonedSize + 8)
               .stroke({ width: 1.6, color: 0x3b3024, alpha: 0.9 });
+          }
+          if (ship.classId === "fireShip") {
+            ship.statusInk.circle(0, 0, 3.2).fill({ color: 0x2d2a28, alpha: 0.95 });
+          }
+          if (ship.lantern && quality.fireGlow) {
+            ship.statusInk.circle(0, 0, 9).fill({ color: 0xffd27a, alpha: 0.12 });
+            ship.statusInk.circle(0, 0, 2).fill({ color: 0xffe6a8, alpha: 0.7 });
           }
           if (ship.burning && quality.fireGlow) {
             ship.statusInk.circle(0, 0, 12).fill({ color: 0xe06a1f, alpha: 0.22 });
@@ -7326,7 +7550,10 @@ async function start(): Promise<void> {
           ship.statusLabel.text = "Sinking";
           ship.statusLabel.visible = ship.hull.visible;
         }
-        ship.statusInk.visible = ship.hull.visible && (ship.abandoned || (ship.burning && quality.fireGlow));
+        ship.statusInk.visible = ship.hull.visible && (
+          ship.abandoned || ship.classId === "fireShip" ||
+          ship.lantern || (ship.burning && quality.fireGlow)
+        );
       });
     }
 

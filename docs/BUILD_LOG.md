@@ -2928,3 +2928,30 @@ quietly tuning unrelated combat.
 - `npm test`: passed.
 - `npm run build`: passed.
 - No browser is available, so the simulation is the only balance evidence.
+
+## 3G-c: fire ship and tow screens
+
+- The shipyard shows Fire ship, 500 at every port that sells small ships. In a
+  normal room the card is dimmed and its button reads Needs research.
+- The scrolling ship card now has a fire-ship section: Ignite now (with a
+  confirmation), Ignite on contact, Cancel contact attack, Cast off and a
+  Lights on/off switch on every ship. A tower gets Tow fire ship only when one
+  of the player's unlit fire ships is within 300 m. Tow and contact ignition
+  use an in-card target step: tap the map target, see the target line and the
+  Cancel button, then confirm. Selecting another ship resets the mode.
+- The map draws an orange dotted target line for a contact attack and a thin
+  dotted rope labelled "Towing X" for a tow. Fire ships get a small dark marker;
+  burning ships keep the existing orange glow, smoke and ignition flash; ships
+  with lights on get a gentle lantern glow at night.
+- Test tools add an anchored five-frigate spawn with stance choice and a
+  time-of-day control. They sit inside the existing scrolling Menu and all
+  targets are at least 44 px.
+
+### Checks
+
+- `npm test`: passed (465 tests).
+- `npm run build`: passed.
+- No browser is available, so the screens were not visually inspected. The
+  shared card/layout plan and the five review viewports are covered by
+  `tests/fire-ship-ui-3g.test.ts`; the target-mode cancel path is exercised by
+  the same action model, not by a real pointer.

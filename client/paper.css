@@ -3153,3 +3153,66 @@ body.game {
 .damage-journey-end {
   min-height: 44px;
 }
+
+/* 3G fire ship actions live inside the existing scrolling ship card. */
+.ship-special {
+  margin: 0.55rem 0;
+  padding-top: 0.45rem;
+  border-top: 1px solid var(--rule);
+}
+.ship-special[hidden] { display: none; }
+.ship-special-status {
+  margin: 0 0 0.4rem;
+  color: var(--ink-faded);
+  font-size: 0.86rem;
+}
+.ship-special-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 0.4rem;
+}
+.ship-special-grid .btn {
+  min-height: 44px;
+  white-space: normal;
+}
+.fire-target {
+  margin-top: 0.45rem;
+  padding-top: 0.4rem;
+  border-top: 1px dashed var(--rule);
+}
+.fire-target[hidden] { display: none; }
+.fire-target p {
+  margin: 0 0 0.35rem;
+  font-size: 0.86rem;
+}
+.fire-target-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+}
+.fire-target-actions .btn {
+  min-height: 44px;
+  flex: 1 1 9rem;
+}
+@media (min-width: 641px) {
+  .ship-special-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
+.yard-card.is-locked {
+  opacity: 0.72;
+}
+.yard-card.is-locked .btn:disabled {
+  opacity: 1;
+  color: var(--ink-faded);
+}
+
+.test-inline {
+  display: grid;
+  gap: 0.25rem;
+  font-size: 0.88rem;
+}
+.test-inline select,
+.test-inline input {
+  min-height: 44px;
+  font: inherit;
+}

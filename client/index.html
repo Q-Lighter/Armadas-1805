@@ -202,6 +202,19 @@
         <button class="btn ship-journey-end" id="ship-end-journey" type="button" hidden>
           End journey
         </button>
+        <div class="ship-special" id="fire-ship-actions" hidden>
+          <p class="ship-special-status" id="fire-ship-status"></p>
+          <div class="ship-special-grid" id="fire-ship-buttons"></div>
+          <div class="fire-target" id="fire-ship-target" hidden>
+            <p id="fire-target-text"></p>
+            <div class="fire-target-actions">
+              <button class="btn btn-seal" id="fire-target-confirm" type="button" hidden>
+                Confirm ignition
+              </button>
+              <button class="btn" id="fire-target-cancel" type="button">Cancel</button>
+            </div>
+          </div>
+        </div>
         <button class="btn ship-damage" id="ship-damage" type="button">
           Damage
         </button>
@@ -396,6 +409,17 @@
       </div>
       <div class="test-tools-actions">
         <button class="btn btn-seal" id="test-spawn" type="button">Spawn enemies</button>
+        <label class="test-inline">Anchored fleet stance
+          <select id="test-anchored-stance">
+            <option value="fightIfAttacked" selected>Fight only if attacked</option>
+            <option value="engage">Engage anything</option>
+          </select>
+        </label>
+        <button class="btn" id="test-anchored-fleet" type="button">Spawn anchored enemy fleet</button>
+        <label class="test-inline">Time of day (game hour)
+          <input id="test-time-hour" type="number" min="0" max="23" step="1" value="23" inputmode="numeric" />
+        </label>
+        <button class="btn" id="test-time-set" type="button">Set time of day</button>
         <button class="btn" id="test-remove" type="button">Remove all dummies</button>
         <button class="btn" id="test-refill" type="button">Refill and repair my ships</button>
         <button class="btn" id="test-sink-flagship" type="button">Sink my flagship</button>

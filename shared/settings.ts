@@ -176,13 +176,43 @@ export const settings = {
      *  Draft: 4 km. */
     arrivalRadiusKm: 4,
 
-    /** Half-width in km of the zigzag used when the target is upwind. The
-     *  whole zigzag is twice this. Kept below the arrival radius. Draft: 2.5. */
+    /** Half-width of the old fixed zigzag. Kept for coast probes and old
+     *  saved routes; the tack corridor below is what a normal order uses. */
     tackHalfWidthKm: 2.5,
 
     /** How early a tack is started, as a share of the distance the ship will
      *  drift sideways while turning. Draft: 0.7. */
     tackTurnLeadFactor: 0.7,
+
+    /** Tacking corridor around the straight line to the target. The ship may
+     *  stray this share of the remaining distance either side. Draft: 8%. */
+    tackCorridorShare: 0.08,
+    /** Corridor half-width never drops below this, in km. Draft: 0.5 km. */
+    tackCorridorMinKm: 0.5,
+    /** Corridor half-width never grows above this, in km. Draft: 6 km. */
+    tackCorridorMaxKm: 6,
+    /** The other tack must make this much more progress to be worth an early
+     *  change. Draft: 15%. */
+    tackHysteresisProgress: 0.15,
+    /** At most one tack in this many game seconds. Draft: 60. */
+    tackCooldownGameSeconds: 60,
+    /** Inside this range of the target, use one best tack and stop zig-zagging.
+     *  Draft: 3 km. */
+    finalApproachKm: 3,
+    /** Within the final approach, sail straight when the bearing clears the
+     *  no-go angle by this much. Draft: 5 degrees. */
+    finalApproachNoGoMarginDeg: 5,
+    /** A target this close to dead upwind still needs both tacks; do not
+     *  commit to a single final tack. Draft: 15 degrees. */
+    finalApproachMinOffWindDeg: 15,
+    /** A tack is allowed to turn at least this fast, so it finishes in about
+     *  the manoeuvre time below. Draft: 6 degrees per game second. */
+    tackTurnDegPerGameSecond: 6,
+    /** Time a tack is allowed to take. Draft: 20 game seconds. */
+    tackManoeuvreGameSeconds: 20,
+    /** Every ship's closest-to-wind angle is reduced by this much. Draft: 9
+     *  degrees, within the requested 8-10 degree range. */
+    closestAngleAdjustDeg: -9,
 
     /** Orders closer than this do nothing. Draft: 0.2 km. */
     minOrderDistanceKm: 0.2,

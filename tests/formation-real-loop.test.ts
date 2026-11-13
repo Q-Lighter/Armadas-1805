@@ -24,7 +24,7 @@ import {
   isOutOfStation,
   type FormationId,
 } from "@naval/shared/fleets";
-import { shipTypeFor } from "@naval/shared/ships";
+import { shipSpecFor } from "@naval/shared/sailing";
 import type { Ship } from "@naval/shared/sailing";
 
 const WIND_FROM_DEG = 315;
@@ -61,7 +61,7 @@ function stationReport(world: World, ownerId: string, fleetId: string): Omit<Row
     fleet.formation,
     leader.headingRad,
     WIND_FROM_DEG,
-    shipTypeFor(leader.navy, leader.classId).closestAngleDeg,
+    shipSpecFor(leader).closestAngleDeg,
   );
   const slots = formationSlots({
     formation,

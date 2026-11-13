@@ -5076,6 +5076,10 @@ function stepOwnerShip(
         : world.engagements.has(ship.id)
           ? 0.02
           : ship.formationStation ? settings.fleets.stationArrivalRadiusKm : undefined,
+    ship.formationStation || ship.runState || ship.boardingShipId || world.engagements.has(ship.id)
+      ? 0
+      : settings.sailing.finalApproachKm,
+    Boolean(ship.boardingShipId || world.engagements.has(ship.id)),
   );
   resolveMovement(world, ownerId, ship, fromX, fromY);
 

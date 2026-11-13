@@ -2620,3 +2620,68 @@ reached at least 8/10 in station at 120 s; no pair came within 40 m at any step.
 - No browser or headless Chromium is available, so the dotted formation link,
   outline, slot markers and Fleet-card readout were checked structurally and by
   build/tests, not visually.
+
+## Session 3E-sail-a: shorter, smarter tacking
+
+**Date:** 2026-11-13
+**Branch:** main
+
+### Measured first
+
+Real world loop, wind 315, frigate, stopped point target, 10/30/100 km and
+0/15/30/45/60/90 degree bearings off the wind. The old rule used a fixed 2.5 km
+zigzag around the wind line. The worst cases:
+
+| case | time | made good / own speed | tack-side changes | longest leg | sideways |
+| --- | --- | --- | --- | --- | --- |
+| 30 km dead upwind | 6.96 h | 0.470 | 10 | 5.7 km | 2.5 km |
+| 30 km +15 deg | 6.53 h | 0.487 | 8 | 11.6 km | 8.5 km |
+| 30 km +30 deg | 5.84 h | 0.536 | 6 | 19.9 km | 10.5 km |
+| 100 km +45 deg | 23.54 h | 0.660 | 88 | 82.9 km | 24.2 km |
+
+Every case arrived, but the wide zigzags and repeated tacks made a beat much
+slower than the ship's own speed. The 100 km +45 case spent most of its time
+crossing its own track.
+
+### Changes
+
+- A corridor around the straight start-to-target line: half-width 8% of the
+  remaining distance, clamped to 0.5-6 km. The ship holds the tack until the
+  edge, with a 15% progress margin before an early change and a 60 game-second
+  cooldown. It commits to crossing the corridor after an edge tack, which stops
+  the old bang-bang oscillation.
+- Inside 3 km the ship commits to the single best tack; if the bearing clears
+  the no-go angle by 5 degrees it steers straight. A target closer than 15
+  degrees to dead upwind still uses both tacks because one tack cannot fetch it.
+- Every hull's closest-to-wind angle is 9 degrees smaller at runtime. Frigate:
+  62 -> 53 degrees. Other classes: 55-82 -> 46-73 degrees.
+- A tack turns at 6 degrees per game second for at most 20 game seconds, then
+  returns to the normal turn rate. The measured frigate tack took 18 game
+  seconds.
+- Close combat and boarding keep the old tight tacking rule; formation station
+  keeping uses the corridor but not the single-tack final approach. The upwind
+  line-ahead fallback is unchanged.
+
+### After
+
+| case | time | made good / own speed | turns | longest leg | sideways |
+| --- | --- | --- | --- | --- | --- |
+| 10 km dead upwind | 1.20 h | 0.602 | 7 | 1.8 km | 0.8 km |
+| 30 km dead upwind | 5.00 h | 0.602 | 16 (8 complete tacks) | 5.4 km | 2.3 km |
+| 100 km dead upwind | 18.23 h | 0.602 | 26 | 15.0 km | 6.0 km |
+| 30 km +15 deg | 4.83 h | 0.623 | 14 | 6.1 km | 2.2 km |
+| 30 km +30 deg | 4.35 h | 0.691 | 10 | 8.6 km | 2.0 km |
+| 30 km +45 deg | 3.53 h | 0.852 | 8 | 11.0 km | 1.5 km |
+| 100 km +45 deg | 13.35 h | 0.846 | 19 | 36.7 km | 5.1 km |
+| coast west Jamaica | 8.20 h | 0.675 | 14 | 13.8 km | 3.6 km |
+
+The 30 km dead-upwind run meets 60% made good and stays inside the 2.4 km
+corridor. Every table case finishes in under twice its ideal-tack time. The
+exact 0/5/10/20 degree upwind targets all arrive. The coast route uses the
+planner's clearance waypoints without adding a sideways zigzag.
+
+### Checks
+
+- `npm test`: 399 passing, 0 failing.
+- `npm run build`: passed.
+- Tack manoeuvre test: 18 game seconds from tack-side change to the new course.

@@ -100,6 +100,14 @@ export interface Ship {
   route: ShipRoute | null;
   /** The tack the ship will use the next time it has to beat upwind. */
   tackSide: TackSide;
+  /** Fixed line for the current upwind corridor. */
+  tackLine?: { startX: number; startY: number; targetX: number; targetY: number };
+  /** Game seconds before another tack is allowed. */
+  tackCooldownSeconds?: number;
+  /** Game seconds left in the fast tack turn. */
+  tackManoeuvreSeconds?: number;
+  /** Side of the corridor we are crossing after an edge tack. */
+  tackHoldSign?: 1 | -1;
   /** A held escape heading while turning away from a nearby coast. */
   coastEscapeHeadingRad?: number | null;
   /** True once the last order was completed. */
@@ -340,7 +348,13 @@ export function createShip(
 
 /** The sailing numbers for one ship, looked up by its navy and role. */
 export function shipSpecFor(ship: Pick<Ship, "classId" | "navy">): ShipSpec {
-  return shipTypeFor(ship.navy, ship.classId);
+  const spec = shipTypeFor(ship.navy, ship.classId);
+  // Draft tuning: all ships point a little closer to the wind. Keeping this
+  // in the runtime spec avoids editing the historical ship table.
+  return {
+    ...spec,
+    closestAngleDeg: Math.max(10, spec.closestAngleDeg + settings.sailing.closestAngleAdjustDeg),
+  };
 }
 
 /** Give a sail-to order. Returns false for an order the server should refuse. */
@@ -351,8 +365,18 @@ export function sailTo(ship: Ship, x: number, y: number): boolean {
   if (distance < settings.sailing.minOrderDistanceKm) return false;
   if (distance > settings.sailing.maxOrderDistanceKm) return false;
 
+  const previous = ship.order;
+  const targetMoved = !previous ||
+    Math.hypot(previous.x - x, previous.y - y) > 0.05 ||
+    !ship.tackLine;
   ship.order = { type: "sailTo", x, y };
   ship.arrived = false;
+  if (targetMoved) {
+    ship.tackLine = { startX: ship.x, startY: ship.y, targetX: x, targetY: y };
+    ship.tackCooldownSeconds = 0;
+    ship.tackManoeuvreSeconds = 0;
+    ship.tackHoldSign = undefined;
+  }
   return true;
 }
 
@@ -360,18 +384,17 @@ export function sailTo(ship: Ship, x: number, y: number): boolean {
 export function holdPosition(ship: Ship): void {
   ship.order = null;
   ship.speedKnots = 0;
+  ship.tackLine = undefined;
+  ship.tackCooldownSeconds = 0;
+  ship.tackManoeuvreSeconds = 0;
 }
 
 /**
- * Pick a close-hauled heading when the target lies inside the no-sail angle.
- *
- * The ship zigzags across the wind line running through the target. It changes
- * tack early enough that the sideways drift during the turn keeps the zigzag
- * inside `tackHalfWidthKm`. Because that half-width is smaller than the
- * arrival radius, crossing the target's wind line always brings the ship
- * within arrival range, so it can never circle short of the target.
+ * The pre-3E-sail tacking rule, kept for close combat and boarding approaches.
+ * Those controllers need the old tight zig-zag around the target rather than
+ * the long-distance corridor.
  */
-function upwindHeadingRad(
+function legacyUpwindHeadingRad(
   ship: Ship,
   spec: ShipSpec,
   order: SailToOrder,
@@ -379,31 +402,19 @@ function upwindHeadingRad(
   preferredTackSide?: TackSide,
 ): number {
   const windFromRad = windFromDeg * DEG;
-
-  // Unit vector across the wind line, used to measure the ship's offset.
-  // The world's y grows south, so a compass heading h points along
-  // (sin h, -cos h).
   const acrossX = Math.cos(windFromRad);
   const acrossY = Math.sin(windFromRad);
   const offsetKm = (ship.x - order.x) * acrossX + (ship.y - order.y) * acrossY;
-
   let side = preferredTackSide ?? ship.tackSide;
   const tackHeading = windFromRad + side * spec.closestAngleDeg * DEG;
-
-  // How fast this tack pushes the ship further across the wind line.
   const acrossRate = Math.sin(tackHeading) * acrossX - Math.cos(tackHeading) * acrossY;
   const tackSpeedKmh = speedForHeading(spec, tackHeading) * KM_PER_HOUR_PER_KNOT;
   const turnSeconds =
     Math.abs(shortestTurnDegrees(ship.headingRad, tackHeading)) /
     (turnRateDegPerSecond(spec) * DEG);
-
-  // Start the turn early, so the drift during it stays inside the zigzag.
-  const driftKm =
-    Math.abs(acrossRate) * (tackSpeedKmh / 3600) * turnSeconds * settings.sailing.tackTurnLeadFactor;
+  const driftKm = Math.abs(acrossRate) * (tackSpeedKmh / 3600) * turnSeconds *
+    settings.sailing.tackTurnLeadFactor;
   const switchAtKm = settings.sailing.tackHalfWidthKm - driftKm;
-
-  // Only change tack when this tack is pushing the ship outwards. A coast
-  // preference is held until the ship is safely away from land.
   if (
     preferredTackSide === undefined &&
     ship.speedKnots > 0.1 &&
@@ -414,8 +425,125 @@ function upwindHeadingRad(
     ship.tackSide = side;
   }
   if (preferredTackSide !== undefined) ship.tackSide = side;
-
   return windFromRad + side * spec.closestAngleDeg * DEG;
+}
+
+/**
+ * Pick a close-hauled heading when the target lies inside the no-sail angle.
+ *
+ * The ship is allowed a corridor either side of the straight line to its
+ * target. It holds the current tack until the corridor edge, unless the other
+ * tack makes at least 15% more progress, and never tacks more than once a
+ * minute. The old fixed-width zigzag wasted a lot of distance and never used
+ * the whole line to the target.
+ */
+function corridorHeadingRad(
+  ship: Ship,
+  spec: ShipSpec,
+  order: SailToOrder,
+  windFromDeg: number,
+  preferredTackSide?: TackSide,
+  finalApproachKm: number = settings.sailing.finalApproachKm,
+): number {
+  const windRad = windFromDeg * DEG;
+  const closest = spec.closestAngleDeg * DEG;
+  const dx = order.x - ship.x;
+  const dy = order.y - ship.y;
+  const remainingKm = Math.max(1e-6, Math.hypot(dx, dy));
+  const bearingRad = Math.atan2(dx, -dy);
+
+  // Inside the final approach, pick one tack and stay on it. If the target is
+  // far enough outside the no-go angle, steer straight at it instead.
+  if (
+    remainingKm <= finalApproachKm &&
+    angleOffWindDeg(bearingRad, windFromDeg) >= settings.sailing.finalApproachMinOffWindDeg
+  ) {
+    if (
+      angleOffWindDeg(bearingRad, windFromDeg) >=
+      spec.closestAngleDeg + settings.sailing.finalApproachNoGoMarginDeg
+    ) {
+      return bearingRad;
+    }
+    const bestSide = preferredTackSide ?? bestTackSide(spec, bearingRad, windFromDeg);
+    ship.tackSide = bestSide;
+    ship.tackHoldSign = undefined;
+    return windRad + bestSide * closest;
+  }
+
+  const line = ship.tackLine;
+  if (!line) return bearingRad;
+  const lineLength = Math.hypot(line.targetX - line.startX, line.targetY - line.startY);
+  if (lineLength < 1e-6) return bearingRad;
+  const ux = (line.targetX - line.startX) / lineLength;
+  const uy = (line.targetY - line.startY) / lineLength;
+  const px = -uy;
+  const py = ux;
+  const offset = (ship.x - line.startX) * px + (ship.y - line.startY) * py;
+  const halfWidth = Math.max(
+    settings.sailing.tackCorridorMinKm,
+    Math.min(
+      settings.sailing.tackCorridorMaxKm,
+      settings.sailing.tackCorridorShare * remainingKm,
+    ),
+  );
+
+  let side: TackSide = preferredTackSide ?? ship.tackSide;
+  const headingFor = (candidate: TackSide): { heading: number; progress: number } => {
+    const heading = windRad + candidate * closest;
+    const hx = Math.sin(heading);
+    const hy = -Math.cos(heading);
+    return { heading, progress: hx * ux + hy * uy };
+  };
+  const current = headingFor(side);
+  const other = headingFor(side === 1 ? -1 : 1);
+  const hx = Math.sin(current.heading);
+  const hy = -Math.cos(current.heading);
+  const sideRate = hx * px + hy * py;
+  const movingOut = offset * sideRate > 0;
+  const atEdge = Math.abs(offset) >= halfWidth - 1e-9;
+  // An edge tack commits the ship to crossing the corridor. Do not flip back
+  // immediately because the old tack has a better heading: that was the
+  // oscillation that produced hundreds of tacks. The hold clears once the
+  // ship crosses the centreline or reaches the far edge.
+  if (ship.tackHoldSign !== undefined && offset * ship.tackHoldSign <= 0) {
+    ship.tackHoldSign = undefined;
+  }
+  const otherIsBetter =
+    ship.tackHoldSign === undefined &&
+    other.progress > current.progress * (1 + settings.sailing.tackHysteresisProgress);
+  const cooldownReady = (ship.tackCooldownSeconds ?? 0) <= 0;
+
+  // A coast preference is a hard choice: do not tack into land just because
+  // the corridor edge was reached.
+  if (
+    preferredTackSide === undefined &&
+    cooldownReady &&
+    ((atEdge && movingOut) || (current.progress <= 0 && otherIsBetter))
+  ) {
+    side = side === 1 ? -1 : 1;
+    ship.tackSide = side;
+    ship.tackHoldSign = atEdge
+      ? (offset > 0 ? 1 : -1)
+      : undefined;
+    ship.tackCooldownSeconds = settings.sailing.tackCooldownGameSeconds;
+    ship.tackManoeuvreSeconds = settings.sailing.tackManoeuvreGameSeconds;
+  }
+  if (preferredTackSide !== undefined) ship.tackSide = side;
+  return windRad + side * closest;
+}
+
+/** The tack whose close-hauled heading points more directly at the target. */
+function bestTackSide(
+  spec: ShipSpec,
+  bearingRad: number,
+  windFromDeg: number,
+): TackSide {
+  const windRad = windFromDeg * DEG;
+  const closest = spec.closestAngleDeg * DEG;
+  const target = { x: Math.sin(bearingRad), y: -Math.cos(bearingRad) };
+  const one = Math.sin(windRad + closest) * target.x - Math.cos(windRad + closest) * target.y;
+  const minus = Math.sin(windRad - closest) * target.x - Math.cos(windRad - closest) * target.y;
+  return one >= minus ? 1 : -1;
 }
 
 /**
@@ -432,12 +560,16 @@ export function stepShip(
   preferredTackSide?: TackSide,
   forcedHeadingRad?: number,
   arrivalRadiusKm: number = settings.sailing.arrivalRadiusKm,
+  finalApproachKm: number = settings.sailing.finalApproachKm,
+  legacyTack: boolean = false,
 ): void {
   if (!(dtGameSeconds > 0) || !Number.isFinite(dtGameSeconds)) return;
 
   const spec = shipSpecFor(ship);
   const order = ship.order;
   const performance = shipPerformance(spec, ship.damage, windFromDeg);
+  ship.tackCooldownSeconds = Math.max(0, (ship.tackCooldownSeconds ?? 0) - dtGameSeconds);
+  ship.tackManoeuvreSeconds = Math.max(0, (ship.tackManoeuvreSeconds ?? 0) - dtGameSeconds);
 
   if (performance.crewTooLow) {
     ship.speedKnots = 0;
@@ -470,6 +602,7 @@ export function stepShip(
     // Arrived: stop exactly here. Never keep circling a near target.
     ship.speedKnots = 0;
     ship.order = null;
+    ship.tackLine = undefined;
     ship.arrived = true;
     return;
   }
@@ -484,10 +617,19 @@ export function stepShip(
       ? performance.driftHeadingRad
       : sailable
         ? bearingRad
-        : upwindHeadingRad(ship, spec, order, windFromDeg, preferredTackSide));
+        : legacyTack
+          ? legacyUpwindHeadingRad(ship, spec, order, windFromDeg, preferredTackSide)
+          : corridorHeadingRad(ship, spec, order, windFromDeg, preferredTackSide, finalApproachKm));
 
   // Turn gradually towards the wanted heading, at the damaged turn rate.
-  const maxTurnDeg = performance.turnRateDegPerSecond * dtGameSeconds;
+  // A tack is allowed a short, faster turn so the manoeuvre does not leave the
+  // ship pointing off its new course for minutes.
+  const maxTurnDeg = Math.max(
+    performance.turnRateDegPerSecond * dtGameSeconds,
+    (ship.tackManoeuvreSeconds ?? 0) > 0
+      ? settings.sailing.tackTurnDegPerGameSecond * dtGameSeconds
+      : 0,
+  );
   const turnDeg = Math.max(
     -maxTurnDeg,
     Math.min(maxTurnDeg, shortestTurnDegrees(ship.headingRad, wantedRad)),

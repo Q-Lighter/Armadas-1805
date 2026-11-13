@@ -219,6 +219,43 @@ export function applyStateDelta(base: StateMessage, delta: StateDelta): StateMes
   return next;
 }
 
+/**
+ * Merge every chart update in a queue of states. Coalescing a slow client's
+ * snapshots must never discard discovered cells or private block geometry.
+ */
+export function mergeChartUpdates(states: readonly StateMessage[]): StateMessage["chart"] | null {
+  let merged: StateMessage["chart"] | null = null;
+  const blocks = new Map<string, StateMessage["chart"]["blocks"][number]>();
+  const cells: number[] = [];
+  let snapshotRuns: number[] | undefined;
+  let all = false;
+  for (const state of states) {
+    const chart = state.chart;
+    if (!chart || typeof chart !== "object") continue;
+    merged ??= { cells: [], blocks: [], all: false, remaining: 0, serverCells: 0 };
+    if (Array.isArray(chart.cells)) cells.push(...chart.cells);
+    if (Array.isArray(chart.blocks)) {
+      for (const block of chart.blocks) {
+        if (block && typeof block.id === "string") blocks.set(block.id, block);
+      }
+    }
+    if (Array.isArray(chart.snapshotRuns)) snapshotRuns = chart.snapshotRuns;
+    if (chart.all === true) all = true;
+    if (typeof chart.remaining === "number" && Number.isFinite(chart.remaining)) {
+      merged.remaining = chart.remaining;
+    }
+    if (typeof chart.serverCells === "number" && Number.isFinite(chart.serverCells)) {
+      merged.serverCells = Math.max(merged.serverCells, chart.serverCells);
+    }
+  }
+  if (!merged) return null;
+  merged.cells = cells;
+  merged.blocks = [...blocks.values()];
+  merged.all = all;
+  if (snapshotRuns) merged.snapshotRuns = snapshotRuns;
+  return merged;
+}
+
 /** Keep the newest snapshot but preserve every event from the skipped ones. */
 export function newestStateWithEvents(states: readonly StateMessage[]): StateMessage | null {
   const newest = states[states.length - 1];
@@ -245,6 +282,8 @@ export function newestStateWithEvents(states: readonly StateMessage[]): StateMes
   }
   for (const id of trailReset) delete trailAdds[id];
   const merged: StateMessage = { ...newest, events };
+  const chart = mergeChartUpdates(states);
+  if (chart) merged.chart = chart;
   if (Object.keys(trailAdds).length > 0) merged.trailAdds = trailAdds;
   if (trailReset.size > 0) merged.trailReset = [...trailReset];
   if (newest.lostMarks !== undefined) merged.lostMarks = newest.lostMarks;

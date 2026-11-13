@@ -19,11 +19,16 @@ test("test and dev rooms show the fog debug line; normal rooms do not", () => {
     playerId: "0123456789abcdef",
     buildCommit: "abc123def4567890",
     hungerMultiplier: 10,
+    serverCells: 10,
+    clientCells: 9,
+    drawnBlocks: 3,
+    missingCells: 1,
   });
   assert.ok(testLine?.startsWith("TEMP-DEBUG"));
   assert.match(testLine ?? "", /room type test/);
   assert.match(testLine ?? "", /3 discovered cells/);
   assert.match(testLine ?? "", /2 map blocks received/);
+  assert.match(testLine ?? "", /server cells 10, client cells 9, drawn blocks 3, missing 1/);
   assert.match(testLine ?? "", /build abc123def456/);
   assert.match(testLine ?? "", /player 01234567/);
   assert.match(testLine ?? "", /hunger x10/);

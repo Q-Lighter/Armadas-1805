@@ -66,7 +66,11 @@ import { catmullRomPath, dotsAlongPath } from "@naval/shared/route-ink";
 import { trailIdsForMode, type ChartTrailMode } from "@naval/shared/journey";
 import { flagshipPennantVisible } from "@naval/shared/flagship-marker";
 import { readTapToSail, resolveTap, writeTapToSail } from "@naval/shared/tap-to-sail";
-import { fogDebugLine, type FogDebugInfo } from "@naval/shared/fog-view";
+import {
+  discoveredCellCount,
+  fogDebugLine,
+  type FogDebugInfo,
+} from "@naval/shared/fog-view";
 import { GRAPHICS_RESET_NOTICE, GraphicsRecovery } from "@naval/shared/graphics-safety";
 import { runDrawLayer } from "@naval/shared/draw-layer";
 import { applyStateDelta, decodeStateDelta, newestStateWithEvents } from "@naval/shared/state-delta";
@@ -1175,6 +1179,7 @@ async function start(): Promise<void> {
   let builtScale = 0;
   let builtRevision = -1;
   let chartRevision = 0;
+  let chartServerCells = 0;
   let lastMapBuild = 0;
   let lastWidth = 0;
   let lastHeight = 0;
@@ -5455,6 +5460,10 @@ async function start(): Promise<void> {
         receivedGapMaxMs: receivedAt.length >= 2 ? receivedGapMaxMs : undefined,
         fps,
         liveBlocks: liveBlockGraphics,
+        serverCells: chartServerCells,
+        clientCells: discoveredCellCount(chartAll, discovered),
+        drawnBlocks: blocks.size,
+        missingCells: Math.max(0, chartServerCells - discoveredCellCount(chartAll, discovered)),
         graphicsResets,
         devicePixelRatio: app.renderer.resolution,
         money,
@@ -5569,11 +5578,38 @@ async function start(): Promise<void> {
     enqueueState(next);
   }
 
+  /**
+   * Chart discovery is permanent and independent of the render loop. Apply it
+   * on arrival, before state messages are coalesced, so a slow tab or a full
+   * send buffer can never drop cells or private block geometry.
+   */
+  function applyChartPayload(chart: StateMessage["chart"] | undefined): void {
+    if (!chart || typeof chart !== "object") return;
+    const wasAll = chartMemory.all;
+    const applied = applyChartUpdate(chartMemory, chart);
+    chartAll = chartMemory.all;
+    for (const cell of applied.addedCells) {
+      chartDirtyBlocks.add(blockIdForCell(cell));
+    }
+    for (const id of applied.changedBlocks) chartDirtyBlocks.add(id);
+    if (!wasAll && chartAll) {
+      // The base texture now needs the full pale sea wash.
+      chartCacheInitialized = false;
+      markAllChartDirty();
+    }
+    const serverCells = finiteNumber(chart.serverCells) ?? undefined;
+    if (serverCells !== undefined) chartServerCells = Math.max(chartServerCells, serverCells);
+    chartBlocksRemaining = Math.max(0, Math.floor(finiteNumber(chart.remaining) ?? 0));
+    updateCharting();
+    if (applied.changed) chartRevision += 1;
+  }
+
   function enqueueState(state: StateMessage): void {
     if (!Array.isArray(state.ships)) return;
     lastStateReceivedAt = performance.now();
     noteStateReceived();
     if (!cachedState || state.full === true) cachedState = state;
+    applyChartPayload(state.chart);
     pendingStateMessages.push(state);
     if (pendingStateMessages.length > 30) pendingStateMessages.shift();
   }
@@ -5780,28 +5816,6 @@ async function start(): Promise<void> {
     scheduleLayoutAudit();
     windArrow.setAttribute("transform", `rotate(${(windFrom + 180) % 360} 12 12)`);
     windLabel.textContent = `Wind from ${compassPoint(windFrom)} (${Math.round(windFrom)}°)`;
-
-    const chart = state.chart;
-    let dataChanged = false;
-    if (chart && typeof chart === "object") {
-      const wasAll = chartMemory.all;
-      const applied = applyChartUpdate(chartMemory, chart);
-      chartAll = chartMemory.all;
-      for (const cell of applied.addedCells) {
-        chartDirtyBlocks.add(blockIdForCell(cell));
-      }
-      for (const id of applied.changedBlocks) chartDirtyBlocks.add(id);
-      if (!wasAll && chartAll) {
-        // The base texture now needs the full pale sea wash.
-        chartCacheInitialized = false;
-        markAllChartDirty();
-      }
-      dataChanged = applied.changed;
-      chartBlocksRemaining = Math.max(0, Math.floor(finiteNumber(chart.remaining) ?? 0));
-      updateCharting();
-    }
-
-    if (dataChanged) chartRevision += 1;
 
     // The server sends only ports this player has found. Keep the display set
     // in step with that filtered list rather than the full port table.

@@ -6,6 +6,7 @@ import {
   buildStateDelta,
   decodeStateDelta,
   encodeStateDelta,
+  mergeChartUpdates,
   newestStateWithEvents,
 } from "@naval/shared/state-delta";
 import { addPlayer, createWorld, giveSpareShips, stepWorld, visibleStateFor } from "@naval/shared/world";
@@ -67,4 +68,36 @@ test("a slow client keeps only the newest snapshot and every event", () => {
   assert.ok(merged);
   assert.equal(merged.tick, second.tick);
   assert.deepEqual(merged.events?.map((event) => event.id), [1, 2]);
+});
+
+
+test("coalescing states keeps every chart cell and private block", () => {
+  const { before, after } = statePair();
+  const first: StateMessage = {
+    ...before,
+    chart: {
+      ...before.chart,
+      cells: [1, 2, 3],
+      blocks: [{ id: "1_1", x: 25, y: 25, km: 25, fill: [], coast: [] }],
+      serverCells: 3,
+      remaining: 1,
+    },
+  };
+  const second: StateMessage = {
+    ...after,
+    chart: {
+      ...after.chart,
+      cells: [4, 5],
+      blocks: [{ id: "2_1", x: 50, y: 25, km: 25, fill: [], coast: [] }],
+      serverCells: 5,
+      remaining: 0,
+    },
+  };
+  const merged = newestStateWithEvents([first, second]);
+  assert.ok(merged);
+  assert.deepEqual(merged.chart.cells, [1, 2, 3, 4, 5]);
+  assert.deepEqual(merged.chart.blocks.map((block) => block.id), ["1_1", "2_1"]);
+  assert.equal(merged.chart.serverCells, 5);
+  assert.equal(merged.chart.remaining, 0);
+  assert.deepEqual(mergeChartUpdates([first, second])?.cells, [1, 2, 3, 4, 5]);
 });

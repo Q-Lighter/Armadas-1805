@@ -2864,3 +2864,23 @@ planner's clearance waypoints without adding a sideways zigzag.
 - No browser is available in this workspace, so the screens were not visually
   inspected. Layout, marker-discovery, owner-only health and capture-strip
   behaviour are covered by `tests/port-screens-3f.test.ts`.
+
+## 3G-a: chart coverage fix
+
+- Cause found: `newestStateWithEvents` coalesced queued state messages and kept
+  only the newest `chart` update. On a slow tab or after a reconnect burst, all
+  discovery cells and private blocks from the skipped states were lost. The
+  server was sending them; the client threw them away.
+- Chart updates are now applied as each message arrives, before states are
+  coalesced, and `newestStateWithEvents` merges every queued chart update as a
+  second guarantee. `&chartdebug=1` now prints "server cells N, client cells N,
+  drawn blocks N, missing N".
+- Added a 1,400 km real-loop voyage test over eight headings with a coalescing
+  slow client and two reconnects. Before the fix it missed 703 of 2,859 sight
+  cells; after the fix it passes and every discovered chart block is present.
+
+### Checks
+
+- `npm test`: passed (446 tests).
+- `npm run build`: passed.
+- No browser is available in this workspace, so the chart was not viewed.

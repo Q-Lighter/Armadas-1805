@@ -27,6 +27,7 @@ test("block batches send the nearest blocks first", () => {
     all: true,
     seen: new Map(),
     foundPorts: new Set<string>(),
+    discoveredCount: 0,
   };
   const blocks = new Map([
     ["far", block("far", 200, 200)],

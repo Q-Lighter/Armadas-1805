@@ -34,6 +34,10 @@ export interface FogDebugInfo {
   money?: number;
   fleetShips?: number;
   hungerMultiplier?: number;
+  serverCells?: number;
+  clientCells?: number;
+  drawnBlocks?: number;
+  missingCells?: number;
 }
 
 /** How many cells the player knows, with dev rooms counting the whole chart. */
@@ -62,6 +66,13 @@ export function fogDebugLine(
     `sight ${settings.fog.sightRangeKm} km`,
     `build ${(info.buildCommit ?? "unknown").slice(0, 12)}`,
   ];
+  if (info.serverCells !== undefined && info.clientCells !== undefined &&
+    info.drawnBlocks !== undefined && info.missingCells !== undefined) {
+    parts.push(
+      `server cells ${info.serverCells}, client cells ${info.clientCells}, ` +
+      `drawn blocks ${info.drawnBlocks}, missing ${info.missingCells}`,
+    );
+  }
   if (info.money !== undefined) parts.push(`${Math.round(info.money)} pieces`);
   if (info.fleetShips !== undefined) parts.push(`${info.fleetShips} fleet ships`);
   if (info.hungerMultiplier !== undefined) {

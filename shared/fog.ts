@@ -66,6 +66,8 @@ export interface ChartState {
   fireBudget?: Map<string, { second: number; count: number }>;
   /** A new socket must receive the whole record before normal changes. */
   resume?: boolean;
+  /** Cheap running count for the chart debug line. */
+  discoveredCount: number;
 }
 
 export interface ChartUpdate {
@@ -80,6 +82,8 @@ export interface ChartUpdate {
   snapshotRuns?: number[];
   /** Private blocks still queued after this batch. */
   remaining: number;
+  /** Total cells the server has discovered for this player. */
+  serverCells: number;
 }
 
 export function blockIdAt(xKm: number, yKm: number): string {
@@ -105,6 +109,7 @@ export function createChart(kind: RoomKind): ChartState {
     foundPorts: new Set(),
     combatCursor: 0,
     resume: false,
+    discoveredCount: kind === "dev" ? chartColumns * chartRows : 0,
   };
 
   if (kind === "dev") {
@@ -164,6 +169,7 @@ export function revealCircle(
       if ((chart.bits[byte]! & bit) !== 0) continue;
 
       chart.bits[byte]! |= bit;
+      chart.discoveredCount += 1;
       chart.pendingCells.push(index);
       chart.pendingBlocks.add(blockIdForCell(index));
     }
@@ -212,6 +218,7 @@ export function fillSingleCellHoles(
         if (!cardinal && !diagonal) continue;
         const index = row * chartColumns + column;
         chart.bits[index >> 3]! |= 1 << (index & 7);
+        chart.discoveredCount += 1;
         chart.pendingCells.push(index);
         chart.pendingBlocks.add(blockIdForCell(index));
         changed = true;
@@ -346,5 +353,6 @@ export function takeChartUpdate(
     all: chart.all,
     snapshotRuns,
     remaining: [...chart.pendingBlocks].filter((id) => !chart.sentBlocks.has(id)).length,
+    serverCells: chart.discoveredCount,
   };
 }

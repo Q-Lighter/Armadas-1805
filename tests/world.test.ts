@@ -55,7 +55,7 @@ test("the state for one player is compact and public", () => {
   const bytes = Buffer.byteLength(JSON.stringify(state), "utf8");
 
   assert.deepEqual(Object.keys(state).sort(), [
-    "chart", "fleet", "fleets", "g", "groups", "k", "l", "m", "ports", "roster", "sel", "ships", "t", "tick", "w", "you",
+    "chart", "fleet", "fleets", "g", "groups", "k", "l", "m", "portBattle", "ports", "roster", "sel", "ships", "t", "tick", "w", "you",
   ]);
   assert.equal(state.g, 0);
   assert.equal(state.you, "alpha");

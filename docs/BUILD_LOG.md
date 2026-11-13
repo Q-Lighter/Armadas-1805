@@ -2810,3 +2810,31 @@ planner's clearance waypoints without adding a sideways zigzag.
 
 - `npm test`: passed (432 tests).
 - `npm run build`: passed.
+
+
+## 3F-c: ports in the server world
+
+- The room now keeps port battle state (owner, health, tier, build, aggressors,
+  capture hold, stock) in memory; nothing is saved. `portOwners` follows the
+  battle owner so the existing shipyard and docking checks stay coherent.
+- The world step runs builds, repair, ship fire at ports, battery fire, the
+  aggressor memory, the capture hold and docked-ship capture/push-out. Ships
+  ordered to Attack port close to 600 m and stand and fire. Fleet orders apply
+  the same order to each member. Docking at another player's port is refused.
+- `visibleStateFor` adds `portBattle` rows for found ports only: navy colour,
+  tier, condition, silenced and capture range are public; exact health, stock,
+  build progress, guns and aggressors are owner-only; capture progress and the
+  blocking reason go only to the owner and the capturing side.
+- Test/dev helpers set a port's owner, health, tier, finish a build or fill its
+  stock. `&capturehold=SECONDS` overrides the hold in test/dev rooms. A dummy
+  owner is not a player and never triggers elimination.
+- Elimination now assigns the eliminated player's ports to the teammate or
+  victors, or makes them unowned when nobody defeated them.
+
+### Checks
+
+- `npm test`: passed (438 tests).
+- `npm run build`: passed.
+- `scripts/benchmark-ports.mjs`: 100 ships and 5 ports firing, mean 2.02 ms per
+  world step (p50 1.48, p95 3.50). The earlier 100-ship/3D benchmark was 1.86
+  ms per step, so ports add about 0.16 ms in this case.

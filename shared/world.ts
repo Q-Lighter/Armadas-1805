@@ -94,6 +94,28 @@ import { recordJourneys, simplifyTrail, startJourney, stopJourney, stopAllJourne
 import type { JourneyState } from "./journey.js";
 import type { DebugStats } from "./loadMetrics.js";
 import { SpatialGrid } from "./spatialGrid.js";
+import { gameClockAt } from "./time.js";
+import {
+  captureRangeKm,
+  captureStatus,
+  canDockAtPort,
+  damagePort,
+  eliminatePorts,
+  firePortBatteries,
+  newPortBattle,
+  portAttackProblem,
+  portCondition,
+  portGuns,
+  portMaxHealthFor,
+  repairPort,
+  resolveDockedShips,
+  startPortBuild,
+  tickPortBuild,
+  tickPortCapture,
+  type CaptureStatus,
+  type PortBattle,
+  type PortBattlePort,
+} from "./portBattle.js";
 import {
   ammunitionBroadsideCount,
   applyDriftingHullDamage,
@@ -286,6 +308,14 @@ export interface World {
   fleetPaths: Map<string, Array<{ x: number; y: number }>>;
   /** Raw trail index already sent per player and ship. */
   trailSent: Map<string, Map<string, number>>;
+  /** Port battle state, by port id. Not saved yet. */
+  portBattles: Map<string, PortBattle>;
+  /** Ship id to the port it is attacking. */
+  portAttackTargets: Map<string, string>;
+  /** Real second when each port's batteries can fire again. */
+  portBatteryReady: Map<string, number>;
+  /** Test-room &capturehold override; AGREED default is 300. */
+  captureHoldRealSeconds: number;
   /** Cached and in-progress ghost paths for the owner's chart, by ship id. */
   routePredictions: Map<string, {
     points: Array<{ x: number; y: number }>;
@@ -450,6 +480,29 @@ export type PortSnapshot = [
   crewAvailable: number,
   trade: PortTradeSnapshot | null,
 ];
+
+/** A port battle row visible only after this player has found the port. */
+export interface PortBattleSnapshot {
+  id: string;
+  /** Public owner id, or null for an unowned port. */
+  owner: string | null;
+  /** Owner navy for the marker colour; null for an unowned port. */
+  navy: NavyId | null;
+  tier: 0 | 1 | 2 | 3;
+  condition: "Healthy" | "Damaged" | "Heavily damaged" | "Silenced";
+  silenced: boolean;
+  /** Capture range today, after night and weather. */
+  rangeKm: number;
+  /** Owner-only exact detail. */
+  health?: number;
+  maxHealth?: number;
+  stock?: { timber: number; repairMaterials: number };
+  build?: { toTier: number; startedGameMs: number; endsGameMs: number };
+  aggressors?: string[];
+  guns?: { heavy: number; medium: number; light: number };
+  /** Capture progress for the owner and the capturing side only. */
+  capture?: { seconds: number; requiredSeconds: number; sideId: string | null; reason: string | null };
+}
 
 /** A short event message, separate from world state. */
 export interface NoticeMessage {
@@ -638,7 +691,11 @@ export type CombatEventKind =
   | "boarding"
   | "claim"
   | "friendlyFire"
-  | "sinking";
+  | "sinking"
+  | "portFire"
+  | "portHit"
+  | "portSilenced"
+  | "portCaptured";
 
 export interface CombatEvent {
   id: number;
@@ -685,6 +742,8 @@ export interface StateMessage {
   chart: ChartUpdate;
   /** Only ports this player has found. */
   ports: PortSnapshot[];
+  /** Battle state for found ports. Exact detail is owner-only. */
+  portBattle: PortBattleSnapshot[];
   /** This player's money in pieces of eight. Never another player's. */
   m: number;
   /** This player's selected ship id, if one is selectable. */
@@ -816,6 +875,15 @@ export function createWorld(roomCode = "main", options: WorldOptions = {}): Worl
     fleetPaths: new Map(),
     trailSent: new Map(),
     routePredictions: new Map(),
+    portBattles: new Map(
+      [...PORT_BY_ID.values()].map((port) => [
+        port.id,
+        newPortBattle(port, { timber: 0, repairMaterials: 0 }),
+      ]),
+    ),
+    portAttackTargets: new Map(),
+    portBatteryReady: new Map(),
+    captureHoldRealSeconds: settings.ports.battle.captureHoldRealSeconds,
     windFromDeg: settings.weather.windFromDeg,
     windSpeedKnots: settings.weather.windStrengthKnots,
     testFleetsSpawned: new Set(),
@@ -4043,6 +4111,171 @@ function arriveAtPort(
 }
 
 /** Order a found port. Unfound or non-placed ports are refused. */
+/** The port object used by the pure battle rules, with its anchorage. */
+function battlePort(port: PlacedPort): PortBattlePort {
+  return {
+    id: port.id,
+    name: port.name,
+    size: port.size,
+    npc: port.npc,
+    x: port.anchorage.x,
+    y: port.anchorage.y,
+  };
+}
+
+/** Alliances and navy teams are later hooks; today a side is one player. */
+function sameSide(_world: World, a: string, b: string): boolean {
+  return a === b;
+}
+
+export function portBattleState(world: World, portId: string): PortBattle | null {
+  return world.portBattles.get(portId) ?? null;
+}
+
+/**
+ * Order one ship or a fleet to attack a port. The ship closes to the Draft
+ * 600 m engage range and then stands and fires; the actual firing is in the
+ * world step.
+ */
+export function attackPort(
+  world: World,
+  playerId: string,
+  portId: unknown,
+  shipId?: unknown,
+  fromFleet = false,
+): boolean {
+  if (world.gameOver || typeof portId !== "string") return false;
+  const port = world.ports.get(portId);
+  const state = world.portBattles.get(portId);
+  if (!port || !state) return false;
+  const problem = portAttackProblem(battlePort(port), state, playerId, (a, b) => sameSide(world, a, b));
+  if (problem) {
+    pushNotice(world, playerId, problem);
+    return false;
+  }
+  if (!world.charts.get(playerId)?.foundPorts.has(portId)) {
+    pushNotice(world, playerId, "You have not found this port.");
+    return false;
+  }
+  const ships = shipId === undefined
+    ? shipsForOwner(world, playerId)
+    : [shipForOrder(world, playerId, shipId)].filter((ship): ship is Ship => ship !== null);
+  if (ships.length === 0) return false;
+  let ordered = 0;
+  for (const ship of ships) {
+    if (ship.deliveryPortId || ship.surrendered || ship.damage.hull <= 0) continue;
+    if (!fromFleet) {
+      if (ship.runState) clearRun(ship);
+      detachForDirectOrder(world, playerId, ship);
+      clearEngagement(world, ship.id);
+    }
+    if (ship.dockedPortId && !undock(world, playerId, ship.id)) continue;
+    const dx = ship.x - port.anchorage.x;
+    const dy = ship.y - port.anchorage.y;
+    const distance = Math.hypot(dx, dy);
+    const stand = B_ENGAGE();
+    const target = distance > stand
+      ? {
+          x: port.anchorage.x + (dx / distance) * stand,
+          y: port.anchorage.y + (dy / distance) * stand,
+        }
+      : { x: ship.x, y: ship.y };
+    world.portAttackTargets.set(ship.id, port.id);
+    ship.fightingStyle = "standAndFire";
+    ship.portOrderId = null;
+    if (distance > stand) {
+      installRoute(world, playerId, ship, target, "point", null);
+    } else {
+      ship.order = null;
+      ship.arrived = true;
+    }
+    ordered += 1;
+  }
+  if (ordered > 0) pushNotice(world, playerId, `Attacking ${port.name}. The objective is to sink her defences.`);
+  return ordered > 0;
+}
+
+function B_ENGAGE(): number {
+  return settings.ports.battle.engageRangeKm;
+}
+
+/** Start the next fortification tier. The owner pays from the port's stock. */
+export function buildPortFortification(world: World, playerId: string, portId: unknown): boolean {
+  if (world.gameOver || typeof portId !== "string") return false;
+  const port = world.ports.get(portId);
+  const state = world.portBattles.get(portId);
+  if (!port || !state) return false;
+  if (port.npc) {
+    pushNotice(world, playerId, "Neutral ground");
+    return false;
+  }
+  if (state.ownerId !== playerId) {
+    pushNotice(world, playerId, "You do not own this port.");
+    return false;
+  }
+  const research = world.kind === "test" || world.kind === "dev";
+  const problem = startPortBuild(battlePort(port), state, playerId, world.gameMs, research);
+  if (problem) {
+    pushNotice(world, playerId, problem);
+    return false;
+  }
+  pushNotice(world, playerId, `Building tier ${state.build?.toTier ?? state.tier + 1} at ${port.name}.`);
+  return true;
+}
+
+/** Test/dev: set the nearest or named port's owner. */
+export function setTestPortOwner(world: World, playerId: string, portId: unknown, owner: unknown): boolean {
+  if (world.kind === "normal") return false;
+  const port = typeof portId === "string" ? world.ports.get(portId) : null;
+  const state = port ? world.portBattles.get(port.id) : null;
+  if (!port || !state || port.npc) return false;
+  if (owner === "me") state.ownerId = playerId;
+  else if (owner === "nobody" || owner === null) state.ownerId = null;
+  else if (typeof owner === "string") state.ownerId = owner;
+  else return false;
+  if (state.ownerId) world.portOwners.set(port.id, state.ownerId);
+  else world.portOwners.delete(port.id);
+  return true;
+}
+
+export function setTestPortHealth(world: World, portId: unknown, health: unknown): boolean {
+  if (world.kind === "normal" || typeof portId !== "string" || typeof health !== "number") return false;
+  const port = world.ports.get(portId);
+  const state = world.portBattles.get(portId);
+  if (!port || !state) return false;
+  state.health = Math.max(0, Math.min(port.size === "L" ? 12_000 * 1.9 : 12_000, health));
+  return true;
+}
+
+export function setTestPortTier(world: World, portId: unknown, tier: unknown): boolean {
+  if (world.kind === "normal" || typeof portId !== "string" || typeof tier !== "number") return false;
+  const port = world.ports.get(portId);
+  const state = world.portBattles.get(portId);
+  if (!port || !state) return false;
+  state.tier = Math.max(0, Math.min(3, Math.floor(tier))) as 0 | 1 | 2 | 3;
+  state.health = Math.min(state.health, port.size === "S" ? 2_000 : 12_000);
+  return true;
+}
+
+export function finishTestPortBuild(world: World, portId: unknown): boolean {
+  if (world.kind === "normal" || typeof portId !== "string") return false;
+  const port = world.ports.get(portId);
+  const state = world.portBattles.get(portId);
+  if (!port || !state) return false;
+  if (!state.build) {
+    state.build = { toTier: (state.tier + 1) as 1 | 2 | 3, startedGameMs: world.gameMs, endsGameMs: world.gameMs };
+  }
+  return tickPortBuild(state, battlePort(port), world.gameMs);
+}
+
+export function fillTestPortStock(world: World, portId: unknown): boolean {
+  if (world.kind === "normal" || typeof portId !== "string") return false;
+  const state = world.portBattles.get(portId);
+  if (!state) return false;
+  state.stock = { timber: 10_000, repairMaterials: 10_000 };
+  return true;
+}
+
 export function applyPortOrder(
   world: World,
   playerId: string,
@@ -4064,6 +4297,12 @@ export function applyPortOrder(
     return false;
   }
   if (!world.charts.get(playerId)?.foundPorts.has(portId)) return false;
+  const battleState = world.portBattles.get(port.id);
+  if (battleState && !port.npc &&
+    !canDockAtPort(battleState, playerId, (a, b) => sameSide(world, a, b))) {
+    pushNotice(world, playerId, "That port belongs to another captain.");
+    return false;
+  }
   if (ship.dockedPortId === port.id) return true;
   if (distanceKm(ship, port.anchorage) > settings.sailing.maxOrderDistanceKm) {
     return false;
@@ -5324,8 +5563,10 @@ export function alliedPlayerIds(_world: World, _playerId: string): string[] {
 }
 
 /** Ports are a 3F hook. Nobody owns a port yet. */
-export function portsForPlayer(_world: World, _playerId: string): string[] {
-  return [];
+export function portsForPlayer(world: World, playerId: string): string[] {
+  return [...world.portBattles.entries()]
+    .filter(([, state]) => state.ownerId === playerId)
+    .map(([portId]) => portId);
 }
 
 function removeFromControlGroups(world: World, playerId: string, shipId: string): void {
@@ -5555,8 +5796,30 @@ export function handleFlagshipLoss(
     for (const candidate of remaining) abandonForInheritance(world, ownerId, candidate);
   }
 
-  // Phase 4 / 3F hooks: they are deliberately empty today.
-  for (const _port of portsForPlayer(world, ownerId)) void _port;
+  // 3F: ports follow the same heir or victor rules as the ships. With no
+  // recipient they become unowned and keep their tier.
+  const ownedPortIds = portsForPlayer(world, ownerId);
+  if (ownedPortIds.length > 0) {
+    const entries = ownedPortIds
+      .map((portId) => {
+        const port = world.ports.get(portId);
+        const state = world.portBattles.get(portId);
+        return port && state ? { port: battlePort(port), state } : null;
+      })
+      .filter((entry): entry is { port: PortBattlePort; state: PortBattle } => entry !== null);
+    const assignments = eliminatePorts(entries, null, recipients);
+    for (const assignment of assignments) {
+      const state = world.portBattles.get(assignment.portId);
+      if (!state) continue;
+      state.ownerId = assignment.ownerId;
+      if (assignment.ownerId) {
+        world.portOwners.set(assignment.portId, assignment.ownerId);
+        pushNotice(world, assignment.ownerId, `You received the port ${world.ports.get(assignment.portId)?.name ?? ""}.`);
+      } else {
+        world.portOwners.delete(assignment.portId);
+      }
+    }
+  }
   void alliedPlayerIds;
 
   world.fleetModels.delete(ownerId);
@@ -6778,6 +7041,7 @@ export function stepWorld(
   updatePortEconomy(world);
   updateCrewPools(world, dtGameSeconds);
   deliverReadyShips(world);
+  stepPortBattles(world, dtGameSeconds);
   updateFog(world);
   tryWaitingShips(world);
 }
@@ -6904,6 +7168,205 @@ function distanceToPathKm(point: MapPoint, path: ReadonlyArray<MapPoint>): numbe
     best = Math.min(best, Math.hypot(point.x - (a.x + dx * t), point.y - (a.y + dy * t)));
   }
   return best;
+}
+
+/** Batteries, port attacks, repairs, builds, capture and docked ships. */
+function stepPortBattles(world: World, dtGameSeconds: number): void {
+  const nowReal = combatRealSeconds(world);
+  const clock = gameClockAt(world.gameMs);
+  const same = (a: string, b: string): boolean => sameSide(world, a, b);
+  const sunk = new Set<string>();
+
+  // Ships firing at a port this tick. A landed shot marks the aggressor.
+  for (const [shipId, portId] of world.portAttackTargets) {
+    const entry = shipEntry(world, shipId);
+    const ship = entry?.ship;
+    const port = world.ports.get(portId);
+    const state = world.portBattles.get(portId);
+    if (!ship || !port || !state || ship.damage.hull <= 0 || ship.dockedPortId) {
+      world.portAttackTargets.delete(shipId);
+      continue;
+    }
+    const distance = Math.hypot(ship.x - port.anchorage.x, ship.y - port.anchorage.y);
+    if (distance > settings.ports.battle.engageRangeKm + 0.05) continue;
+    if (nowReal < ship.reloadReadyRealSeconds || ship.stores.ammunition <= 0) continue;
+    const spec = shipSpecFor(ship);
+    const result = resolveFiring({
+      spec,
+      damage: createShipDamage(spec),
+      targetClass: ship.classId,
+      distanceKm: distance,
+      targetBearingRad: bearingRad(ship, { x: port.anchorage.x, y: port.anchorage.y }),
+      headingRad: ship.headingRad,
+      ammunitionTonnes: ship.stores.ammunition,
+      objective: "sink",
+      random: world.combatRandom,
+    });
+    if (!result.fired) continue;
+    ship.stores.ammunition = Math.max(0, ship.stores.ammunition - result.ammunitionUsed);
+    ship.reloadStartedRealSeconds = nowReal;
+    ship.reloadReadyRealSeconds = nowReal +
+      reloadRealSeconds(spec, crewPercent(ship.damage, damageCapacities(spec)));
+    if (result.hits > 0) {
+      damagePort(state, battlePort(port), entry!.ownerId, result.pounds, nowReal);
+      pushCombatEvent(world, { kind: "portHit", x: port.anchorage.x, y: port.anchorage.y });
+      pushBattleLog(world, entry!.ownerId, `${port.name}: ${Math.round(result.pounds)} lb landed.`);
+      if (state.ownerId) {
+        pushNoticeOnce(world, state.ownerId, port.id, "portAttack", `Port ${port.name} is under attack`);
+      }
+      if (state.health <= 0) {
+        pushCombatEvent(world, { kind: "portSilenced", x: port.anchorage.x, y: port.anchorage.y });
+        if (state.ownerId) pushNoticeOnce(world, state.ownerId, port.id, "portSilenced", `Port ${port.name} silenced`);
+      }
+    }
+  }
+
+  // Repairs and builds happen even while the port is quiet.
+  for (const port of PLACED_PORTS) {
+    const state = world.portBattles.get(port.id);
+    if (!state) continue;
+    if (tickPortBuild(state, battlePort(port), world.gameMs) && state.ownerId) {
+      pushNotice(world, state.ownerId, `${port.name} is now tier ${state.tier}.`);
+    }
+    const before = state.health;
+    repairPort(battlePort(port), state, dtGameSeconds, nowReal);
+    if (state.health > 0 && before <= 0) {
+      pushCombatEvent(world, { kind: "portFire", x: port.anchorage.x, y: port.anchorage.y });
+    }
+  }
+
+  // Batteries fire after the ships, only at marked aggressors in range.
+  const targets = allShips(world)
+    .filter(({ ownerId, ship }) => ownerId !== "" && !ship.deliveryPortId && !ship.dockedPortId)
+    .map(({ ownerId, ship }) => ({
+      id: ship.id,
+      ownerId,
+      x: ship.x,
+      y: ship.y,
+      guns: shipSpecFor(ship).guns,
+      ammunition: ship.stores.ammunition,
+      crewShare: ship.fullCrew > 0 ? ship.crew / ship.fullCrew : 0,
+      abandoned: ship.abandoned,
+      surrendered: ship.surrendered,
+      dockedPortId: ship.dockedPortId,
+      damage: ship.damage,
+    }));
+  for (const port of PLACED_PORTS) {
+    const state = world.portBattles.get(port.id);
+    if (!state || state.health <= 0) continue;
+    const ready = world.portBatteryReady.get(port.id) ?? 0;
+    if (nowReal < ready) continue;
+    const shots = firePortBatteries(
+      state,
+      battlePort(port),
+      targets,
+      nowReal,
+      world.combatRandom,
+      same,
+    );
+    if (shots.length === 0) continue;
+    world.portBatteryReady.set(
+      port.id,
+      nowReal + settings.ports.battle.reloadGameMinutes * 60 / settings.time.sailingTimeScale,
+    );
+    let anyHit = false;
+    for (const shot of shots) {
+      if (!shot.hit) continue;
+      anyHit = true;
+      const target = shipEntry(world, shot.shipId)?.ship;
+      if (!target) continue;
+      target.damage.hull = Math.max(0, target.damage.hull - shot.pounds);
+      target.lastAttackedRealMs = nowReal * 1000;
+      if (target.damage.hull <= 0) sunk.add(target.id);
+      if (state.ownerId) {
+        pushBattleLog(world, state.ownerId, `${port.name} hit ${target.name} for ${shot.pounds} lb.`);
+      }
+    }
+    if (anyHit) pushCombatEvent(world, { kind: "portFire", x: port.anchorage.x, y: port.anchorage.y });
+  }
+  removeSunkShips(world, sunk);
+
+  // One side holding alone at zero health takes the port after 300 seconds.
+  const captureShips = allShips(world)
+    .filter(({ ownerId }) => world.players.has(ownerId))
+    .map(({ ownerId, ship }) => ({
+      id: ship.id,
+      ownerId,
+      x: ship.x,
+      y: ship.y,
+      guns: shipSpecFor(ship).guns,
+      ammunition: ship.stores.ammunition,
+      crewShare: ship.fullCrew > 0 ? ship.crew / ship.fullCrew : 0,
+      abandoned: ship.abandoned,
+      surrendered: ship.surrendered,
+      drifting: false,
+      grappled: world.boardingFights.has(ship.id),
+      dockedPortId: ship.dockedPortId,
+    }));
+  for (const port of PLACED_PORTS) {
+    const state = world.portBattles.get(port.id);
+    if (!state) continue;
+    const status = tickPortCapture(
+      battlePort(port),
+      state,
+      captureShips,
+      {
+        paused: false,
+        gameHour: clock.hour,
+        sameSide: same,
+      },
+      dtGameSeconds / settings.time.sailingTimeScale,
+      world.captureHoldRealSeconds,
+    );
+    if (!status.capturedBy) continue;
+    world.portOwners.set(port.id, status.capturedBy);
+    pushCombatEvent(world, { kind: "portCaptured", x: port.anchorage.x, y: port.anchorage.y });
+    const docked = allShips(world)
+      .filter(({ ship }) => ship.dockedPortId === port.id)
+      .map(({ ownerId, ship }) => ({
+        ship,
+        ownerId,
+        fightBack:
+          (ship.stance === "engage" || ship.stance === "fightIfAttacked") &&
+          ship.crew >= ship.fullCrew * 0.1 &&
+          shipSpecFor(ship).guns > 0,
+        flagship: ship.isFlagship === true,
+      }));
+    const result = resolveDockedShips(
+      docked.map(({ ship, ownerId, fightBack, flagship }) => ({
+        id: ship.id,
+        ownerId,
+        fightBack,
+        flagship,
+      })),
+      status.capturedBy,
+    );
+    for (const captured of result.captured) {
+      const ship = docked.find((entry) => entry.ship.id === captured.id)?.ship;
+      if (ship) {
+        giveShipToPlayer(world, ship, status.capturedBy);
+        ship.crew = ship.fullCrew;
+        syncDamageCrew(ship);
+      }
+    }
+    for (const pushed of result.pushedOut) {
+      const ship = docked.find((entry) => entry.ship.id === pushed.id)?.ship;
+      if (!ship) continue;
+      const dx = ship.x - port.anchorage.x;
+      const dy = ship.y - port.anchorage.y;
+      const length = Math.hypot(dx, dy) || 1;
+      ship.dockedPortId = null;
+      ship.x = port.anchorage.x + (dx / length) * settings.ports.battle.dockedPushKm;
+      ship.y = port.anchorage.y + (dy / length) * settings.ports.battle.dockedPushKm;
+      ship.order = null;
+      ship.route = null;
+      ship.speedKnots = 0;
+      pushNotice(world, pushed.ownerId, "Your docked ship was pushed out.");
+    }
+    if (state.ownerId) {
+      pushNotice(world, status.capturedBy, `Port ${port.name} captured.`);
+    }
+  }
 }
 
 /** Normalise a heading in radians to whole compass degrees. */
@@ -7325,6 +7788,62 @@ export function visibleStateFor(
     }
   }
 
+  const portBattle: PortBattleSnapshot[] = [];
+  for (const port of PLACED_PORTS) {
+    if (!chart.foundPorts.has(port.id)) continue;
+    const battle = world.portBattles.get(port.id);
+    if (!battle) continue;
+    const battleRow: PortBattleSnapshot = {
+      id: port.id,
+      owner: battle.ownerId,
+      navy: battle.ownerId ? world.playerRecords.get(battle.ownerId)?.navy ?? null : null,
+      tier: battle.tier,
+      condition: portCondition(battle, battlePort(port)),
+      silenced: battle.health <= 0,
+      rangeKm: captureRangeKm(
+        battlePort(port),
+        battle.tier,
+        { gameHour: gameClockAt(world.gameMs).hour },
+      ),
+    };
+    if (battle.ownerId === playerId) {
+      battleRow.health = battle.health;
+      battleRow.maxHealth = portMaxHealthFor(battle);
+      battleRow.stock = { ...battle.stock };
+      battleRow.build = battle.build ? { ...battle.build } : undefined;
+      battleRow.aggressors = [...battle.aggressors.keys()];
+      battleRow.guns = portGuns(port.size, battle.tier);
+    }
+    if (battle.ownerId === playerId || battle.capture?.sideId === playerId) {
+      const capture = captureStatus(
+        battlePort(port),
+        battle,
+        [...world.fleets.entries()]
+          .filter(([ownerId]) => world.players.has(ownerId))
+          .flatMap(([ownerId, fleet]) => fleet.map((ship) => ({
+            id: ship.id,
+            ownerId,
+            x: ship.x,
+            y: ship.y,
+            guns: shipSpecFor(ship).guns,
+            ammunition: ship.stores.ammunition,
+            crewShare: ship.fullCrew > 0 ? ship.crew / ship.fullCrew : 0,
+            abandoned: ship.abandoned,
+            surrendered: ship.surrendered,
+            dockedPortId: ship.dockedPortId,
+          }))),
+        { paused: false, gameHour: gameClockAt(world.gameMs).hour, sameSide: (a, b) => sameSide(world, a, b) },
+      );
+      battleRow.capture = {
+        seconds: battle.capture?.seconds ?? 0,
+        requiredSeconds: world.captureHoldRealSeconds,
+        sideId: battle.capture?.sideId ?? null,
+        reason: capture.reason,
+      };
+    }
+    portBattle.push(battleRow);
+  }
+
   const state: StateMessage = {
     t: "s",
     tick: world.tick,
@@ -7336,6 +7855,7 @@ export function visibleStateFor(
     l: lastSeen,
     chart: takeChartUpdate(chart, blockLookup, maxBlocks, near),
     ports,
+    portBattle,
     m: owner?.money ?? 0,
     sel: owner?.selectedShipId ?? null,
     fleet,

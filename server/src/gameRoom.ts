@@ -34,6 +34,13 @@ import {
   applyOrder,
   applyPortOrder,
   applyShipSpecialOrder,
+  attackPort,
+  buildPortFortification,
+  fillTestPortStock,
+  finishTestPortBuild,
+  setTestPortHealth,
+  setTestPortOwner,
+  setTestPortTier,
   createPlayerFleet,
   detachPlayerShip,
   buyGoods,
@@ -265,6 +272,13 @@ export class GameRoom {
       return new Response("Player id must be letters, numbers, dash or underscore.", {
         status: 400,
       });
+    }
+    if (kind !== "normal") {
+      const rawHold = url.searchParams.get("capturehold");
+      const hold = rawHold === null ? NaN : Number(rawHold);
+      if (Number.isFinite(hold) && hold > 0) {
+        this.world.captureHoldRealSeconds = Math.min(3_600, hold);
+      }
     }
 
     // TEMP-DEBUG: a dev room accepts bots=0..300 on every join. An absent
@@ -558,6 +572,9 @@ export class GameRoom {
       prisoners?: unknown;
       confirm?: unknown;
       to?: unknown;
+      owner?: unknown;
+      health?: unknown;
+      tier?: unknown;
     };
 
     if (order.t === "ping") {
@@ -611,6 +628,31 @@ export class GameRoom {
       savePlayerControlGroup(this.world, playerId, order.slot, order.ids);
     } else if (order.t === "sailToPort") {
       applyPortOrder(this.world, playerId, order.port, order.ship);
+    } else if (order.t === "attackPort") {
+      attackPort(this.world, playerId, order.port, order.ship);
+    } else if (order.t === "fleetAttackPort" && typeof order.fleet === "string") {
+      const fleet = this.world.fleetModels.get(playerId)?.get(order.fleet);
+      if (fleet) {
+        for (const id of fleet.members) {
+          if (this.world.portAttackTargets.has(id)) continue;
+          attackPort(this.world, playerId, order.port, id, true);
+        }
+      }
+    } else if (order.t === "buildFortification") {
+      buildPortFortification(this.world, playerId, order.port);
+    } else if (order.t === "testPort" && this.world.kind !== "normal") {
+      if (typeof order.port !== "string") return;
+      if (typeof order.owner === "string") {
+        setTestPortOwner(this.world, playerId, order.port, order.owner);
+      }
+      if (typeof order.health === "number") {
+        setTestPortHealth(this.world, order.port, order.health);
+      }
+      if (typeof order.tier === "number") {
+        setTestPortTier(this.world, order.port, order.tier);
+      }
+      if (order.mode === "finishBuild") finishTestPortBuild(this.world, order.port);
+      if (order.mode === "fillStock") fillTestPortStock(this.world, order.port);
     } else if (order.t === "undock") {
       undock(this.world, playerId, order.ship);
     } else if (order.t === "endJourney") {

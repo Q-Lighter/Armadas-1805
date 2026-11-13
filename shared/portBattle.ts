@@ -13,6 +13,9 @@ export interface PortBattlePort {
   name: string;
   size: PortSize;
   npc: boolean;
+  /** Optional world position; pure tests can use the centre hook instead. */
+  x?: number;
+  y?: number;
 }
 
 export interface PortBuild {
@@ -258,6 +261,7 @@ export function setPortCentreHook(hook: (port: PortBattlePort) => { x: number; y
   portCentreHook = hook;
 }
 function portCentre(port: PortBattlePort): { x: number; y: number } {
+  if (port.x !== undefined && port.y !== undefined) return { x: port.x, y: port.y };
   return portCentreHook(port);
 }
 
@@ -311,7 +315,7 @@ export function captureStatus(
     const side = sideFor(ownerId, enemyOwners, sameSide);
     if (!sides.includes(side)) sides.push(side);
   }
-  const requiredSeconds = B.captureHoldRealSeconds;
+  const requiredSeconds = settings.ports.battle.captureHoldRealSeconds;
   if (state.health > 0) {
     return { rangeKm: captureRangeKm(port, state.tier, context), sides, sideId: null, reason: "Batteries still firing", seconds: 0, requiredSeconds, capturedBy: null };
   }
@@ -339,6 +343,7 @@ export function tickPortCapture(
   ships: readonly ArmedShip[],
   context: CaptureContext,
   dtRealSeconds: number,
+  requiredHoldSeconds: number = B.captureHoldRealSeconds,
 ): CaptureStatus {
   const status = captureStatus(port, state, ships, context);
   if (status.reason) {
@@ -352,14 +357,14 @@ export function tickPortCapture(
   if (state.capture?.sideId !== status.sideId) state.capture = { sideId: status.sideId, seconds: 0 };
   state.capture.seconds += Math.max(0, dtRealSeconds);
   const held = state.capture.seconds;
-  if (held < B.captureHoldRealSeconds) {
+  if (held < requiredHoldSeconds) {
     return { ...status, seconds: held };
   }
   state.ownerId = status.sideId;
   state.health = maxHealth(state, port) * B.captureHealthShare;
   state.capture = null;
   state.upgradesUnlockedFor = status.sideId;
-  return { ...status, seconds: held, capturedBy: status.sideId };
+  return { ...status, seconds: held, requiredSeconds: requiredHoldSeconds, capturedBy: status.sideId };
 }
 
 export interface DockedShip {

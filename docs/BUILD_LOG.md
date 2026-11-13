@@ -2788,3 +2788,25 @@ planner's clearance waypoints without adding a sideways zigzag.
 
 - `npm test`: passed (419 tests).
 - `npm run build`: passed.
+
+
+## 3F-b: port defence, capture and fortification rules
+
+- Added `shared/portBattle.ts` with pure, seeded rules for port health, guns,
+  battery fire, aggressor memory, repair, fortification builds, capture ranges
+  and the 300-second hold, docked-ship capture and the elimination hook.
+- AGREED numbers are in `settings.ports.battle`: 0/10/10, 10/12/8 and 40/20/10
+  guns, 2,000/5,000/12,000 health, 1.2 km range, 15/20/30 km capture ranges,
+  300 seconds, +20% guns / +30% health / +100 m range per tier, and 1/2/3 day
+  builds. Build costs use the port's stock: 60+20, 150+50, 300+100 at medium
+  size.
+- Draft battery reload was tuned from 3.0 to 1.0 game minutes after the balance
+  simulation: one line ship now loses to a large port, three line ships silence
+  it with about 20% hull loss, and four with about 11%.
+- `RULES.md` has a new "Ports in battle" section. `scripts/balance-ports.mjs`
+  plays the requested stand-and-fire cases at 600 m.
+
+### Checks
+
+- `npm test`: passed (432 tests).
+- `npm run build`: passed.

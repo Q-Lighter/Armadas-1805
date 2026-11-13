@@ -165,6 +165,61 @@ Read this file at the start of every prompt, then follow it for the whole sessio
   claimed, and its cargo, ammunition, crew and prisoners are lost. The "ship
   sunk" event is sent when sinking starts, then the ship is removed.
 
+## Ports in battle
+
+- NPC ports are neutral ground. They can never be attacked or captured, shots
+  at them are refused with "Neutral ground", their docked ships are safe, and
+  their defences do nothing.
+- A capturable port has an owner (a player or nobody), health, a fortification
+  tier from 0 to 3, one build in progress, a silenced flag at zero health, a
+  capture hold, and a last-attacked time with its aggressors.
+- Base defences (AGREED): small 0 heavy / 10 medium / 10 light guns (100 lb),
+  health 2,000; medium 10/12/8 (248 lb with 14, 7 and 3 lb shot), health 5,000;
+  large 40/20/10 (730 lb), health 12,000. Battery range 1.2 km. Hit chance is
+  50% to 300 m, 30% to 600 m, 12% to 1 km and 6% out to battery range, on the
+  battle clock. Firepower falls with health; at zero health the batteries are
+  destroyed. A port fires only after being hit, only at aggressors, and never
+  at its owner or friends. Aggressors stay marked for 120 real seconds after
+  their last shot. Rough seas do not affect batteries.
+- Fortification tiers (AGREED) add 20% guns, 30% health (current health rises
+  in proportion) and 100 m range. Build times are 1, 2 and 3 game days; the old
+  defences work until the tier finishes. Costs come from the port's own stock,
+  scaled small x0.5, medium x1, large x2: tier 1 = 60 t timber + 20 t repair
+  materials; tier 2 = 150 + 50; tier 3 = 300 + 100. One build at a time, started
+  by the owner, no cancellation. Research is a hook; only test and dev rooms
+  unlock it in 3F, so normal rooms show "Needs research".
+- Attack port is a Sink order for a ship or fleet. Ships close to 600 m and
+  stand and fire; damage is the pounds of landed shot. Unowned, enemy and other
+  navies' ports can be attacked; your own, teammates' and NPC ports cannot.
+- Repair is blocked for 120 real seconds after the last attack. Unowned ports
+  heal 0.5% of maximum health per game hour; owned ports heal 2%, doubled while
+  using 1 t of repair materials per 5% healed. A silenced port heals and its
+  batteries return when health is above zero.
+- Capture (AGREED): only at zero health. Ranges are 15 km small, 20 km medium
+  and 30 km large, halved at night (18:00-06:00) and in mist, quartered in
+  thick fog, stacked with a weather hook. Only armed ships with guns,
+  ammunition and at least 10% crew count; abandoned, surrendered, drifting and
+  grappled ships do not. Lights-off ships do. Exactly one side must be in
+  range: a player, their navy teammates or an alliance hook. The owner's armed
+  ships count as a side and block capture; two enemy sides block each other.
+- The capturing side holds alone for 300 real seconds. Pause freezes the timer,
+  another side entering resets it, all capturers leaving resets it, and any
+  healing above zero resets it. On capture the owner changes, buildings and
+  tier stay, stored resources stay and now belong to the captor, upgrades
+  unlock for the captor and income starts from the next cycle hook. There is no
+  unfriendly period; health becomes 25% of maximum. A flagship may take a
+  small weak port.
+- Docked ships when a port falls: ships that do not fight back are captured
+  with the port, their crew joining. A ship fights back with Engage anything or
+  Fight only if attacked, at least 10% crew and guns; those and any docked
+  flagship are pushed about 3 km out to sea, and the owner is told. Flagships
+  are never captured. A ship cannot dock at another player's port; teammates
+  and an alliance hook allow it. Unowned ports keep today's rules.
+- Elimination hook: an eliminated player's ports go to a teammate, otherwise
+  to the victor or victors split evenly by value with the ships. Draft values:
+  small 3,000, medium 8,000, large 20,000 pieces, plus 25% per tier. With no
+  defeater the ports become unowned and keep their tier.
+
 ## Elimination and winning
 
 - Every player has exactly one flagship. In a normal room it is the navy's

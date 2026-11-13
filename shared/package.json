@@ -158,6 +158,10 @@
       "types": "./dist/shipRules.d.ts",
       "default": "./dist/shipRules.js"
     },
+    "./port-battle": {
+      "types": "./dist/portBattle.d.ts",
+      "default": "./dist/portBattle.js"
+    },
     "./port-view": {
       "types": "./dist/portView.d.ts",
       "default": "./dist/portView.js"

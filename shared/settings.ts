@@ -628,6 +628,63 @@ export const settings = {
     /** Real seconds between a waiting ship's attempts for a free place. */
     dockingRetrySeconds: 5,
     /** Draft port values, by size. Only docking capacity is used yet. */
+    battle: {
+      /** AGREED guns by class: heavy/medium/light. */
+      guns: {
+        S: { heavy: 0, medium: 10, light: 10 },
+        M: { heavy: 10, medium: 12, light: 8 },
+        L: { heavy: 40, medium: 20, light: 10 },
+      },
+      /** Pounds per gun class, as for ships. */
+      gunPounds: { heavy: 14, medium: 7, light: 3 },
+      /** AGREED base health. */
+      health: { S: 2_000, M: 5_000, L: 12_000 },
+      /** AGREED battery range in km. */
+      rangeKm: 1.2,
+      /** Draft reload on the battle clock; tuned down from 3.0 so one line
+       *  ship loses to a large port and three ships win with real damage. */
+      reloadGameMinutes: 1,
+      /** Ship hit bands plus the Draft 1.0 km to battery-range band. */
+      hitBands: [
+        { maxKm: 0.3, chance: 0.5 },
+        { maxKm: 0.6, chance: 0.3 },
+        { maxKm: 1.0, chance: 0.12 },
+        { maxKm: 1.2, chance: 0.06 },
+      ],
+      /** AGREED tier bonuses. */
+      tierGunBonus: 0.2,
+      tierHealthBonus: 0.3,
+      tierRangeBonusKm: 0.1,
+      /** AGREED build times, in game days, for tiers 1, 2 and 3. */
+      buildGameDays: [1, 2, 3],
+      /** Draft resource cost by target tier, before the size multiplier. */
+      buildCost: {
+        1: { timber: 60, repairMaterials: 20 },
+        2: { timber: 150, repairMaterials: 50 },
+        3: { timber: 300, repairMaterials: 100 },
+      },
+      sizeBuildMultiplier: { S: 0.5, M: 1, L: 2 },
+      /** AGREED aggressor memory after the last shot, in real seconds. */
+      aggressorRealSeconds: 120,
+      /** Draft attack range for a stand-and-fire port attack. */
+      engageRangeKm: 0.6,
+      /** Draft repair rules. */
+      repairBlockRealSeconds: 120,
+      unownedRepairSharePerGameHour: 0.005,
+      ownedRepairSharePerGameHour: 0.02,
+      repairMaterialTonnesPerFivePercent: 1,
+      /** AGREED capture ranges, in km, before weather and night. */
+      captureRangeKm: { S: 15, M: 20, L: 30 },
+      captureHoldRealSeconds: 300,
+      captureHealthShare: 0.25,
+      nightStartGameHour: 6,
+      nightEndGameHour: 18,
+      /** Draft docked-ship push distance after a capture. */
+      dockedPushKm: 3,
+      /** Draft port values for elimination, plus 25% per tier. */
+      value: { S: 3_000, M: 8_000, L: 20_000 },
+      valueTierBonus: 0.25,
+    },
     sizes: {
       S: {
         dockingCapacity: 4,

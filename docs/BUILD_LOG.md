@@ -2859,7 +2859,7 @@ planner's clearance waypoints without adding a sideways zigzag.
 
 ### Checks
 
-- `npm test`: passed (443 tests).
+- `npm test`: passed (444 tests).
 - `npm run build`: passed.
 - No browser is available in this workspace, so the screens were not visually
   inspected. Layout, marker-discovery, owner-only health and capture-strip

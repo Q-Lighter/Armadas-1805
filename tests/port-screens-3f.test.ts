@@ -4,6 +4,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
+import { orderMenuItems, responsiveFleetLayout } from "@naval/shared/fleet-ui";
 import {
   buildPortBattlePanelModel,
   captureStripText,
@@ -152,4 +153,16 @@ test("port markers exist only for ports this player has discovered", () => {
     sight,
   });
   assert.equal(hidden.length, 0);
+});
+
+
+test("the port menu offers Sail to port and Attack port at every viewport", () => {
+  const menu = orderMenuItems("port");
+  assert.equal(menu[0]?.id, "sailToPort");
+  assert.ok(menu.some((item) => item.id === "attackPort" && item.label === "Attack port"));
+  for (const [width, height] of SIZES) {
+    const layout = responsiveFleetLayout(width, height);
+    assert.equal(layout.minTargetPx, 44, `${width}x${height} menu target`);
+    assert.ok(layout.contentWidth <= width && layout.contentHeight <= height);
+  }
 });

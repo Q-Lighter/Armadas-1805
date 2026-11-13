@@ -20,6 +20,8 @@ export interface FiringReadoutInput {
   gunsPercent?: number;
   hasTarget?: boolean;
   gunsBear?: boolean;
+  /** A more specific boarding phase, if the approach has one. */
+  boardingStep?: string;
 }
 
 function rounded(value: number | undefined, fallback = 0): number {
@@ -36,11 +38,11 @@ export function firingReadout(input: FiringReadoutInput): string {
     : "None";
   const distance = rounded(input.distanceM);
   const bearing = rounded(input.bearingOffBeamDeg);
-  const step = input.phase === "closing" ? `closing (distance ${distance} m)`
+  const step = input.boardingStep ?? (input.phase === "closing" ? `closing (distance ${distance} m)`
     : input.phase === "in range" ? `in range (distance ${distance} m)`
     : input.phase === "hove" ? `hove to, pivoting (bearing ${bearing} degrees off beam)`
     : input.phase === "boarding approach" ? `boarding approach (distance ${distance} m)`
-    : input.phase;
+    : input.phase);
   const parts = [`Order: ${order}. Step: ${step}`];
 
   const ammo = Math.floor(input.ammunitionBroadsides ?? 0);

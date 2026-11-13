@@ -183,7 +183,7 @@ function viewState(world: ReturnType<typeof testWorld>, playerId: string) {
   return visibleStateFor(world, playerId);
 }
 
-test("surrender is refused at 30 ships and a flagship only records the event", () => {
+test("surrender is accepted over 30 ships and a flagship records the event", () => {
   const world = testWorld();
   const one = addPlayer(world, "one", "frigate", 50_000, "British");
   const two = addPlayer(world, "two", "flagship", 50_000, "French");
@@ -192,13 +192,8 @@ test("surrender is refused at 30 ships and a flagship only records the event", (
   assert.equal(spawnTestFleet(world, "one", "frigate:29"), 29);
   assert.equal(shipsForOwner(world, "one").length, 30);
   startShipSurrender(world, "two", two);
-  assert.equal(acceptShipSurrender(world, "one", two.id), false);
-  assert.ok((world.notices.get("one") ?? []).includes("Fleet full (30 ships)."));
-  // Free one slot, then the flagship can be taken; only an event is recorded.
-  const extra = shipsForOwner(world, "one").at(-1)!;
-  world.fleets.get("one")!.pop();
-  assert.ok(extra);
   assert.equal(acceptShipSurrender(world, "one", two.id), true);
+  assert.equal(shipsForOwner(world, "one").length, 31);
   assert.equal(world.flagshipLost.length, 1);
   assert.equal(world.flagshipLost[0]?.shipId, two.id);
   assert.ok(world.fleets.get("one")!.includes(two));

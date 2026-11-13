@@ -147,8 +147,7 @@ test("surrender sheet explains range and fleet-full reasons", () => {
     visible: true, name: "Lively", navy: "French", classId: "frigate",
     fleetCount: 30, maxShips: 30, nearestShipKm: 0.8,
   })!;
-  assert.equal(full.acceptEnabled, false);
-  assert.match(full.reason ?? "", /Fleet full/);
+  assert.equal(full.acceptEnabled, true);
   assert.equal(surrenderOffer({
     visible: false, name: "Lively", navy: "French", classId: "frigate",
     fleetCount: 1, maxShips: 30, nearestShipKm: 0.2,

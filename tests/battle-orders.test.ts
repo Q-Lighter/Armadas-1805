@@ -43,10 +43,7 @@ test("surrender acceptance explains range and fleet limits", () => {
     surrenderAcceptProblem({ fleetCount: 3, nearestShipKm: 1.1 })!,
     /within 1 km/,
   );
-  assert.equal(
-    surrenderAcceptProblem({ fleetCount: 30, nearestShipKm: 0.2 }),
-    "Fleet full (30 ships).",
-  );
+  assert.equal(surrenderAcceptProblem({ fleetCount: 30, nearestShipKm: 0.2 }), null);
 });
 
 test("stances choose fight, run or no automatic battle order", () => {

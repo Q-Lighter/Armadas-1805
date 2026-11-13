@@ -112,7 +112,6 @@ export function abandonedHullAfter(hull: number, maxHull: number, gameHours: num
 
 export type ClaimProblem =
   | "not abandoned"
-  | "fleet full (30 ships)"
   | "out of range"
   | "not enough crew to claim"
   | "donor keeps at least 10% crew";
@@ -134,8 +133,6 @@ export function claimProblem(options: {
   prize: CrewShip;
 }): ClaimProblem | null {
   if (!options.abandoned) return "not abandoned";
-  const maxShips = options.maxShips ?? settings.ships.maxShipsPerPlayer;
-  if (options.fleetCount >= maxShips) return "fleet full (30 ships)";
   if (!options.inRange) return "out of range";
   const needed = claimCrewNeeded(options.prize);
   if (needed < 1) return null;

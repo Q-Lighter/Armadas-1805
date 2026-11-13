@@ -2306,3 +2306,40 @@ guns are silent, show Hove to / In irons / Sailing / Drifting, and replace the
 
 - `npm test`: 348 passing.
 - `npm run build`: passed.
+
+## Session 3E-a: boarding approach, sail-away and cap fixes
+
+**Date:** 2026-11-13
+**Branch:** main
+
+### What was asked
+
+Rebuild boarding as a real intercept, close and alongside approach; find every
+unexplained sail-away in normal combat; format crew, percentages, tonnes, knots
+and money in one place; and allow more than 30 ships except when buying.
+
+### What was built
+
+- Boarding now steers to a predicted intercept recomputed every 2 real
+  seconds, closes to a chosen abeam side at target speed + 1.5 kn, eases
+  parallel alongside, and grapples only at 60 m or less with at most 3 kn
+  relative speed and 30 degrees heading difference. It labels intercepting,
+  tacking upwind, closing, alongside, turning back and boarding, recovers from
+  overshoots with normal turns and tacks, and cancels visibly with "Cannot
+  reach" or "Could not reach in time".
+- Combat readout labels `closing`, `re-closing (target at N m)`, `tack upwind`,
+  `hove to, pivoting`, `running`, `avoiding combat`, `line ahead`, `parallel
+  pass` and the boarding steps. The target-lost timer uses real combat seconds.
+- `shared/format.ts` now formats all crew, percentages, tonnes, knots and money.
+  The ship panel, fleet cards, trades, sheets and notices use it.
+- Surrender acceptance, boarding capture and claims are never refused for
+  fleet size. Buying is still blocked at 30 with "Over the ship limit (31 of
+  30): cannot buy ships".
+- `tests/real-loop.test.ts` grew to eleven real-loop scenarios; stopped targets
+  grapple in 8-26 s at 55-58 m with 9-30 degrees heading difference, and 3 kn
+  targets in 10-11 s at 58-59 m. `tests/format.test.ts` covers awkward floats.
+
+### Checks
+
+- `npm test`: 354 passing.
+- `npm run build`: passed.

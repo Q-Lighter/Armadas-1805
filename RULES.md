@@ -80,8 +80,9 @@ Read this file at the start of every prompt, then follow it for the whole sessio
   acceptance the ship changes owner and navy, keeps class, name, damage,
   cargo, ammunition and upgrades, leaves its fleet and control group, and
   holds position unfleeted; all attackers' Engage orders against it end.
-  Acceptance is refused if it would exceed 30 ships. A surrendered
-  flagship only records a "flagship lost" event for a later prompt.
+  Accepting is never refused for fleet size; a player may own more than 30
+  ships through capture or inheritance. A surrendered flagship is a
+  flagship lost (see Elimination and winning).
 - Stances now act: fight-if-attacked (the default) answers the ship that
   fired on it and stays within 1.5 km; engage-anything seeks any visible
   enemy within 3 km; avoid-combat runs when fired at; stealth never starts
@@ -102,7 +103,7 @@ Read this file at the start of every prompt, then follow it for the whole sessio
   donor keeps at least 10% and the receiver never exceeds full crew. Transfer
   is instant until the design says otherwise.
 - A ship that has had at least 10% crew and then falls below it is ABANDONED.
-  It has no owner, leaves its fleet, control group and 30-ship count, cannot
+  It has no owner, leaves its fleet and control group, cannot
   sail or fire, drifts at the sailless rate, and keeps its damage, cargo,
   ammunition and upgrades. It loses 1.5% of hull per game hour until claimed
   or sunk. A ship that never had the minimum (a new purchase, or a prize with
@@ -110,15 +111,22 @@ Read this file at the start of every prompt, then follow it for the whole sessio
 - Any player, including the former owner, may claim an abandoned ship by
   moving crew from a ship within 300 m to bring it back to at least 10%. The
   first success wins: ownership and navy colours change, the name and all
-  damage stay, and decay stops. A claim is refused at 30 ships. Enemy ships
-  may still fire on an abandoned ship.
+  damage stay, and decay stops. A claim is never refused for fleet size, so a
+  player may own more than 30 ships. Enemy ships may still fire on an
+  abandoned ship.
 - Boarding strength is crew x quality (1.0) x morale (1.0) x crew health
   (1.0). Attacker odds are A^2 / (A^2 + D^2), rounded to 5% for the player.
   Very rough seas make boarding impossible through a weather hook.
-- The Board order sails alongside within 60 m and matches speed within 3
-  knots, then grapples for 60-120 real seconds (90 default). The two ships
-  drift together, cannot sail away and do not fire at each other; other ships
-  may still fire on them. A side three times stronger wins at once. Surrendered
+- Buying ships is blocked at 30 or more ships, with "Over the ship limit
+  (31 of 30): cannot buy ships". Capture, inheritance and claims are not
+  blocked.
+- The Board order intercepts on a predicted course, closes to about 45 m
+  abeam, then eases alongside. It grapples only at 60 m or less, with at most
+  3 knots of relative speed and at most 30 degrees of heading difference. It
+  turns back if it overshoots, and cancels with a visible reason if it cannot
+  reach. A grapple lasts 60-120 real seconds (90 default). The two ships drift
+  together, cannot sail away and do not fire at each other; other ships may
+  still fire on them. A side three times stronger wins at once. Surrendered
   ships use Accept and abandoned ships use Claim, never Board.
 - The winner is decided from the odds and seed at the start. The loser loses
   80% of its surviving crew. The winner loses 40% times closeness, where

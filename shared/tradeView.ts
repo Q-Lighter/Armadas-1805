@@ -17,20 +17,10 @@ import {
   freeSpaceForGood,
   goodAmount,
 } from "./trade.js";
-
-/** Short tonne text: 2, 2.5 or 2.25, never trailing zeroes. */
-export function formatTonnes(tonnes: number): string {
-  const rounded = Math.round(Math.max(0, tonnes) * 100) / 100;
-  return Number.isInteger(rounded) ? String(rounded) : String(rounded);
-}
-
-export function formatTonnesWithUnit(tonnes: number): string {
-  return `${formatTonnes(tonnes)} t`;
-}
-
+import { formatMoney, formatTonnes, formatTonnesWithUnit } from "./format.js";
+export { formatTonnes, formatTonnesWithUnit } from "./format.js";
 export function formatPrice(price: number): string {
-  const rounded = Math.round(Math.max(0, price));
-  return String(rounded).replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+  return formatMoney(price);
 }
 
 export interface BuyRow {

@@ -1320,6 +1320,7 @@ function startEngagement(
   ship.hoveTo = false;
   ship.arrived = false;
   ship.battleOrder = objective;
+  ship.combatStep = "closing";
   world.engagements.set(ship.id, {
     ownerId,
     shipId: ship.id,
@@ -1341,6 +1342,7 @@ function clearEngagement(world: World, shipId: string): void {
     ship.route = null;
     ship.stationSpeedLimit = undefined;
     ship.hoveTo = false;
+    ship.combatStep = undefined;
     if (ship.battleOrder === "capture" || ship.battleOrder === "sink") {
       ship.battleOrder = undefined;
     }
@@ -1484,11 +1486,13 @@ function updateEngagements(world: World): void {
       continue;
     }
     if (missing) {
+      // Combat timers use real seconds, not the 144x world clock.
+      const nowCombatMs = combatRealSeconds(world) * 1000;
       if (engagement.targetMissingSinceGameMs === 0) {
-        engagement.targetMissingSinceGameMs = world.gameMs;
+        engagement.targetMissingSinceGameMs = nowCombatMs;
       } else if (
-        world.gameMs - engagement.targetMissingSinceGameMs >=
-        settings.fleets.targetLostGameMinutes * 60 * 1000
+        nowCombatMs - engagement.targetMissingSinceGameMs >=
+        settings.combat.targetLostCombatSeconds * 1000
       ) {
         pushNotice(world, engagement.ownerId, "Target lost from sight.");
         clearEngagement(world, shipId);
@@ -1512,6 +1516,7 @@ function updateEngagements(world: World): void {
     if (fleet && fleet.members.length > 1 && ship.id !== fleet.leaderId) {
       const leader = shipEntry(world, fleet.leaderId)?.ship;
       if (leader) {
+        ship.combatStep = "line ahead";
         const forwardX = Math.sin(leader.headingRad);
         const forwardY = -Math.cos(leader.headingRad);
         const gapKm = settings.fleets.defaultGapM / 1000;
@@ -1531,6 +1536,7 @@ function updateEngagements(world: World): void {
     if (fleet && fleet.members.length > 1 && style === "standAndFire") {
       // The fleet leader makes a slow parallel pass, not a single-ship hove-to.
       leaveHoveTo(ship);
+      ship.combatStep = "parallel pass";
       const point = alongsidePoint(ship, targetShip);
       ship.stationSpeedLimit = targetShip.speedKnots < 0.2
         ? settings.combat.fleetEngageSpeedKnots
@@ -1542,6 +1548,7 @@ function updateEngagements(world: World): void {
 
     if (style === "alongside" && targetShip.speedKnots >= 0.2) {
       leaveHoveTo(ship);
+      ship.combatStep = "alongside";
       const point = alongsidePoint(ship, targetShip);
       const wanted = targetShip.speedKnots;
       const low = wanted * (1 - settings.combat.alongsideSpeedToleranceShare);
@@ -1559,6 +1566,7 @@ function updateEngagements(world: World): void {
       : settings.combat.engageRangeM;
     if (distance > closeRangeM / 1000) {
       leaveHoveTo(ship);
+      ship.combatStep = `re-closing (target at ${Math.round(distance * 1000)} m)`;
       const rangeKm = settings.combat.engageRangeM / 1000;
       const bearing = bearingRad(ship, targetShip);
       ship.stationSpeedLimit = undefined;
@@ -1570,6 +1578,7 @@ function updateEngagements(world: World): void {
       };
     } else {
       enterHoveTo(ship);
+      ship.combatStep = "hove to, pivoting";
     }
   }
 }
@@ -1817,6 +1826,7 @@ function setRunSteering(world: World, ship: Ship): void {
   }
   run.headingRad = heading;
   run.lastSteerRealSeconds = combatRealSeconds(world);
+  ship.combatStep = "running";
   const target = {
     x: ship.x + Math.sin(heading) * 12,
     y: ship.y - Math.cos(heading) * 12,
@@ -2124,7 +2134,10 @@ function applyStances(world: World): void {
       continue;
     }
     if (ship.stance === "avoid") {
-      if (attacker) startShipRun(world, ownerId, ship);
+      if (attacker) {
+        startShipRun(world, ownerId, ship);
+        ship.combatStep = "avoiding combat";
+      }
       continue;
     }
     if (ship.stance === "stealth") continue;
@@ -3688,7 +3701,8 @@ export function buyShip(
     return null;
   }
   if (!canAddShip(fleet.length)) {
-    pushNotice(world, playerId, `Your fleet is full (${settings.ships.maxShipsPerPlayer} ships).`);
+    pushNotice(world, playerId,
+      `Over the ship limit (${fleet.length + 1} of ${settings.ships.maxShipsPerPlayer}): cannot buy ships.`);
     return null;
   }
   const name = cleanShipName(rawName);
@@ -4650,7 +4664,7 @@ function stepOwnerShip(
     dtGameSeconds,
     windFromDeg,
     preferredTackSide,
-    ship.runState?.headingRad ?? ship.coastEscapeHeadingRad ?? undefined,
+    ship.runState?.headingRad ?? ship.boardingForcedHeadingRad ?? ship.coastEscapeHeadingRad ?? undefined,
     ship.runState
       ? undefined
       : ship.boardingShipId
@@ -4710,6 +4724,15 @@ function clearBoarding(world: World, ship: Ship | undefined): void {
   ship.boardingApproachStartedRealMs = undefined;
   ship.boardingStuckSinceRealMs = null;
   ship.boardingLastDistanceM = undefined;
+  ship.boardingStep = undefined;
+  ship.boardingSide = undefined;
+  ship.boardingBestDistanceM = undefined;
+  ship.boardingLastProgressRealMs = undefined;
+  ship.boardingIronsSinceRealMs = null;
+  ship.boardingTurningBackSinceRealMs = null;
+  ship.boardingLastPlanRealMs = undefined;
+  ship.boardingForcedHeadingRad = undefined;
+  ship.boardingPowerKnots = undefined;
   if (otherId) {
     const other = shipEntry(world, otherId)?.ship;
     if (other && other.boardingShipId === ship.id) {
@@ -4728,11 +4751,6 @@ function takePrize(
   acceptingOwner: string,
   acceptingNavy: NavyId,
 ): boolean {
-  const accepting = shipsForOwner(world, acceptingOwner);
-  if (accepting.length >= settings.ships.maxShipsPerPlayer) {
-    pushNotice(world, acceptingOwner, "Fleet full (30 ships)");
-    return false;
-  }
   removeFromOwner(world, oldOwner, target.id);
   world.abandonedShips = world.abandonedShips.filter((ship) => ship.id !== target.id);
   for (const [shipId, engagement] of [...world.engagements]) {
@@ -4836,6 +4854,123 @@ export function boardingOddsFor(
 }
 
 /** Start the Board order: close to 60 m, then grapple. */
+function boardingOwnerId(world: World, ship: Ship): string {
+  return shipEntry(world, ship.id)?.ownerId ?? "";
+}
+
+function boardingAbeamPoint(target: Ship, side: 1 | -1, aheadKm = 0): { x: number; y: number } {
+  const abeamKm = settings.combat.boardingAbeamM / 1_000;
+  const beam = target.headingRad + side * Math.PI / 2;
+  return {
+    x: target.x + Math.sin(beam) * abeamKm + Math.sin(target.headingRad) * aheadKm,
+    y: target.y - Math.cos(beam) * abeamKm - Math.cos(target.headingRad) * aheadKm,
+  };
+}
+
+/** The side of the target this ship is already on; chosen once for the approach. */
+function boardingSideFor(ship: Ship, target: Ship): 1 | -1 {
+  const bearing = Math.atan2(ship.x - target.x, -(ship.y - target.y));
+  return shortestTurnDegrees(target.headingRad, bearing) >= 0 ? 1 : -1;
+}
+
+function boardingPredictedPoint(ship: Ship, target: Ship): { x: number; y: number } {
+  if (target.speedKnots < 0.2) return { x: target.x, y: target.y };
+  const spec = shipSpecFor(ship);
+  const shipKmPerSecond = Math.max(0.001, spec.cruiseKnots * 1.852 / 3600);
+  const distanceKm = Math.hypot(target.x - ship.x, target.y - ship.y);
+  const seconds = Math.min(
+    settings.combat.boardingInterceptCapGameSeconds,
+    distanceKm / shipKmPerSecond,
+  );
+  const targetKmPerSecond = target.speedKnots * 1.852 / 3600;
+  return {
+    x: target.x + Math.sin(target.headingRad) * targetKmPerSecond * seconds,
+    y: target.y - Math.cos(target.headingRad) * targetKmPerSecond * seconds,
+  };
+}
+
+/** Plan a long boarding leg with the normal route and tacking code. */
+function planBoardingGoal(
+  world: World,
+  ship: Ship,
+  point: { x: number; y: number },
+  nowRealSeconds: number,
+  force = false,
+): void {
+  const ownerId = boardingOwnerId(world, ship);
+  const lastPlan = ship.boardingLastPlanRealMs;
+  const currentGoal = ship.route?.goal ?? (ship.order ? { x: ship.order.x, y: ship.order.y } : null);
+  const goalMovedM = currentGoal
+    ? Math.hypot(currentGoal.x - point.x, currentGoal.y - point.y) * 1000
+    : Infinity;
+  if (!force && lastPlan !== undefined &&
+    nowRealSeconds * 1000 - lastPlan < settings.combat.boardingInterceptSeconds * 1000 &&
+    ship.order && (ship.route || goalMovedM < 20)) return;
+  // A stopped target's point does not move; keep the planned tacking route.
+  if (!force && ship.route && currentGoal && goalMovedM < settings.combat.boardingReplanDistanceM) return;
+  ship.route = null;
+  ship.order = null;
+  if (isInsideMapFrame(point.x, point.y) && !isLandAt(point.x, point.y)) {
+    installRoute(world, ownerId, ship, point, "point", null);
+    if (!ship.order) ship.order = { type: "sailTo", x: point.x, y: point.y };
+  }
+  ship.boardingLastPlanRealMs = nowRealSeconds * 1000;
+}
+
+/** A close-range point ahead of the target, so the hull eases parallel. */
+function planBoardingClose(
+  world: World,
+  ship: Ship,
+  target: Ship,
+  side: 1 | -1,
+  aheadKm: number,
+): void {
+  const point = boardingAbeamPoint(target, side, aheadKm);
+  ship.route = null;
+  if (isInsideMapFrame(point.x, point.y) && !isLandAt(point.x, point.y)) {
+    ship.order = { type: "sailTo", x: point.x, y: point.y };
+  }
+}
+
+function boardingFailure(world: World, ship: Ship, reason: string): void {
+  const ownerId = boardingOwnerId(world, ship);
+  pushNotice(world, ownerId, reason);
+  pushBattleLog(world, ownerId, reason);
+  clearBoarding(world, ship);
+  ship.route = null;
+  holdPosition(ship);
+}
+
+function startBoardingApproach(
+  world: World,
+  ship: Ship,
+  target: Ship,
+  nowRealSeconds: number,
+): void {
+  ship.boardingShipId = target.id;
+  ship.boardingAttacker = true;
+  ship.boardingApproachStartedRealMs = nowRealSeconds * 1000;
+  ship.boardingStuckSinceRealMs = null;
+  ship.boardingLastDistanceM = Math.hypot(target.x - ship.x, target.y - ship.y) * 1000;
+  ship.boardingBestDistanceM = ship.boardingLastDistanceM;
+  ship.boardingLastProgressRealMs = nowRealSeconds * 1000;
+  ship.boardingIronsSinceRealMs = null;
+  ship.boardingTurningBackSinceRealMs = null;
+  // The side is chosen when the ship is close enough to be clearly on one
+  // side. Choosing it at 3 km from directly astern picks the wrong beam.
+  ship.boardingSide = undefined;
+  ship.boardingStep = "intercepting";
+  ship.boardingForcedHeadingRad = undefined;
+  ship.boardingPowerKnots = undefined;
+  target.boardingShipId = ship.id;
+  target.boardingAttacker = false;
+  ship.battleOrder = "capture";
+  world.shipCommands.delete(ship.id);
+  world.engagements.delete(ship.id);
+  planBoardingGoal(world, ship, boardingPredictedPoint(ship, target), nowRealSeconds, true);
+}
+
+/** Start the Board order: intercept, close alongside, then grapple. */
 export function orderBoarding(
   world: World,
   playerId: string,
@@ -4861,18 +4996,18 @@ export function orderBoarding(
   ship.stationSpeedLimit = undefined;
   ship.hoveTo = false;
   ship.route = null;
-  // Already alongside: grapple now rather than sailing through the target.
+  ship.battleOrder = "capture";
   const initialDistanceM = Math.hypot(target.x - ship.x, target.y - ship.y) * 1000;
-  if (initialDistanceM <= settings.combat.boardingRangeM) {
-    ship.speedKnots = target.speedKnots;
-    ship.boardingShipId = target.id;
-    ship.boardingAttacker = true;
-    ship.battleOrder = "capture";
-    target.boardingShipId = ship.id;
-    target.boardingAttacker = false;
+  const headingDifferenceDeg = Math.abs(shortestTurnDegrees(ship.headingRad, target.headingRad));
+  const speedDifferenceKnots = Math.abs(ship.speedKnots - target.speedKnots);
+  if (
+    initialDistanceM <= settings.combat.boardingRangeM &&
+    headingDifferenceDeg <= settings.combat.boardingMaxHeadingDifferenceDeg &&
+    speedDifferenceKnots <= settings.combat.boardingSpeedMatchKnots
+  ) {
     const problem = boardingProblem({
       distanceM: initialDistanceM,
-      speedDifferenceKnots: 0,
+      speedDifferenceKnots,
       targetSurrendered: target.surrendered,
       targetAbandoned: target.abandoned,
       targetSinking: target.damage.hull <= 0,
@@ -4882,27 +5017,13 @@ export function orderBoarding(
     });
     if (!problem) {
       world.shipCommands.delete(ship.id);
+      startBoardingApproach(world, ship, target, combatRealSeconds(world));
       beginBoarding(world, ship, target, combatRealSeconds(world));
       pushBattleLog(world, playerId, `Your ${ship.name} is closing to board the ${target.name}.`);
       return true;
     }
   }
-  // Use the ordinary route planner, including its tacking and coast logic.
-  // The final 150 m switches to a short direct approach and a low speed.
-  installRoute(world, playerId, ship, { x: target.x, y: target.y }, "point", null);
-  if (!ship.order && !ship.route) {
-    // A direct fallback still lets the normal stepShip tacking logic try.
-    ship.order = { type: "sailTo", x: target.x, y: target.y };
-  }
-  ship.boardingShipId = target.id;
-  ship.boardingAttacker = true;
-  ship.boardingApproachStartedRealMs = combatRealSeconds(world) * 1000;
-  ship.boardingStuckSinceRealMs = null;
-  ship.boardingLastDistanceM = Math.hypot(target.x - ship.x, target.y - ship.y) * 1000;
-  ship.battleOrder = "capture";
-  target.boardingShipId = ship.id;
-  target.boardingAttacker = false;
-  world.shipCommands.delete(ship.id);
+  startBoardingApproach(world, ship, target, combatRealSeconds(world));
   pushBattleLog(world, playerId, `Your ${ship.name} is closing to board the ${target.name}.`);
   return true;
 }
@@ -5007,7 +5128,7 @@ function beginBoarding(world: World, attacker: Ship, defender: Ship, nowRealSeco
   }
 }
 
-function updateBoarding(world: World, nowRealSeconds: number): void {
+function updateBoarding(world: World, nowRealSeconds: number, windFromDeg: number): void {
   for (const { ship } of allShips(world)) {
     if (!ship.boardingShipId || !ship.boardingAttacker || world.boardingFights.has(ship.id)) continue;
     const target = shipEntry(world, ship.boardingShipId)?.ship;
@@ -5015,73 +5136,167 @@ function updateBoarding(world: World, nowRealSeconds: number): void {
       clearBoarding(world, ship);
       continue;
     }
-    const distance = Math.hypot(target.x - ship.x, target.y - ship.y);
-    const distanceM = distance * 1000;
-    if (distanceM > settings.combat.boardingRangeM) {
-      const last = ship.boardingLastDistanceM;
-      if (last !== undefined && distanceM < last - 1) {
-        ship.boardingStuckSinceRealMs = null;
-      } else if (ship.boardingStuckSinceRealMs === null || ship.boardingStuckSinceRealMs === undefined) {
-        ship.boardingStuckSinceRealMs = nowRealSeconds * 1000;
-      }
-      ship.boardingLastDistanceM = distanceM;
-      const stuckFor = ship.boardingStuckSinceRealMs === null || ship.boardingStuckSinceRealMs === undefined
-        ? 0
-        : nowRealSeconds - ship.boardingStuckSinceRealMs / 1000;
-      if (stuckFor >= settings.combat.boardingIrretrievableSeconds) {
-        const reason = ship.speedKnots < 0.3
-          ? "Cannot reach: in irons"
-          : target.speedKnots > ship.speedKnots + 0.5
-            ? "Cannot reach: target is faster"
-            : "Cannot reach: no closing course";
-        pushNotice(world, shipEntry(world, ship.id)?.ownerId ?? "", reason);
-        pushBattleLog(world, shipEntry(world, ship.id)?.ownerId ?? "", reason);
-        clearBoarding(world, ship);
-        ship.route = null;
-        holdPosition(ship);
-        continue;
-      }
+    const ownerId = boardingOwnerId(world, ship);
+    const distanceM = Math.hypot(target.x - ship.x, target.y - ship.y) * 1000;
+    const speedDifferenceKnots = Math.abs(ship.speedKnots - target.speedKnots);
+    const headingDifferenceDeg = Math.abs(shortestTurnDegrees(ship.headingRad, target.headingRad));
+    const startedMs = ship.boardingApproachStartedRealMs ?? nowRealSeconds * 1000;
+    const elapsedSeconds = nowRealSeconds - startedMs / 1000;
+    const spec = shipSpecFor(ship);
 
-      const goalMoved = !ship.route ||
-        Math.hypot(ship.route.goal.x - target.x, ship.route.goal.y - target.y) * 1000 >
-          settings.combat.boardingReplanDistanceM;
-      if (!ship.order || goalMoved) {
-        installRoute(world, shipEntry(world, ship.id)?.ownerId ?? "", ship,
-          { x: target.x, y: target.y }, "point", null);
-        if (!ship.order && !ship.route) {
-          ship.order = { type: "sailTo", x: target.x, y: target.y };
-        }
-      }
-      if (distanceM <= settings.combat.boardingSlowRangeM) {
-        // Keep the normal tacking route in the final stretch: a square-rigged
-        // ship cannot sail straight at an upwind target even at two knots.
-        ship.stationSpeedLimit = target.speedKnots > 0.2
-          // A moving target needs a real closing speed in the last 150 m,
-          // capped at the allowed three-knot grapple difference.
-          ? target.speedKnots + settings.combat.boardingSpeedMatchKnots
-          : settings.combat.boardingApproachSpeedKnots;
-      } else {
-        ship.stationSpeedLimit = undefined;
-      }
+    if (elapsedSeconds >= settings.combat.boardingApproachTimeoutSeconds) {
+      boardingFailure(world, ship, "Could not reach in time");
       continue;
     }
-    ship.route = null;
-    ship.order = null;
-    ship.stationSpeedLimit = undefined;
-    if (Math.abs(ship.speedKnots - target.speedKnots) > settings.combat.boardingSpeedMatchKnots) {
-      ship.speedKnots = target.speedKnots;
+
+    // Track the best distance, so a slow tack is not mistaken for being stuck.
+    const best = ship.boardingBestDistanceM ?? distanceM;
+    if (distanceM < best - 2) {
+      ship.boardingBestDistanceM = distanceM;
+      ship.boardingLastProgressRealMs = nowRealSeconds * 1000;
+    } else if (ship.boardingBestDistanceM === undefined) {
+      ship.boardingBestDistanceM = distanceM;
+      ship.boardingLastProgressRealMs = nowRealSeconds * 1000;
     }
-    const problem = boardingProblem({
-      distanceM: distance * 1000,
-      speedDifferenceKnots: Math.abs(ship.speedKnots - target.speedKnots),
-      targetSurrendered: target.surrendered,
-      targetAbandoned: target.abandoned,
-      targetSinking: false,
-      attackerCrew: ship.crew,
-      attackerFullCrew: ship.fullCrew,
-      seaState: 0,
-    });
-    if (!problem) beginBoarding(world, ship, target, nowRealSeconds);
+    const lastProgress = ship.boardingLastProgressRealMs ?? nowRealSeconds * 1000;
+    if (nowRealSeconds - lastProgress / 1000 >= settings.combat.boardingNoProgressSeconds) {
+      const faster = target.speedKnots > spec.cruiseKnots + 0.5;
+      boardingFailure(world, ship, faster
+        ? "Cannot reach: target is faster"
+        : "Could not reach in time");
+      continue;
+    }
+
+    const irons = ship.speedKnots < 0.2 && distanceM > settings.combat.boardingRangeM;
+    if (irons) {
+      ship.boardingIronsSinceRealMs ??= nowRealSeconds * 1000;
+      if (nowRealSeconds - (ship.boardingIronsSinceRealMs ?? nowRealSeconds * 1000) / 1000 >=
+        settings.combat.boardingIronsSeconds) {
+        boardingFailure(world, ship, "Cannot reach: in irons");
+        continue;
+      }
+    } else {
+      ship.boardingIronsSinceRealMs = null;
+    }
+
+    if (target.speedKnots > spec.cruiseKnots + 0.5 && distanceM > settings.combat.boardingClosingRangeM) {
+      boardingFailure(world, ship, "Cannot reach: target is faster");
+      continue;
+    }
+
+    // Do not board until the pair is slow enough, close enough and parallel.
+    if (
+      distanceM <= settings.combat.boardingRangeM &&
+      speedDifferenceKnots <= settings.combat.boardingSpeedMatchKnots &&
+      headingDifferenceDeg <= settings.combat.boardingMaxHeadingDifferenceDeg
+    ) {
+      const problem = boardingProblem({
+        distanceM,
+        speedDifferenceKnots,
+        targetSurrendered: target.surrendered,
+        targetAbandoned: target.abandoned,
+        targetSinking: target.damage.hull <= 0,
+        attackerCrew: ship.crew,
+        attackerFullCrew: ship.fullCrew,
+        seaState: 0,
+      });
+      if (!problem) {
+        ship.route = null;
+        ship.order = null;
+        ship.stationSpeedLimit = undefined;
+        ship.boardingForcedHeadingRad = undefined;
+        ship.boardingPowerKnots = undefined;
+        ship.boardingStep = "boarding";
+        beginBoarding(world, ship, target, nowRealSeconds);
+        continue;
+      }
+    }
+
+    const bearingToTarget = Math.atan2(target.x - ship.x, -(target.y - ship.y));
+    const offBowDeg = Math.abs(shortestTurnDegrees(ship.headingRad, bearingToTarget));
+    const lastDistance = ship.boardingLastDistanceM ?? distanceM;
+    if (distanceM > lastDistance + 0.5 && distanceM < settings.combat.boardingOvershootRangeM) {
+      ship.boardingStuckSinceRealMs ??= nowRealSeconds * 1000;
+    } else {
+      ship.boardingStuckSinceRealMs = null;
+    }
+    const growingFor = ship.boardingStuckSinceRealMs === null
+      ? 0
+      : nowRealSeconds - ship.boardingStuckSinceRealMs / 1000;
+    const wrongWay = distanceM < settings.combat.boardingTurnBackRangeM &&
+      offBowDeg > settings.combat.boardingTurnBackAngleDeg;
+    if (growingFor >= settings.combat.boardingOvershootSeconds || wrongWay) {
+      ship.boardingTurningBackSinceRealMs ??= nowRealSeconds * 1000;
+    }
+    ship.boardingLastDistanceM = distanceM;
+
+    if (ship.boardingTurningBackSinceRealMs !== null && ship.boardingTurningBackSinceRealMs !== undefined) {
+      const turningFor = nowRealSeconds - ship.boardingTurningBackSinceRealMs / 1000;
+      if (turningFor < settings.combat.boardingTurnBackSeconds) {
+        ship.boardingStep = "turning back to board";
+        ship.stationSpeedLimit = undefined;
+        ship.boardingForcedHeadingRad = undefined;
+        ship.boardingPowerKnots = undefined;
+        // Pull away first: an order back onto a target only 5 m away would
+        // arrive immediately and leave the ship unable to turn.
+        const away = Math.atan2(ship.x - target.x, -(ship.y - target.y));
+        const retreat = {
+          x: target.x + Math.sin(away) * 0.45,
+          y: target.y - Math.cos(away) * 0.45,
+        };
+        planBoardingGoal(world, ship, retreat, nowRealSeconds, true);
+        continue;
+      }
+      ship.boardingTurningBackSinceRealMs = null;
+    }
+
+    if (distanceM > settings.combat.boardingClosingRangeM) {
+      ship.boardingStep = "intercepting";
+      if (ship.order && ship.route) {
+        const goalBearing = Math.atan2(ship.order.x - ship.x, -(ship.order.y - ship.y));
+        if (angleOffWindDeg(goalBearing, windFromDeg) < spec.closestAngleDeg) {
+          const leg = (ship.route.index ?? 0) + 1;
+          ship.boardingStep = `tacking upwind (leg ${leg > 1 ? leg : 2})`;
+        }
+      }
+      ship.stationSpeedLimit = undefined;
+      ship.boardingForcedHeadingRad = undefined;
+      ship.boardingPowerKnots = undefined;
+      planBoardingGoal(world, ship, boardingPredictedPoint(ship, target), nowRealSeconds);
+      continue;
+    }
+
+    if (distanceM > settings.combat.boardingAlongsideRangeM) {
+      ship.boardingSide ??= boardingSideFor(ship, target);
+      ship.boardingStep = "closing";
+      const point = boardingAbeamPoint(target, ship.boardingSide, 0);
+      ship.boardingForcedHeadingRad = Math.atan2(point.x - ship.x, -(point.y - ship.y));
+      ship.boardingPowerKnots = Math.max(
+        0.8,
+        target.speedKnots + settings.combat.boardingClosingSpeedBonusKnots,
+      );
+      ship.stationSpeedLimit = undefined;
+      planBoardingClose(world, ship, target, ship.boardingSide, 0);
+      continue;
+    }
+
+    // Alongside: steer a little ahead on the chosen beam so the headings ease
+    // parallel, and never snap speed to the target.
+    ship.boardingSide ??= boardingSideFor(ship, target);
+    ship.boardingStep = "alongside";
+    ship.stationSpeedLimit = undefined;
+    if (distanceM > settings.combat.boardingRangeM) {
+      // Still outside grapple range: slide onto the chosen beam at low speed.
+      const point = boardingAbeamPoint(target, ship.boardingSide, 0);
+      ship.boardingForcedHeadingRad = Math.atan2(point.x - ship.x, -(point.y - ship.y));
+      ship.boardingPowerKnots = Math.max(0.8, target.speedKnots + 0.5);
+      planBoardingClose(world, ship, target, ship.boardingSide, 0);
+    } else {
+      // Close enough: stop (or match a moving target) and pivot onto its heading.
+      ship.boardingForcedHeadingRad = target.headingRad;
+      ship.boardingPowerKnots = target.speedKnots > 0.2 ? target.speedKnots + 0.4 : 0;
+      planBoardingClose(world, ship, target, ship.boardingSide, 0.40);
+    }
   }
 
   for (const [attackerId, fight] of [...world.boardingFights]) {
@@ -5476,7 +5691,7 @@ export function stepWorld(
   updateShipCommands(world);
   resolveCombat(world);
   updateAutoBoarding(world);
-  updateBoarding(world, combatRealSeconds(world));
+  updateBoarding(world, combatRealSeconds(world), windFromDeg);
   updateCapturedChoices(world, combatRealSeconds(world));
   updateRuns(world);
   updateFires(world, dtGameSeconds);
@@ -5740,6 +5955,7 @@ export function visibleStateFor(
       gunsPercent: damage.guns,
       hasTarget: combatTarget !== null && combatTarget !== undefined,
       gunsBear,
+      boardingStep: ship.boardingStep ?? ship.combatStep,
     });
     return {
       id: ship.id,

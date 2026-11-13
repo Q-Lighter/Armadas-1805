@@ -40,9 +40,16 @@ interface Metrics {
   hits: number;
   minDistanceM: number;
   boardingStarted: boolean;
+  boardingStartSeconds: number | null;
   boardingSeconds: number | null;
+  boardingDistanceM: number | null;
+  boardingSpeedDifferenceKnots: number | null;
+  boardingHeadingDifferenceDeg: number | null;
+  overshootM: number;
   result: string;
   states: string[];
+  notices: string[];
+  sailAwayReasons: string[];
 }
 
 function positionAt(bearingDeg: number, distanceKm: number): { x: number; y: number } {
@@ -81,16 +88,19 @@ function makeScenario(bearingDeg: number): Scenario {
   return { name: "?", attacker, target, world };
 }
 
-function addSlowTarget(scenario: Scenario): void {
-  // A fixed south-east course, limited to three knots by normal movement.
-  const angle = 135 * Math.PI / 180;
+function addMovingTarget(scenario: Scenario, headingDeg = 135, speedKnots = 3): void {
+  const angle = headingDeg * Math.PI / 180;
   scenario.target.headingRad = angle;
-  scenario.target.stationSpeedLimit = 3;
+  scenario.target.stationSpeedLimit = speedKnots;
   scenario.target.order = {
     type: "sailTo",
-    x: scenario.target.x + Math.sin(angle) * 60,
-    y: scenario.target.y - Math.cos(angle) * 60,
+    x: scenario.target.x + Math.sin(angle) * 120,
+    y: scenario.target.y - Math.cos(angle) * 120,
   };
+}
+
+function addSlowTarget(scenario: Scenario): void {
+  addMovingTarget(scenario, 135, 3);
 }
 
 function stateLabel(world: World, ship: Ship): string {
@@ -109,6 +119,13 @@ function runScenario(name: string, scenario: Scenario): Metrics {
   let boardingStarted = false;
   let boardingStartSeconds: number | null = null;
   let boardingSeconds: number | null = null;
+  let boardingDistanceM: number | null = null;
+  let boardingSpeedDifferenceKnots: number | null = null;
+  let boardingHeadingDifferenceDeg: number | null = null;
+  let minUnderSixHundredM = Infinity;
+  let maxUnderSixHundredM = 0;
+  let lastDistanceM: number | null = null;
+  const sailAwayReasons: string[] = [];
   let result = "no result";
   let lastBoarding = false;
   const states: string[] = [];
@@ -118,6 +135,10 @@ function runScenario(name: string, scenario: Scenario): Metrics {
 
   for (let tick = 0; tick < SCENARIO_REAL_SECONDS / TICK_REAL_SECONDS; tick += 1) {
     const eventStart = world.nextCombatEventId;
+    const preDistanceM = Math.hypot(target.x - attacker.x, target.y - attacker.y) * 1000;
+    const previousDistanceM = lastDistanceM;
+    const preSpeedDifferenceKnots = Math.abs(attacker.speedKnots - target.speedKnots);
+    const preHeadingDifferenceDeg = Math.abs(shortestTurnDegrees(attacker.headingRad, target.headingRad));
     stepWorld(world, DT_GAME_SECONDS, WIND_FROM_DEG);
     const now = (tick + 1) * TICK_REAL_SECONDS;
     const distanceM = Math.hypot(target.x - attacker.x, target.y - attacker.y) * 1000;
@@ -135,10 +156,24 @@ function runScenario(name: string, scenario: Scenario): Metrics {
       }
       if (event.kind === "hit") hits += 1;
     }
+    if (distanceM < 600 && !lastBoarding) {
+      minUnderSixHundredM = Math.min(minUnderSixHundredM, distanceM);
+      maxUnderSixHundredM = Math.max(maxUnderSixHundredM, distanceM);
+    }
+    if (previousDistanceM !== null && distanceM > previousDistanceM + 150 &&
+      distanceM < 600 && !attacker.combatStep && !attacker.boardingStep) {
+      sailAwayReasons.push(`${now.toFixed(1)}s grew ${Math.round(distanceM - previousDistanceM)} m to ${Math.round(distanceM)} m`);
+    }
+    lastDistanceM = distanceM;
     const fighting = world.boardingFights.has(attacker.id);
     if (fighting && !lastBoarding) {
       boardingStarted = true;
       boardingStartSeconds = now;
+      boardingDistanceM = distanceM;
+      boardingSpeedDifferenceKnots = preSpeedDifferenceKnots;
+      boardingHeadingDifferenceDeg = Math.abs(
+        shortestTurnDegrees(attacker.headingRad, target.headingRad),
+      );
     }
     if (!fighting && lastBoarding && boardingStartSeconds !== null) {
       boardingSeconds = now - boardingStartSeconds;
@@ -154,6 +189,7 @@ function runScenario(name: string, scenario: Scenario): Metrics {
   else if (world.boardingFights.has(attacker.id)) result = "boarding in progress";
   else if (boardingStarted) result = "boarding ended";
 
+  const notices = [...world.notices.values()].flat();
   return {
     name,
     firstShotSeconds,
@@ -161,22 +197,33 @@ function runScenario(name: string, scenario: Scenario): Metrics {
     hits,
     minDistanceM,
     boardingStarted,
+    boardingStartSeconds,
     boardingSeconds,
+    boardingDistanceM,
+    boardingSpeedDifferenceKnots,
+    boardingHeadingDifferenceDeg,
+    overshootM: Math.max(0, maxUnderSixHundredM - minUnderSixHundredM),
     result,
     states,
+    notices,
+    sailAwayReasons,
   };
 }
 
 function printTable(rows: Metrics[]): void {
   console.log("\nREAL-LOOP SCENARIOS (180 s each, wind 315, frigate v frigate)");
-  console.log("scenario                 first  shots  hits  min m  board  lasted  result                 states");
+  console.log("scenario                 first shots hits  min m board start  dist  dkn  dh  over  result                 states");
   for (const row of rows) {
     console.log(
       `${row.name.padEnd(24)} ${String(row.firstShotSeconds ?? "-").padStart(5)} ` +
       `${String(row.shots).padStart(6)} ${String(row.hits).padStart(5)} ` +
       `${Math.round(row.minDistanceM).toString().padStart(6)} ` +
-      `${(row.boardingStarted ? "yes" : "no").padStart(6)} ` +
-      `${(row.boardingSeconds === null ? "-" : row.boardingSeconds.toFixed(0)).padStart(6)}  ` +
+      `${(row.boardingStarted ? "yes" : "no").padStart(5)} ` +
+      `${(row.boardingStartSeconds === null ? "-" : row.boardingStartSeconds.toFixed(0)).padStart(5)} ` +
+      `${(row.boardingDistanceM === null ? "-" : row.boardingDistanceM.toFixed(0)).padStart(5)} ` +
+      `${(row.boardingSpeedDifferenceKnots === null ? "-" : row.boardingSpeedDifferenceKnots.toFixed(1)).padStart(4)} ` +
+      `${(row.boardingHeadingDifferenceDeg === null ? "-" : row.boardingHeadingDifferenceDeg.toFixed(0)).padStart(3)} ` +
+      `${row.overshootM.toFixed(0).padStart(5)}  ` +
       `${row.result.padEnd(22)} ${row.states.join(" > ")}`,
     );
   }
@@ -251,6 +298,71 @@ test("real loop: Board catches a target sailing at three knots", () => {
   assert.ok(row.boardingStarted, `boarding never started; ${row.states.join(" > ")}`);
 });
 
+test("real loop: Board starts within 150 s at 45-60 m for stopped targets", () => {
+  const rows: Metrics[] = [];
+  for (const [label, bearing] of DIRECTIONS) {
+    const scenario = makeScenario(bearing);
+    scenario.name = `board ${label} stationary`;
+    assert.equal(orderBoarding(scenario.world, "attacker", scenario.attacker.id, scenario.target.id), true);
+    rows.push(runScenario(scenario.name, scenario));
+  }
+  printTable(rows);
+  for (const row of rows) {
+    assert.ok(row.boardingStarted, `${row.name}: boarding never started; ${row.states.join(" > ")}`);
+    assert.ok((row.boardingStartSeconds ?? Infinity) <= 150,
+      `${row.name}: boarding took ${row.boardingStartSeconds}s`);
+    assert.ok((row.boardingDistanceM ?? Infinity) <= 61,
+      `${row.name}: grappled at ${row.boardingDistanceM?.toFixed(0)} m`);
+    assert.ok((row.boardingDistanceM ?? 0) >= 35,
+      `${row.name}: grappled too far apart at ${row.boardingDistanceM?.toFixed(0)} m`);
+    assert.ok((row.boardingSpeedDifferenceKnots ?? Infinity) <= 3,
+      `${row.name}: speed difference ${row.boardingSpeedDifferenceKnots?.toFixed(1)} kn`);
+    assert.ok((row.boardingHeadingDifferenceDeg ?? Infinity) <= 30,
+      `${row.name}: heading difference ${row.boardingHeadingDifferenceDeg?.toFixed(0)} deg`);
+  }
+});
+
+test("real loop: Board catches three-knot targets on four fixed courses", () => {
+  const rows: Metrics[] = [];
+  for (const heading of [45, 90, 135, 180]) {
+    const scenario = makeScenario(90);
+    scenario.name = `board 3 kn hdg ${heading}`;
+    addMovingTarget(scenario, heading, 3);
+    assert.equal(orderBoarding(scenario.world, "attacker", scenario.attacker.id, scenario.target.id), true);
+    rows.push(runScenario(scenario.name, scenario));
+  }
+  printTable(rows);
+  for (const row of rows) {
+    assert.ok(row.boardingStarted, `${row.name}: boarding never started; ${row.notices.join(" | ")}`);
+    assert.ok((row.boardingStartSeconds ?? Infinity) <= 150,
+      `${row.name}: boarding took ${row.boardingStartSeconds}s`);
+    assert.ok((row.boardingDistanceM ?? Infinity) <= 61,
+      `${row.name}: grappled at ${row.boardingDistanceM?.toFixed(0)} m`);
+    assert.ok((row.boardingSpeedDifferenceKnots ?? Infinity) <= 3,
+      `${row.name}: speed difference ${row.boardingSpeedDifferenceKnots?.toFixed(1)} kn`);
+    assert.ok((row.boardingHeadingDifferenceDeg ?? Infinity) <= 30,
+      `${row.name}: heading difference ${row.boardingHeadingDifferenceDeg?.toFixed(0)} deg`);
+  }
+});
+
+test("real loop: Board against a six-knot target is caught or says it cannot reach", () => {
+  const scenario = makeScenario(90);
+  scenario.name = "board 6 kn away";
+  addMovingTarget(scenario, 90, 6);
+  assert.equal(orderBoarding(scenario.world, "attacker", scenario.attacker.id, scenario.target.id), true);
+  const row = runScenario(scenario.name, scenario);
+  printTable([row]);
+  const saidSo = row.notices.some((notice) =>
+    /Cannot reach|Could not reach/.test(notice));
+  assert.ok(row.boardingStarted || saidSo,
+    `silently sailed on; notices: ${row.notices.join(" | ")}; states: ${row.states.join(" > ")}`);
+  if (row.boardingStarted) {
+    assert.ok((row.boardingDistanceM ?? Infinity) <= 61);
+    assert.ok((row.boardingSpeedDifferenceKnots ?? Infinity) <= 3);
+    assert.ok((row.boardingHeadingDifferenceDeg ?? Infinity) <= 30);
+  }
+});
+
 test("real loop: changing a failed Board order to Sink clears the boarding flag and fires", () => {
   const scenario = makeScenario(90);
   scenario.name = "board then sink";
@@ -262,6 +374,24 @@ test("real loop: changing a failed Board order to Sink clears the boarding flag 
   assert.equal(scenario.attacker.boardingShipId ?? null, null, "stale boarding target was not cleared");
   assert.equal(scenario.target.boardingShipId ?? null, null, "target still thinks it is being boarded");
   assert.ok(row.shots > 0, "no shot after changing Board to Sink");
+});
+
+test("real loop: Sink and Capture never sail away without a labelled reason", () => {
+  const failures: string[] = [];
+  for (const [label, bearing] of DIRECTIONS) {
+    for (const objective of ["sink", "capture"] as const) {
+      const scenario = makeScenario(bearing);
+      scenario.name = `${objective} ${label}`;
+      assert.equal(setShipBattleOrder(
+        scenario.world, "attacker", scenario.attacker.id, objective,
+      ), true);
+      const row = runScenario(scenario.name, scenario);
+      if (row.sailAwayReasons.length > 0) {
+        failures.push(`${row.name}: ${row.sailAwayReasons.join("; ")}`);
+      }
+    }
+  }
+  assert.deepEqual(failures, []);
 });
 
 test("real loop: a two-minute duel at range turns under 360 degrees and stays inside 450 m", () => {

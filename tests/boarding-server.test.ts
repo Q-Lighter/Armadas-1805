@@ -71,7 +71,7 @@ test("a never-crewed ship stays owned with needs crew and is not abandoned", () 
   assert.ok(shipsForOwner(w, "p").some((candidate) => candidate.id === ship.id));
 });
 
-test("claim needs range, keeps damage, moves colours and is capped at 30", () => {
+test("claim needs range, keeps damage and moves colours even over 30 ships", () => {
   const w = world();
   const donor = addPlayer(w, "p");
   assert.equal(spawnTestAbandoned(w, "p", "frigate:1"), 1);
@@ -86,13 +86,14 @@ test("claim needs range, keeps damage, moves colours and is capped at 30", () =>
   assert.equal(prize.crew, Math.max(1, Math.ceil(prize.fullCrew * settings.ships.minimumCrewShare)));
   assert.ok(shipsForOwner(w, "p").some((ship) => ship.id === prize.id));
   assert.equal(w.abandonedShips.some((ship) => ship.id === prize.id), false);
-  // Fleet-full refusal with a fresh abandoned hull.
+  // Claiming is allowed over 30 ships; only buying is capped.
   while (shipsForOwner(w, "p").length < settings.ships.maxShipsPerPlayer) {
     shipsForOwner(w, "p").push({ ...donor, id: `extra-${shipsForOwner(w, "p").length}` } as typeof donor);
   }
   const secondPrize = { ...prize, id: "prize-2", crew: 0, abandoned: true } as typeof prize;
   w.abandonedShips.push(secondPrize);
-  assert.equal(claimPlayerShip(w, "p", secondPrize.id, donor.id), false);
+  assert.equal(claimPlayerShip(w, "p", secondPrize.id, donor.id), true);
+  assert.equal(shipsForOwner(w, "p").length, settings.ships.maxShipsPerPlayer + 1);
 });
 
 test("boarding changes ownership, captures survivors and defaults to join", () => {
@@ -101,6 +102,7 @@ test("boarding changes ownership, captures survivors and defaults to join", () =
   const target = addPlayer(w, "q", "frigate", 0, "French");
   target.x = attacker.x + 0.05;
   target.y = attacker.y;
+  target.headingRad = attacker.headingRad;
   target.speedKnots = 0;
   attacker.speedKnots = 0;
   w.combatRandom = () => 0;

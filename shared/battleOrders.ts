@@ -92,9 +92,6 @@ export function surrenderAcceptProblem(input: {
   if (input.nearestShipKm === null || input.nearestShipKm > rangeKm) {
     return "No ship of yours is within 1 km.";
   }
-  if (input.fleetCount >= (input.maxShips ?? settings.ships.maxShipsPerPlayer)) {
-    return `Fleet full (${settings.ships.maxShipsPerPlayer} ships).`;
-  }
   return null;
 }
 

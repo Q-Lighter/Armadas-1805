@@ -186,6 +186,10 @@
       "types": "./dist/crewUi.d.ts",
       "default": "./dist/crewUi.js"
     },
+    "./format": {
+      "types": "./dist/format.d.ts",
+      "default": "./dist/format.js"
+    },
     "./combat-readout": {
       "types": "./dist/combatReadout.d.ts",
       "default": "./dist/combatReadout.js"

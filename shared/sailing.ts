@@ -152,6 +152,22 @@ export interface Ship {
   boardingApproachStartedRealMs?: number;
   boardingStuckSinceRealMs?: number | null;
   boardingLastDistanceM?: number;
+  /** 3E: the current approach phase label for the readout. */
+  boardingStep?: string;
+  /** 3E: a labelled combat movement, so a turn away is never silent. */
+  combatStep?: string;
+  /** 3E: chosen abeam side, kept for the whole approach. */
+  boardingSide?: 1 | -1;
+  /** 3E: best distance and the last time it improved, for stuck detection. */
+  boardingBestDistanceM?: number;
+  boardingLastProgressRealMs?: number;
+  boardingIronsSinceRealMs?: number | null;
+  boardingTurningBackSinceRealMs?: number | null;
+  boardingLastPlanRealMs?: number;
+  /** Temporary diagnostic text for the 3E boarding harness. */
+  /** 3E: final boarding approach uses real turns but a controlled low speed. */
+  boardingForcedHeadingRad?: number;
+  boardingPowerKnots?: number;
   /** A repair job running while docked at a usable port. */
   portRepair?: {
     mode: "stores" | "pay";
@@ -474,7 +490,9 @@ export function stepShip(
       performance.speedFactor *
       cargoSpeedMultiplier(ship.stores, spec.cargoTonnes);
   }
-  if (ship.stationSpeedLimit !== undefined) {
+  if (ship.boardingPowerKnots !== undefined) {
+    ship.speedKnots = ship.boardingPowerKnots;
+  } else if (ship.stationSpeedLimit !== undefined) {
     ship.speedKnots = Math.min(ship.speedKnots, ship.stationSpeedLimit);
   }
   const travelKm = ship.speedKnots * KM_PER_HOUR_PER_KNOT * (dtGameSeconds / 3600);

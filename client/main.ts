@@ -104,6 +104,7 @@ import {
   formatMoney,
   shipyardCards,
 } from "@naval/shared/fleet-view";
+import { formatCrew, formatKnots, formatWhole } from "@naval/shared/format";
 import {
   buildBuyRows,
   buildSellRows,
@@ -2931,7 +2932,7 @@ async function start(): Promise<void> {
       "[data-yard-buy]",
     )) {
       button.disabled = fleetShips.length >= settings.ships.maxShipsPerPlayer;
-      button.textContent = button.disabled ? "Fleet full" : "Buy";
+      button.textContent = button.disabled ? "Over ship limit" : "Buy";
     }
   }
 
@@ -3005,7 +3006,7 @@ async function start(): Promise<void> {
       buy.dataset.yardBuy = "true";
       buy.textContent = "Buy";
       buy.disabled = fleetShips.length >= settings.ships.maxShipsPerPlayer;
-      if (buy.disabled) buy.textContent = "Fleet full";
+      if (buy.disabled) buy.textContent = "Over ship limit";
       buy.addEventListener("click", () => beginNaming(card.classId));
 
       article.append(title, price, stats, buy);
@@ -3102,7 +3103,7 @@ async function start(): Promise<void> {
 
       const updateQuote = (): void => {
         const quote = crewQuote(ship, Number(slider.value), quoteBase, money);
-        count.textContent = `${quote.target} / ${ship.fullCrew} crew`;
+        count.textContent = `${formatWhole(quote.target)} / ${formatWhole(ship.fullCrew)} crew`;
         cost.className = "hire-cost";
         cost.textContent = quote.count <= 0
           ? `Move the slider to hire · pool ${formatMoney(quote.poolLeft)} left`
@@ -3822,7 +3823,7 @@ async function start(): Promise<void> {
 
     if (own) {
       const heading = own[4];
-      speedOut.textContent = `${own[5].toFixed(1)} kn`;
+      speedOut.textContent = formatKnots(own[5]);
       headingOut.textContent = `${Math.round(heading)}° ${compassPoint(heading)}`;
       compassNeedle.setAttribute("transform", `rotate(${heading} 36 36)`);
     } else {

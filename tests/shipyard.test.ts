@@ -205,7 +205,7 @@ test("the 30-ship cap counts ships still being delivered", () => {
   assert.equal(buyShip(world, "alpha", port.id, "raider", "One Too Many"), null);
   assert.equal(fleet.length, 30);
   assert.equal(owner.money, 1_000_000);
-  assert.match(drainNotices(world, "alpha").at(-1)!, /fleet is full/i);
+  assert.match(drainNotices(world, "alpha").at(-1)!, /Over the ship limit \(31 of 30\)/);
 });
 
 test("hiring is limited by complement, money and the shared port pool", () => {

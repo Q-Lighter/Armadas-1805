@@ -84,7 +84,7 @@ test("a first claim wins, refusal at 30 ships, and the donor keeps 10%", () => {
   assert.equal(claim.ok, true);
   assert.equal(claim.donorCrew, 77);
   assert.equal(claim.prizeCrew, 23);
-  assert.equal(claimAbandoned({ ...base, fleetCount: 30 }).problem, "fleet full (30 ships)");
+  assert.equal(claimAbandoned({ ...base, fleetCount: 30 }).problem, null);
   assert.equal(claimAbandoned({ ...base, inRange: false }).problem, "out of range");
   assert.equal(
     claimAbandoned({ ...base, donor: { crew: 25, fullCrew: 100 } }).problem,

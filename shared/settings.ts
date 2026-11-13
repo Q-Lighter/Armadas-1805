@@ -320,6 +320,8 @@ export const settings = {
     battleZoneKm: 1.5,
     /** Draft: battle-zone players receive world updates this many times a second. */
     battleSendRate: 10,
+    /** Draft: an engaged target unseen this many real seconds ends the chase (3E). */
+    targetLostCombatSeconds: 30,
     /** Draft: stand-and-fire closes to this range, in metres. */
     engageRangeM: 250,
     /** Draft: hysteresis: close again only beyond this range, in metres. */
@@ -351,6 +353,22 @@ export const settings = {
     abandonedDecayPerHour: 0.015,
     /** Draft: the Board order closes to this range. */
     boardingRangeM: 60,
+    /** Draft: boarding approach phases and recovery (3E). */
+    boardingInterceptSeconds: 2,
+    boardingInterceptCapGameSeconds: 60,
+    boardingClosingRangeM: 300,
+    boardingAlongsideRangeM: 100,
+    boardingAbeamM: 45,
+    boardingClosingSpeedBonusKnots: 1.5,
+    boardingMaxHeadingDifferenceDeg: 30,
+    boardingOvershootSeconds: 5,
+    boardingOvershootRangeM: 600,
+    boardingTurnBackAngleDeg: 100,
+    boardingTurnBackRangeM: 300,
+    boardingTurnBackSeconds: 12,
+    boardingNoProgressSeconds: 45,
+    boardingApproachTimeoutSeconds: 150,
+    boardingIronsSeconds: 60,
     /** Draft: final approach speed against a stopped target, in knots. */
     boardingApproachSpeedKnots: 2,
     /** Draft: slow for the final approach inside this range. */

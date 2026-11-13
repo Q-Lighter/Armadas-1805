@@ -22,13 +22,8 @@ import {
   shipPrice,
 } from "./shipRules.js";
 import type { OwnShipSnapshot, ShipStatus } from "./world.js";
-import { formatTonnesWithUnit } from "./tradeView.js";
-
-/** Thousands separators without relying on a locale. */
-export function formatMoney(amount: number): string {
-  const value = Number.isFinite(amount) ? Math.max(0, Math.floor(amount)) : 0;
-  return String(value).replace(/\B(?=(\d{3})+(?!\d))/g, ",");
-}
+import { formatCrew, formatMoney, formatTonnesWithUnit } from "./format.js";
+export { formatMoney } from "./format.js";
 
 /** A short real-time countdown, from game milliseconds. */
 export function formatDuration(gameMs: number): string {
@@ -162,7 +157,7 @@ export function buildFleetRow(
     id: ship.id,
     name: ship.name,
     typeName: type.name,
-    crewText: `${percent}% (${ship.crew}/${ship.fullCrew})`,
+    crewText: formatCrew(ship.crew, ship.fullCrew),
     crewPercent: percent,
     stateText,
     needsCrew,

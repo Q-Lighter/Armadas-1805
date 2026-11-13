@@ -10,6 +10,7 @@ import { settings } from "./settings.js";
 import type { MapPoint } from "./map.js";
 import type { ShipClassId } from "./data/ships.js";
 import { DEFAULT_STANCE, STANCES, type Stance } from "./stances.js";
+import { DEFAULT_FIGHTING_STYLE, type FightingStyle } from "./fighting.js";
 
 export type { Stance };
 
@@ -41,6 +42,8 @@ export interface Fleet {
   members: string[];
   formation: FormationId;
   stance: FleetStance;
+  /** Stand and fire (default) or match the target alongside. */
+  fightingStyle?: FightingStyle;
   /** Ships that still belong to the fleet but are sailing independently. */
   detached: string[];
   /** Bumped whenever command passes or the formation re-forms. */
@@ -349,6 +352,7 @@ export function createFleet(input: {
     members,
     formation: input.formation ?? "lineAhead",
     stance: input.stance ?? DEFAULT_FLEET_STANCE,
+    fightingStyle: DEFAULT_FIGHTING_STYLE,
     detached: [],
     revision: 1,
   };

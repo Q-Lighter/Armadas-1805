@@ -17,6 +17,7 @@ import {
   type ShipStores,
 } from "./trade.js";
 import { DEFAULT_STANCE, type Stance } from "./stances.js";
+import { DEFAULT_FIGHTING_STYLE, type FightingStyle } from "./fighting.js";
 import {
   createShipDamage,
   shipPerformance,
@@ -82,8 +83,12 @@ export interface Ship {
   speedKnots: number;
   /** The current order, or null when the ship is holding position. */
   order: SailToOrder | null;
-  /** Combat intention. Stored now; combat has no effect yet. */
+  /** Combat intention. */
   stance: Stance;
+  /** Stand and fire (default) or match the target alongside. */
+  fightingStyle?: FightingStyle;
+  /** 3D: hove to with backed sails, pivoting to bring a broadside to bear. */
+  hoveTo?: boolean;
   /** Fleet membership, if any, and whether a direct order detached it. */
   fleetId: string | null;
   detached: boolean;
@@ -143,6 +148,10 @@ export interface Ship {
   boardingShipId?: string | null;
   /** True only on the ship that started the boarding. */
   boardingAttacker?: boolean;
+  /** 3D: when the current approach began, and last closing progress. */
+  boardingApproachStartedRealMs?: number;
+  boardingStuckSinceRealMs?: number | null;
+  boardingLastDistanceM?: number;
   /** A repair job running while docked at a usable port. */
   portRepair?: {
     mode: "stores" | "pay";
@@ -277,6 +286,8 @@ export function createShip(
     speedKnots: 0,
     order: null,
     stance: DEFAULT_STANCE,
+    fightingStyle: DEFAULT_FIGHTING_STYLE,
+    hoveTo: false,
     fleetId: null,
     detached: false,
     route: null,

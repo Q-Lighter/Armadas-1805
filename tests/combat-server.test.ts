@@ -113,7 +113,8 @@ test("combat events are visible only to players who can see the spot", () => {
   far.x = own.x + 40;
   far.y = own.y + 40;
   applyShipSpecialOrder(world, "p", own.id, { type: "engage", shipId: enemy.id, objective: "sink" });
-  for (let index = 0; index < 4; index += 1) stepWorld(world, 14.4);
+  // Stand-and-fire must heave to and pivot before its broadside bears.
+  for (let index = 0; index < 200; index += 1) stepWorld(world, 14.4);
 
   assert.ok((visibleStateFor(world, "p").events?.length ?? 0) > 0);
   assert.equal((visibleStateFor(world, "r").events?.length ?? 0), 0);
@@ -278,3 +279,4 @@ test("a first broadside that misses still starts the battle and warns the target
   assert.ok((world.notices.get("q") ?? []).includes("Battle begun."));
   assert.ok((world.notices.get("q") ?? []).includes("Ship under fire."));
 });
+

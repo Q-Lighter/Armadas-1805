@@ -320,6 +320,20 @@ export const settings = {
     battleZoneKm: 1.5,
     /** Draft: battle-zone players receive world updates this many times a second. */
     battleSendRate: 10,
+    /** Draft: stand-and-fire closes to this range, in metres. */
+    engageRangeM: 250,
+    /** Draft: hysteresis: close again only beyond this range, in metres. */
+    engageHysteresisM: 450,
+    /** Draft: pivoting at rest uses this share of the normal turn rate. */
+    pivotRateAtRestShare: 0.15,
+    /** Draft: hove-to sails stop over this many game seconds. */
+    hoveToStopGameSeconds: 10,
+    /** Draft: match the target about this far abeam, in metres. */
+    alongsideAbeamM: 250,
+    /** Draft: Alongside matches speed within this share. */
+    alongsideSpeedToleranceShare: 0.15,
+    /** Draft: a fleet leader's slow pass when the target is stopped, in knots. */
+    fleetEngageSpeedKnots: 3,
     /** Neutral values for systems that arrive later. Keep at 1.0 for now. */
     seaStateHitMultiplier: 1,
     crewAccuracyMultiplier: 1,
@@ -337,6 +351,14 @@ export const settings = {
     abandonedDecayPerHour: 0.015,
     /** Draft: the Board order closes to this range. */
     boardingRangeM: 60,
+    /** Draft: final approach speed against a stopped target, in knots. */
+    boardingApproachSpeedKnots: 2,
+    /** Draft: slow for the final approach inside this range. */
+    boardingSlowRangeM: 150,
+    /** Draft: no closing progress for this many real seconds cancels Board. */
+    boardingIrretrievableSeconds: 60,
+    /** Draft: re-plan the approach when the target moves this far, in metres. */
+    boardingReplanDistanceM: 150,
     /** Draft: the attacker must match the target's speed this closely. */
     boardingSpeedMatchKnots: 3,
     /** Draft: attacker odds are A^exponent / (A^exponent + D^exponent). */

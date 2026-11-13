@@ -2250,3 +2250,32 @@ winding`):
 - No browser or headless Chromium is available: the sheets and map drawing
   were not visually inspected or touch-tested. Layout and state behaviour are
   covered only by the render-plan and server tests above.
+
+## Session 3D-fix-a: real loop boarding and stand-and-fire
+
+**Date:** 2026-11-13
+**Branch:** main
+
+### What was asked
+
+Repair live boarding and firing without adding features: a real server-loop
+harness, a fix for ships never firing, a tacking boarding approach with a slow
+final 150 m, and stand-and-fire / Alongside fighting styles.
+
+### What was built
+
+- `tests/real-loop.test.ts`: seven real `stepWorld` scenarios (Sink and Capture
+  in eight wind directions plus a 3 kn target, boarding in eight directions
+  plus a 3 kn target, Board then Sink, a two-minute duel and two real players).
+- Boarding now clears stale boarding flags when a new order arrives, only skips
+  firing during an active fight, grapples immediately when already inside 60 m,
+  approaches with the tacking route, slows inside 150 m, and reports "Cannot
+  reach: in irons" / "Target is faster".
+- Stand and fire and Alongside styles on ships and fleets, with hove-to
+  stopping, a 15% pivot at rest and 450 m hysteresis. Fleets keep line-ahead and
+  pass in parallel.
+
+### Checks
+
+- `npm test`: 345 passing.
+- Duel simulation: 1.00 / 2.71 / 3.03 / 6.41 real minutes.

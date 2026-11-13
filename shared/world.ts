@@ -104,6 +104,7 @@ import {
   firePortBatteries,
   newPortBattle,
   portAttackProblem,
+  portBuildCost,
   portCondition,
   portGuns,
   portMaxHealthFor,
@@ -498,6 +499,7 @@ export interface PortBattleSnapshot {
   maxHealth?: number;
   stock?: { timber: number; repairMaterials: number };
   build?: { toTier: number; startedGameMs: number; endsGameMs: number };
+  nextCost?: { timber: number; repairMaterials: number };
   aggressors?: string[];
   guns?: { heavy: number; medium: number; light: number };
   /** Capture progress for the owner and the capturing side only. */
@@ -7210,7 +7212,7 @@ function stepPortBattles(world: World, dtGameSeconds: number): void {
     if (result.hits > 0) {
       damagePort(state, battlePort(port), entry!.ownerId, result.pounds, nowReal);
       pushCombatEvent(world, { kind: "portHit", x: port.anchorage.x, y: port.anchorage.y });
-      pushBattleLog(world, entry!.ownerId, `${port.name}: ${Math.round(result.pounds)} lb landed.`);
+      pushBattleLog(world, entry!.ownerId, `Your ships hit ${port.name}: ${Math.round(result.pounds)} lb landed.`);
       if (state.ownerId) {
         pushNoticeOnce(world, state.ownerId, port.id, "portAttack", `Port ${port.name} is under attack`);
       }
@@ -7319,6 +7321,7 @@ function stepPortBattles(world: World, dtGameSeconds: number): void {
       world.captureHoldRealSeconds,
     );
     if (!status.capturedBy) continue;
+    const previousOwner = state.ownerId;
     world.portOwners.set(port.id, status.capturedBy);
     pushCombatEvent(world, { kind: "portCaptured", x: port.anchorage.x, y: port.anchorage.y });
     const docked = allShips(world)
@@ -7363,8 +7366,9 @@ function stepPortBattles(world: World, dtGameSeconds: number): void {
       ship.speedKnots = 0;
       pushNotice(world, pushed.ownerId, "Your docked ship was pushed out.");
     }
-    if (state.ownerId) {
-      pushNotice(world, status.capturedBy, `Port ${port.name} captured.`);
+    pushNotice(world, status.capturedBy, `Port ${port.name} captured.`);
+    if (previousOwner && previousOwner !== status.capturedBy) {
+      pushNotice(world, previousOwner, `Port ${port.name} captured by ${playerName(world, status.capturedBy)}.`);
     }
   }
 }
@@ -7811,6 +7815,7 @@ export function visibleStateFor(
       battleRow.maxHealth = portMaxHealthFor(battle);
       battleRow.stock = { ...battle.stock };
       battleRow.build = battle.build ? { ...battle.build } : undefined;
+      battleRow.nextCost = battle.tier < 3 ? portBuildCost(battlePort(port), battle.tier + 1) : undefined;
       battleRow.aggressors = [...battle.aggressors.keys()];
       battleRow.guns = portGuns(port.size, battle.tier);
     }

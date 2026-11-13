@@ -2838,3 +2838,29 @@ planner's clearance waypoints without adding a sideways zigzag.
 - `scripts/benchmark-ports.mjs`: 100 ships and 5 ports firing, mean 2.02 ms per
   world step (p50 1.48, p95 3.50). The earlier 100-ship/3D benchmark was 1.86
   ms per step, so ports add about 0.16 ms in this case.
+
+## 3F-d: port screens
+
+- Port markers now use the owner's navy ink and a tier shape: anchor for tier 0,
+  a wooden palisade for tier 1, a stone wall for tier 2 and a star fortress for
+  tier 3. Silenced ports get a small smoke mark. Port fire and hit events use
+  the existing flash and splash effects.
+- The port folio has a battle section. The owner sees exact health, battery
+  strength, tier, build cost with the port's stock, build progress and a Build
+  next tier button (Needs research in normal rooms). Other players see only the
+  condition word, tier, capture range and Attack port. NPC ports show Neutral
+  ground and cannot be attacked.
+- Long-press or right-click a port now offers Attack port; the selected or last
+  attacked port gets a faint capture-range ring. A capture strip shows the
+  hold countdown or the blocking reason. Port hits now write private battle-log
+  lines and capture notices name the captor.
+- Port battle text and layout live in `shared/portView.ts`. The panel keeps its
+  own scrolling band below the capture strip at every requested size.
+
+### Checks
+
+- `npm test`: passed (443 tests).
+- `npm run build`: passed.
+- No browser is available in this workspace, so the screens were not visually
+  inspected. Layout, marker-discovery, owner-only health and capture-strip
+  behaviour are covered by `tests/port-screens-3f.test.ts`.

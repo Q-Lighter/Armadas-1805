@@ -414,6 +414,7 @@
     </section>
 
     <p class="chart-notice" id="notice" role="status" aria-live="polite" hidden></p>
+    <p class="capture-strip" id="capture-strip" role="status" aria-live="polite" hidden></p>
 
     <!-- 3E: resign confirmation. The choice is final. -->
     <section class="surrender-sheet paper" id="resign-sheet" role="dialog" aria-labelledby="resign-title" hidden>
@@ -522,6 +523,22 @@
         <button class="btn panel-close" id="port-close" type="button">Close</button>
       </div>
       <p class="port-status" id="port-status"></p>
+      <div class="port-battle" id="port-battle">
+        <p class="port-owner" id="port-owner"></p>
+        <div class="port-health" id="port-health" hidden>
+          <div class="port-health-track"><span id="port-health-fill"></span></div>
+          <p class="port-health-text" id="port-health-text"></p>
+        </div>
+        <p class="port-battery" id="port-battery"></p>
+        <p class="port-tier" id="port-tier"></p>
+        <p class="port-capture-range" id="port-capture-range"></p>
+        <div class="port-build" id="port-build" hidden>
+          <p class="port-build-text" id="port-build-text"></p>
+          <div class="port-health-track"><span id="port-build-fill"></span></div>
+          <button class="btn" id="port-build-btn" type="button">Build next tier</button>
+        </div>
+        <button class="btn btn-seal" id="port-attack" type="button" hidden>Attack port</button>
+      </div>
       <dl class="port-facts">
         <dt>Region</dt>
         <dd id="port-region">–</dd>

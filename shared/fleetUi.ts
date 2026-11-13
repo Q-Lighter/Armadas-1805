@@ -65,6 +65,7 @@ export function orderMenuItems(kind: OrderMenuKind): OrderMenuItem[] {
   if (kind === "port") {
     return [
       { id: "sailToPort", label: "Sail to port", primary: true },
+      { id: "attackPort", label: "Attack port", primary: false },
       { id: "close", label: "Cancel", primary: false },
     ];
   }

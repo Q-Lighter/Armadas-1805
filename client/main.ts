@@ -149,6 +149,7 @@ import {
 import type { ShipStoreCapacities, ShipStores } from "@naval/shared/trade";
 import {
   buildPortPanelModel,
+  captureStripText,
   knownPortsNearest,
   layoutPortMarkers,
   type PortInfo,
@@ -563,7 +564,7 @@ function parseOwnShip(raw: unknown): OwnShipSnapshot | null {
     journey: (() => {
       const raw = source.journey;
       if (!raw || typeof raw !== "object") return null;
-      const row = raw as Record<string, unknown>;
+      const row = raw as unknown as Record<string, unknown>;
       const distanceKm = finiteNumber(row.distanceKm);
       const startedGameMs = finiteNumber(row.startedGameMs);
       return distanceKm === null || startedGameMs === null
@@ -701,6 +702,19 @@ async function start(): Promise<void> {
   const portFree = element<HTMLElement>("port-free");
   const portDistance = element<HTMLElement>("port-distance");
   const portNpcNote = element<HTMLElement>("port-npc-note");
+  const portOwnerOut = element<HTMLElement>("port-owner");
+  const portHealthOut = element<HTMLElement>("port-health");
+  const portHealthFill = element<HTMLElement>("port-health-fill");
+  const portHealthText = element<HTMLElement>("port-health-text");
+  const portBatteryOut = element<HTMLElement>("port-battery");
+  const portTierOut = element<HTMLElement>("port-tier");
+  const portCaptureRangeOut = element<HTMLElement>("port-capture-range");
+  const portBuildOut = element<HTMLElement>("port-build");
+  const portBuildText = element<HTMLElement>("port-build-text");
+  const portBuildFill = element<HTMLElement>("port-build-fill");
+  const portBuildButton = element<HTMLButtonElement>("port-build-btn");
+  const portAttackButton = element<HTMLButtonElement>("port-attack");
+  const captureStrip = element<HTMLElement>("capture-strip");
   const portSail = element<HTMLButtonElement>("port-sail");
   const portUndock = element<HTMLButtonElement>("port-undock");
   const portTrade = element<HTMLButtonElement>("port-trade");
@@ -1066,6 +1080,8 @@ async function start(): Promise<void> {
   // Port markers and their labels live in screen pixels above the map but
   // below ships. Only ports already found by this player reach this layer.
   const portLayer = new Container();
+  const portRangeInk = new Graphics();
+  portLayer.addChild(portRangeInk);
 
   // The selected ship's planned route sits above the map and below ports.
   const routeLayer = new Container();
@@ -1170,6 +1186,7 @@ async function start(): Promise<void> {
     mark: Graphics;
     label: Text;
     radius: number;
+    styleKey: string;
   }>();
   let laidOutPorts: PortMarkerPlan[] = [];
   let ownSnapshot: ShipSnapshot | null = null;
@@ -1236,6 +1253,7 @@ async function start(): Promise<void> {
   let money = 0;
   let playerNavy: NavyId = "British";
   let selectedPortId: string | null = null;
+  let attackedPortId: string | null = null;
   let shipyardPortId: string | null = null;
 
   /** One failed draw layer must not stop the rest of the scene. */
@@ -2174,6 +2192,16 @@ async function start(): Promise<void> {
       })),
     });
     laidOutPorts = markers;
+    portRangeInk.clear();
+    const rangePortId = selectedPortId ?? attackedPortId;
+    const rangePort = rangePortId ? portData.get(rangePortId) : undefined;
+    if (rangePort && rangePort.rangeKm && !rangePort.npc) {
+      const centre = toScreen(rangePort.x, rangePort.y);
+      portRangeInk
+        .circle(centre.x, centre.y, rangePort.rangeKm * scale())
+        .fill({ color: 0x8a6a45, alpha: 0.045 })
+        .stroke({ width: 1.2, color: 0x8a6a45, alpha: 0.38 });
+    }
     const active = new Set<string>();
 
     for (const marker of markers) {
@@ -2192,28 +2220,69 @@ async function start(): Promise<void> {
         });
         container.addChild(mark, label);
         portLayer.addChild(container);
-        view = { container, mark, label, radius: -1 };
+        view = { container, mark, label, radius: -1, styleKey: "" };
         portViews.set(marker.id, view);
       }
 
-      if (view.radius !== marker.radiusPx) {
+      const port = portData.get(marker.id);
+      const ownerNavy = port?.ownerNavy ? parseNavy(port.ownerNavy) : null;
+      const ink = ownerNavy ? navyColorNumber(ownerNavy) : INK_COLOR;
+      const tier = port?.tier ?? 0;
+      const styleKey = `${marker.radiusPx}:${tier}:${port?.owner ?? "none"}:${port?.silenced === true}`;
+      if (view.styleKey !== styleKey) {
         const radius = marker.radiusPx;
         view.mark.clear();
         view.mark
           .circle(0, 0, radius)
           .fill({ color: PAPER_COLOR, alpha: 0.9 })
-          .stroke({ width: 1.5, color: INK_COLOR });
-        // A small inked anchor inside the ring.
-        view.mark
-          .circle(0, -radius * 0.28, radius * 0.14)
-          .stroke({ width: 1, color: INK_COLOR })
-          .moveTo(0, -radius * 0.12)
-          .lineTo(0, radius * 0.42)
-          .moveTo(-radius * 0.34, radius * 0.24)
-          .lineTo(0, radius * 0.46)
-          .lineTo(radius * 0.34, radius * 0.24)
-          .stroke({ width: 1, color: INK_COLOR, cap: "round", join: "round" });
+          .stroke({ width: tier > 0 ? 2.5 : 1.5, color: ink });
+        if (tier === 0) {
+          // A small inked anchor inside the ring.
+          view.mark
+            .circle(0, -radius * 0.28, radius * 0.14)
+            .stroke({ width: 1, color: ink })
+            .moveTo(0, -radius * 0.12)
+            .lineTo(0, radius * 0.42)
+            .moveTo(-radius * 0.34, radius * 0.24)
+            .lineTo(0, radius * 0.46)
+            .lineTo(radius * 0.34, radius * 0.24)
+            .stroke({ width: 1, color: ink, cap: "round", join: "round" });
+        } else if (tier === 1) {
+          // Wooden palisade: a broken ring of short stakes.
+          for (let i = 0; i < 8; i += 1) {
+            const angle = (i / 8) * Math.PI * 2;
+            const inner = radius * 0.72;
+            view.mark
+              .moveTo(Math.cos(angle) * inner, Math.sin(angle) * inner)
+              .lineTo(Math.cos(angle) * (radius + 2), Math.sin(angle) * (radius + 2))
+              .stroke({ width: 2, color: 0x6b4a2f });
+          }
+        } else if (tier === 2) {
+          view.mark.circle(0, 0, radius + 2).stroke({ width: 2, color: ink });
+          view.mark
+            .rect(-radius * 0.5, -radius * 0.5, radius, radius)
+            .stroke({ width: 1.5, color: 0x6b6760 });
+        } else {
+          // Star fortress.
+          const points: number[] = [];
+          for (let i = 0; i < 16; i += 1) {
+            const angle = (i / 16) * Math.PI * 2 - Math.PI / 2;
+            const r = i % 2 === 0 ? radius + 4 : radius * 0.66;
+            points.push(Math.cos(angle) * r, Math.sin(angle) * r);
+          }
+          view.mark.poly(points).stroke({ width: 2, color: ink });
+        }
+        if (port?.silenced) {
+          view.mark
+            .circle(-radius * 0.5, -radius - 3, 3)
+            .fill({ color: 0x656b6e, alpha: 0.55 })
+            .circle(0, -radius - 7, 4)
+            .fill({ color: 0x7d8284, alpha: 0.4 })
+            .circle(radius * 0.5, -radius - 2, 2.5)
+            .fill({ color: 0x656b6e, alpha: 0.5 });
+        }
         view.radius = radius;
+        view.styleKey = styleKey;
       }
 
       view.container.position.set(marker.screenX, marker.screenY);
@@ -3188,6 +3257,10 @@ async function start(): Promise<void> {
       sendPortOrder(target.id);
       return;
     }
+    if (kind === "port" && target?.kind === "port" && id === "attackPort") {
+      sendPortAttack(target.id);
+      return;
+    }
     if (!point) return;
     if (id === "sailHere") {
       closeOrderMenu();
@@ -4035,9 +4108,25 @@ async function start(): Promise<void> {
     }
   }
 
+  function formatCountdown(seconds: number): string {
+    const whole = Math.max(0, Math.ceil(seconds));
+    return `${Math.floor(whole / 60)}:${String(whole % 60).padStart(2, "0")}`;
+  }
+
+  function refreshCaptureStrip(): void {
+    const text = captureStripText({
+      ports: [...portData.values()],
+      selectedPortId,
+      viewerId: identity.id,
+    }) ?? "";
+    captureStrip.textContent = text;
+    captureStrip.hidden = text === "";
+  }
+
   function closePortPanel(): void {
     selectedPortId = null;
     portPanel.hidden = true;
+    refreshCaptureStrip();
   }
 
   function refreshPortPanel(): void {
@@ -4088,6 +4177,79 @@ async function start(): Promise<void> {
     portPrisonerTotal.textContent = prisoners.shown
       ? `${prisoners.count} prisoners · ${formatMoney(prisoners.total)} pieces`
       : "";
+    const ownPort = port.owner === identity.id;
+    const tier = port.tier ?? 0;
+    portOwnerOut.textContent = port.npc
+      ? "Neutral port · not attackable"
+      : port.owner === null || port.owner === undefined
+        ? "Unclaimed port"
+        : ownPort
+          ? "Your port"
+          : `${port.ownerNavy ?? "Foreign"} port`;
+    const hasExact = typeof port.health === "number" && typeof port.maxHealth === "number" &&
+      port.maxHealth > 0;
+    portHealthOut.hidden = !hasExact;
+    if (hasExact) {
+      const share = Math.max(0, Math.min(1, port.health! / port.maxHealth!));
+      portHealthFill.style.width = `${(share * 100).toFixed(1)}%`;
+      portHealthFill.className = share <= 0
+        ? "silenced"
+        : share >= 0.75 ? "healthy" : share >= 0.4 ? "damaged" : "";
+      portHealthText.textContent =
+        `${Math.round(port.health!)} / ${Math.round(port.maxHealth!)} hull · ${Math.round(share * 100)}%`;
+    }
+    portBatteryOut.textContent = port.guns
+      ? `Batteries ${port.guns.heavy}/${port.guns.medium}/${port.guns.light} (H/M/L)`
+      : `Condition: ${port.condition ?? "unknown"} · batteries unknown`;
+    portTierOut.textContent = `Fortifications: tier ${tier}` +
+      (tier === 0 ? " (none)" : tier === 1 ? " (wooden palisade)" : tier === 2 ? " (stone wall)" : " (star fortress)");
+    const captureStatus = port.capture
+      ? port.capture.seconds > 0
+        ? ` · capturing ${formatCountdown(Math.max(0, port.capture.requiredSeconds - port.capture.seconds))} left`
+        : port.silenced && port.capture.reason ? ` · ${port.capture.reason}` : ""
+      : "";
+    portCaptureRangeOut.textContent =
+      `Capture range ${Math.round(port.rangeKm ?? 0)} km` +
+      (port.rangeKm !== undefined && port.rangeKm < 30 ? " (night or weather)" : "") +
+      captureStatus;
+    const canBuild = ownPort && tier < 3;
+    portBuildOut.hidden = !canBuild && !port.build;
+    portBuildButton.hidden = !canBuild;
+    if (port.build) {
+      const total = Math.max(1, port.build.endsGameMs - port.build.startedGameMs);
+      const done = Math.max(0, Math.min(total, clockShownMs - port.build.startedGameMs));
+      portBuildFill.style.width = `${((done / total) * 100).toFixed(1)}%`;
+      portBuildFill.className = "healthy";
+      const leftGameSeconds = Math.max(0, (port.build.endsGameMs - clockShownMs) / 1000);
+      portBuildText.textContent =
+        `Tier ${tier} → ${port.build.toTier} · ${Math.round((done / total) * 100)}% · ` +
+        `${Math.ceil(leftGameSeconds / 60)} game min left`;
+      portBuildButton.disabled = true;
+      portBuildButton.textContent = "Build in progress";
+    } else {
+      portBuildFill.style.width = "0%";
+      if (port.nextCost) {
+        const haveTimber = port.stock?.timber ?? 0;
+        const haveRepair = port.stock?.repairMaterials ?? 0;
+        portBuildText.textContent =
+          `Next tier ${tier + 1}: ${port.nextCost.timber} timber (have ${Math.floor(haveTimber)}) · ` +
+          `${port.nextCost.repairMaterials} repair (have ${Math.floor(haveRepair)})`;
+      } else if (canBuild) {
+        portBuildText.textContent = "Choose the next fortification tier.";
+      }
+      const enough = port.nextCost
+        ? (port.stock?.timber ?? 0) >= port.nextCost.timber &&
+          (port.stock?.repairMaterials ?? 0) >= port.nextCost.repairMaterials
+        : false;
+      portBuildButton.disabled = !enough || (roomKind === "normal" && !port.build);
+      portBuildButton.textContent = roomKind === "normal" && !port.build
+        ? "Needs research"
+        : `Build tier ${Math.min(3, tier + 1)}`;
+    }
+    portAttackButton.hidden = ownPort;
+    portAttackButton.disabled = port.npc;
+    portAttackButton.textContent = port.npc ? "Neutral ground" : "Attack port";
+    refreshCaptureStrip();
     portPanel.hidden = false;
   }
 
@@ -4117,6 +4279,28 @@ async function start(): Promise<void> {
       sent = sendCommand({ t: "sailToPort", port: portId, ship: id }) || sent;
     }
     if (sent) closePortPanel();
+  }
+
+  function sendPortAttack(portId: string): void {
+    const port = portData.get(portId);
+    if (!port) return;
+    if (port.npc) {
+      showNotice("Neutral ground");
+      return;
+    }
+    const fleets = selectedFleetIds();
+    for (const fleetId of fleets) {
+      sendCommand({ t: "fleetAttackPort", fleet: fleetId, port: portId });
+    }
+    const ids = groupShipIds().filter((id) => !fleetOfShip(id));
+    if (ids.length === 0 && fleets.length === 0) {
+      showNotice("Select a ship or fleet first.");
+      return;
+    }
+    for (const id of ids) sendCommand({ t: "attackPort", port: portId, ship: id });
+    attackedPortId = portId;
+    closePortPanel();
+    closeOrderMenu();
   }
 
   function sendUndock(): void {
@@ -5440,7 +5624,10 @@ async function start(): Promise<void> {
       for (const raw of state.events) {
         if (!raw || typeof raw !== "object") continue;
         const event = raw as unknown as Record<string, unknown>;
-        const visualKind = event.kind === "fireStarted" ? "fire"
+        const visualKind = event.kind === "portFire" ? "fire"
+          : event.kind === "portHit" ? "hit"
+          : event.kind === "portSilenced" || event.kind === "portCaptured" ? "sunk"
+          : event.kind === "fireStarted" ? "fire"
           : event.kind === "friendlyFire" || event.kind === "claim" || event.kind === "boarding" ? "hit"
           : event.kind === "explosion" || event.kind === "sinking" ? "sunk"
           : event.kind;
@@ -5672,9 +5859,68 @@ async function start(): Promise<void> {
         });
       }
     }
+    if (Array.isArray(state.portBattle)) {
+      for (const raw of state.portBattle) {
+        if (!raw || typeof raw !== "object") continue;
+        const row = raw as unknown as Record<string, unknown>;
+        const port = typeof row.id === "string" ? incomingPorts.get(row.id) : undefined;
+        if (!port) continue;
+        if (typeof row.owner === "string" || row.owner === null) port.owner = row.owner;
+        if (typeof row.navy === "string") port.ownerNavy = row.navy;
+        if (row.tier === 0 || row.tier === 1 || row.tier === 2 || row.tier === 3) port.tier = row.tier;
+        if (typeof row.condition === "string") {
+          port.condition = row.condition as PortInfo["condition"];
+        }
+        port.silenced = row.silenced === true;
+        if (typeof row.rangeKm === "number" && Number.isFinite(row.rangeKm)) port.rangeKm = row.rangeKm;
+        if (typeof row.health === "number" && Number.isFinite(row.health)) port.health = row.health;
+        if (typeof row.maxHealth === "number" && Number.isFinite(row.maxHealth)) port.maxHealth = row.maxHealth;
+        if (row.stock && typeof row.stock === "object") {
+          const stock = row.stock as Record<string, unknown>;
+          if (typeof stock.timber === "number" && typeof stock.repairMaterials === "number") {
+            port.stock = { timber: stock.timber, repairMaterials: stock.repairMaterials };
+          }
+        }
+        if (row.build && typeof row.build === "object") {
+          const build = row.build as Record<string, unknown>;
+          if (typeof build.toTier === "number" && typeof build.startedGameMs === "number" &&
+            typeof build.endsGameMs === "number") {
+            port.build = {
+              toTier: build.toTier,
+              startedGameMs: build.startedGameMs,
+              endsGameMs: build.endsGameMs,
+            };
+          }
+        }
+        if (row.nextCost && typeof row.nextCost === "object") {
+          const cost = row.nextCost as Record<string, unknown>;
+          if (typeof cost.timber === "number" && typeof cost.repairMaterials === "number") {
+            port.nextCost = { timber: cost.timber, repairMaterials: cost.repairMaterials };
+          }
+        }
+        if (row.guns && typeof row.guns === "object") {
+          const guns = row.guns as Record<string, unknown>;
+          if (typeof guns.heavy === "number" && typeof guns.medium === "number" && typeof guns.light === "number") {
+            port.guns = { heavy: guns.heavy, medium: guns.medium, light: guns.light };
+          }
+        }
+        if (row.capture && typeof row.capture === "object") {
+          const capture = row.capture as Record<string, unknown>;
+          if (typeof capture.seconds === "number" && typeof capture.requiredSeconds === "number") {
+            port.capture = {
+              seconds: capture.seconds,
+              requiredSeconds: capture.requiredSeconds,
+              sideId: typeof capture.sideId === "string" ? capture.sideId : null,
+              reason: typeof capture.reason === "string" ? capture.reason : null,
+            };
+          }
+        }
+      }
+    }
     portData.clear();
     for (const [id, port] of incomingPorts) portData.set(id, port);
     if (selectedPortId && !portData.has(selectedPortId)) closePortPanel();
+    refreshCaptureStrip();
     if (shipyardPortId && !portData.has(shipyardPortId)) closeShipyardPanel();
     if (hirePortId && !portData.has(hirePortId)) closeHirePanel();
 
@@ -6871,6 +7117,12 @@ async function start(): Promise<void> {
   });
   portSail.addEventListener("click", () => {
     if (selectedPortId) sendPortOrder(selectedPortId);
+  });
+  portAttackButton.addEventListener("click", () => {
+    if (selectedPortId) sendPortAttack(selectedPortId);
+  });
+  portBuildButton.addEventListener("click", () => {
+    if (selectedPortId) sendCommand({ t: "buildFortification", port: selectedPortId });
   });
   portUndock.addEventListener("click", sendUndock);
   portTrade.addEventListener("click", () => {

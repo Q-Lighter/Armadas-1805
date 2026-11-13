@@ -522,6 +522,8 @@ h2 {
   bottom: max(0.75rem, env(safe-area-inset-bottom));
   transform: translateX(-50%);
   width: min(28rem, calc(100% - 1rem));
+  /* Leave the capture strip its own band at the top of the screen. */
+  max-height: calc(100% - 9.5rem);
 }
 
 .known-ports-panel {
@@ -612,6 +614,93 @@ h2 {
 
 .port-npc-note[hidden] {
   display: none;
+}
+
+.port-battle {
+  margin: 0.55rem 0;
+  padding: 0.55rem;
+  border: 1px solid var(--rule);
+  background: rgba(42, 28, 16, 0.035);
+  font-size: calc(0.9rem * var(--ui-scale));
+}
+
+.port-battle[hidden],
+.port-build[hidden],
+.port-health[hidden],
+.port-battle .btn[hidden] {
+  display: none;
+}
+
+.port-owner,
+.port-battery,
+.port-tier,
+.port-capture-range,
+.port-build-text,
+.port-health-text {
+  margin: 0.2rem 0;
+}
+
+.port-owner {
+  font-weight: 700;
+}
+
+.port-health-track {
+  height: 10px;
+  margin: 0.35rem 0;
+  border: 1px solid var(--rule);
+  background: rgba(42, 28, 16, 0.08);
+  overflow: hidden;
+}
+
+.port-health-track span {
+  display: block;
+  height: 100%;
+  width: 0%;
+  background: var(--wax);
+}
+
+.port-health-track span.healthy {
+  background: #4a6b45;
+}
+
+.port-health-track span.damaged {
+  background: #9a6b2f;
+}
+
+.port-health-track span.silenced {
+  background: #6d6a64;
+}
+
+.port-build .btn {
+  width: 100%;
+  margin-top: 0.35rem;
+}
+
+.capture-strip {
+  position: fixed;
+  z-index: 21;
+  top: max(5.2rem, calc(env(safe-area-inset-top) + 4.8rem));
+  left: 50%;
+  transform: translateX(-50%);
+  width: min(28rem, calc(100% - 1.5rem));
+  margin: 0;
+  padding: 0.45rem 0.65rem;
+  border: 1px solid var(--rule);
+  background: var(--paper);
+  color: var(--ink);
+  font-size: calc(0.9rem * var(--ui-scale));
+  font-weight: 600;
+  text-align: center;
+}
+
+.capture-strip[hidden] {
+  display: none;
+}
+
+@media (max-height: 520px) {
+  .port-panel {
+    max-height: calc(100% - 9.5rem);
+  }
 }
 
 .port-actions {

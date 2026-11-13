@@ -30,6 +30,20 @@ export interface PortInfo {
   storageLimit?: number;
   /** NPC resources for sale, only while docked there. */
   npcStock?: Partial<Record<GoodId, number>>;
+  /** 3F port battle fields. Exact detail is present only for the owner. */
+  owner?: string | null;
+  ownerNavy?: string | null;
+  tier?: 0 | 1 | 2 | 3;
+  condition?: "Healthy" | "Damaged" | "Heavily damaged" | "Silenced";
+  silenced?: boolean;
+  rangeKm?: number;
+  health?: number;
+  maxHealth?: number;
+  stock?: { timber: number; repairMaterials: number };
+  build?: { toTier: number; startedGameMs: number; endsGameMs: number };
+  nextCost?: { timber: number; repairMaterials: number };
+  guns?: { heavy: number; medium: number; light: number };
+  capture?: { seconds: number; requiredSeconds: number; sideId: string | null; reason: string | null };
 }
 
 export interface PortViewport {
@@ -251,4 +265,141 @@ export function buildPortPanelModel(input: {
       input.distanceKm === null ? "Distance unknown" : `${Math.round(input.distanceKm)} km from your ship`,
     buttons,
   };
+}
+
+
+/** Screen boxes for the port folio and capture strip at a given viewport. */
+export interface PortScreenLayout {
+  width: number;
+  height: number;
+  panelWidth: number;
+  panelMaxHeight: number;
+  panelScrolls: boolean;
+  minTargetPx: number;
+  stripWidth: number;
+  stripTop: number;
+  stripBottom: number;
+  panelBottom: number;
+  /** The highest the scrolled panel may reach without covering the strip. */
+  panelTopLimit: number;
+  overlapsStrip: boolean;
+}
+
+export function portScreenLayout(width: number, height: number): PortScreenLayout {
+  const phone = width <= 640;
+  const margin = phone ? 8 : 12;
+  const stripTop = Math.max(83, 14);
+  const stripHeight = 38;
+  const stripBottom = stripTop + stripHeight;
+  const panelBottom = Math.max(12, 12);
+  const panelWidth = Math.min(448, width - margin * 2);
+  const maxByViewport = height - 24;
+  const panelTopLimit = stripBottom + 8;
+  const panelMaxHeight = Math.max(96, Math.min(maxByViewport, height - panelTopLimit - panelBottom));
+  return {
+    width,
+    height,
+    panelWidth,
+    panelMaxHeight,
+    panelScrolls: true,
+    minTargetPx: 44,
+    stripWidth: Math.min(448, width - 24),
+    stripTop,
+    stripBottom,
+    panelBottom,
+    panelTopLimit,
+    overlapsStrip: height - panelBottom - panelMaxHeight < panelTopLimit,
+  };
+}
+
+export interface PortBattlePanelModel {
+  ownerText: string;
+  healthText: string | null;
+  healthShare: number | null;
+  conditionText: string;
+  batteryText: string;
+  tierText: string;
+  rangeText: string;
+  buildText: string;
+  buildButtonText: string;
+  buildDisabled: boolean;
+  showBuild: boolean;
+  attackText: string | null;
+}
+
+/** Port battle text. Exact numbers exist only when the viewer owns the port. */
+export function buildPortBattlePanelModel(input: {
+  port: PortInfo;
+  viewerId: string;
+  roomKind: "normal" | "test" | "dev";
+  gameMs: number;
+}): PortBattlePanelModel {
+  const { port } = input;
+  const own = port.owner !== null && port.owner !== undefined && port.owner === input.viewerId;
+  const tier = port.tier ?? 0;
+  const hasExact = own && typeof port.health === "number" &&
+    typeof port.maxHealth === "number" && port.maxHealth > 0;
+  const share = hasExact ? Math.max(0, Math.min(1, port.health! / port.maxHealth!)) : null;
+  let buildText = "";
+  let buildButtonText = "Build next tier";
+  let buildDisabled = true;
+  if (own && port.build) {
+    const total = Math.max(1, port.build.endsGameMs - port.build.startedGameMs);
+    const done = Math.max(0, Math.min(total, input.gameMs - port.build.startedGameMs));
+    buildText = `Tier ${tier} → ${port.build.toTier}: ${Math.round((done / total) * 100)}%`;
+    buildButtonText = "Build in progress";
+  } else if (own) {
+    const cost = port.nextCost;
+    const enough = !!cost && (port.stock?.timber ?? 0) >= cost.timber &&
+      (port.stock?.repairMaterials ?? 0) >= cost.repairMaterials;
+    buildText = cost
+      ? `Next tier: ${cost.timber} timber (have ${Math.floor(port.stock?.timber ?? 0)}), ` +
+        `${cost.repairMaterials} repair (have ${Math.floor(port.stock?.repairMaterials ?? 0)})`
+      : "";
+    buildButtonText = input.roomKind === "normal" ? "Needs research" : `Build tier ${Math.min(3, tier + 1)}`;
+    buildDisabled = input.roomKind === "normal" || !enough;
+  }
+  return {
+    ownerText: port.npc
+      ? "Neutral port · not attackable"
+      : port.owner == null ? "Unclaimed port" : own ? "Your port" : `${port.ownerNavy ?? "Foreign"} port`,
+    healthText: hasExact ? `${Math.round(port.health!)} / ${Math.round(port.maxHealth!)}` : null,
+    healthShare: share,
+    conditionText: port.condition ?? (port.silenced ? "Silenced" : "Healthy"),
+    batteryText: own && port.guns
+      ? `Batteries ${port.guns.heavy}/${port.guns.medium}/${port.guns.light}`
+      : "Batteries unknown",
+    tierText: `Fortifications: tier ${tier}`,
+    rangeText: `Capture range ${Math.round(port.rangeKm ?? 0)} km`,
+    buildText,
+    buildButtonText,
+    buildDisabled,
+    showBuild: own && (tier < 3 || !!port.build),
+    attackText: port.npc || own ? null : "Attack port",
+  };
+}
+
+/** One strip line for the selected port or any capture this side is making. */
+export function captureStripText(input: {
+  ports: readonly PortInfo[];
+  selectedPortId: string | null;
+  viewerId: string;
+}): string | null {
+  const candidates = input.selectedPortId
+    ? input.ports.filter((port) => port.id === input.selectedPortId)
+    : input.ports.filter((port) =>
+        port.capture?.sideId === input.viewerId || port.capture?.sideId === port.owner,
+      );
+  for (const port of candidates) {
+    const capture = port.capture;
+    if (!capture) continue;
+    if (capture.seconds > 0) {
+      const left = Math.max(0, Math.ceil(capture.requiredSeconds - capture.seconds));
+      return `Capturing ${port.name}: ${Math.floor(left / 60)}:${String(left % 60).padStart(2, "0")} left`;
+    }
+    if (port.silenced && capture.reason) {
+      return `Capture blocked at ${port.name}: ${capture.reason}`;
+    }
+  }
+  return null;
 }

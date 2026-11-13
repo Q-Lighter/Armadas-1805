@@ -2277,7 +2277,7 @@ final 150 m, and stand-and-fire / Alongside fighting styles.
 
 ### Checks
 
-- `npm test`: 345 passing.
+- `npm test`: 347 passing.
 - Duel simulation: 1.00 / 2.71 / 3.03 / 6.41 real minutes.
 
 ## Session 3D-fix-b: why-not-firing readout and state labels

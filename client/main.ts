@@ -65,6 +65,7 @@ import { dotsAlongPath } from "@naval/shared/route-ink";
 import { readTapToSail, resolveTap, writeTapToSail } from "@naval/shared/tap-to-sail";
 import { fogDebugLine, type FogDebugInfo } from "@naval/shared/fog-view";
 import { GRAPHICS_RESET_NOTICE, GraphicsRecovery } from "@naval/shared/graphics-safety";
+import { runDrawLayer } from "@naval/shared/draw-layer";
 import { formatGameClock, gameClockAt } from "@naval/shared/time";
 import { navyColorNumber, parseNavy, type NavyId } from "@naval/shared/navies";
 import {
@@ -815,6 +816,7 @@ async function start(): Promise<void> {
   const testResetRoom = element<HTMLButtonElement>("test-reset-room");
   const testInviteLink = element<HTMLInputElement>("test-invite-link");
   const testCopyLink = element<HTMLButtonElement>("test-copy-link");
+  const testShipsDrawn = element<HTMLElement>("test-ships-drawn");
   const debugSection = element<HTMLDetailsElement>("debug-info");
   const shipPanel = element<HTMLElement>("ship-panel");
   const shipExpand = element<HTMLButtonElement>("ship-expand");
@@ -843,6 +845,7 @@ async function start(): Promise<void> {
 
   const query = new URLSearchParams(location.search);
   const room = query.get("room") ?? "test";
+  const layoutDebug = query.get("layoutdebug") === "1";
   const requestedBots = query.get("bots");
   const requestedNavy = query.get("navy");
   const requestedStart = query.get("start");
@@ -1083,11 +1086,7 @@ async function start(): Promise<void> {
 
   /** One failed draw layer must not stop the rest of the scene. */
   function safeLayer(name: string, draw: () => void): void {
-    try {
-      draw();
-    } catch (error) {
-      reportClientError(error, `draw layer: ${name}`);
-    }
+    runDrawLayer(draw, (error) => reportClientError(error, `draw layer: ${name}`));
   }
   let namingClass: BuyableShipClassId | null = null;
   let hirePortId: string | null = null;
@@ -1159,7 +1158,7 @@ async function start(): Promise<void> {
   let target: { x: number; y: number } | null = null;
   let retry: number | null = null;
   let takenOver = false;
-  let bordersVisible = false;
+  let bordersVisible = layoutDebug;
   let layoutIssueCount = 0;
   let layoutAuditFrame = 0;
   const tapStorage = browserStorage("localStorage");
@@ -1182,6 +1181,7 @@ async function start(): Promise<void> {
   let fpsWindowAt = performance.now();
   let fps = 0;
   let lastDebugLineAt = 0;
+  let lastShipsDrawnText = "";
 
   // The server owns game time. The page predicts forward at the game rate and
   // gently settles onto each received value instead of jumping the display.
@@ -5052,6 +5052,9 @@ async function start(): Promise<void> {
           statusInk,
           statusLabel,
         };
+        // 3E-c dropped this call when the flagship pennant was added. Without
+        // it the sprites are created and animated but never reach the map.
+        fleetLayer.addChild(hull, ring, flag, flagshipInk, runInk, runLabel, statusInk, statusLabel);
         ships.set(id, ship);
       }
 
@@ -6289,6 +6292,16 @@ async function start(): Promise<void> {
         }
         ship.statusInk.visible = ship.hull.visible && (ship.abandoned || ship.burning);
       });
+    }
+
+    const drawnShips = [...ships.values()].filter(
+      (ship) => ship.hull.visible && ship.hull.parent === fleetLayer,
+    );
+    const drawnMine = drawnShips.filter((ship) => ship.own).length;
+    const drawnText = `Ships drawn: ${drawnShips.length} (my ships ${drawnMine}, other ships ${drawnShips.length - drawnMine})`;
+    if (drawnText !== lastShipsDrawnText) {
+      lastShipsDrawnText = drawnText;
+      testShipsDrawn.textContent = drawnText;
     }
 
     safeLayer("discovered outline", () => refreshDiscoveredOutline(now));

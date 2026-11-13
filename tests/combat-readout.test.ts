@@ -64,10 +64,17 @@ test("state labels distinguish hove to, in irons, drifting and sailing", () => {
     effectiveSailPercent: 0, driftSpeedKnots: 1,
   }), "Hove to");
   assert.equal(sailingStateLabel({
-    hasOrder: true, speedKnots: 0, effectiveSailPercent: 100, driftSpeedKnots: 0,
+    hasOrder: true, headingIntoWind: true, speedKnots: 0,
+    effectiveSailPercent: 100, driftSpeedKnots: 0,
   }), "In irons");
   assert.equal(sailingStateLabel({
+    hasOrder: false, speedKnots: 0, effectiveSailPercent: 100, driftSpeedKnots: 0,
+  }), "Hove to");
+  assert.equal(sailingStateLabel({
     speedKnots: 4, effectiveSailPercent: 0, driftSpeedKnots: 1,
+  }), "Drifting");
+  assert.equal(sailingStateLabel({
+    speedKnots: 0, effectiveSailPercent: 100, driftSpeedKnots: 0, hasRudder: false,
   }), "Drifting");
   assert.equal(sailingStateLabel({
     hasOrder: true, speedKnots: 5, effectiveSailPercent: 100, driftSpeedKnots: 0,

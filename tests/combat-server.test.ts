@@ -302,5 +302,5 @@ test("test rooms expose the why-not-firing line but normal rooms do not", () => 
   const normal = createWorld("normal-readout");
   addPlayer(normal, "p");
   assert.equal(visibleStateFor(normal, "p").fleet[0]?.debugCombat, undefined);
-  assert.equal(visibleStateFor(normal, "p").fleet[0]?.stateLabel, "Sailing");
+  assert.equal(visibleStateFor(normal, "p").fleet[0]?.stateLabel, "Hove to");
 });

@@ -2427,3 +2427,55 @@ missing danger notice. Keep 44 px targets and phone scrolling.
 - `npm run build`: passed.
 - No browser or headless Chromium is available in this environment, so the
   sheets were compiled and layout-tested as data but not visually inspected.
+
+
+## Session 3E-fix: restore the disappeared ships
+
+**Date:** 2026-11-13
+**Branch:** main
+
+### What was asked
+
+Find why the live map stopped drawing every ship after the 3E commits, prove
+it without a browser, fix the real cause without reverting the 3E work, and
+add safety nets and visible test helpers.
+
+### What was built
+
+- The root cause was in `dbf314d` (3E-c): adding the flagship pennant replaced
+  the existing `fleetLayer.addChild(...)` call and never reattached the new
+  child list. Ships were still received, created and animated, but no ship
+  graphic was in the Pixi display list. The fix is additive: the hull, ring,
+  white flag, flagship pennant, running ink/label and status ink/label are all
+  added to `fleetLayer` again. The pennant remains an extra mark on a drawn
+  ship, not a replacement for it.
+- The render-plan regression now builds a real client state with my
+  flagship, a friendly ship and an enemy ship, then prints planned, visible
+  and drawn counts plus each marker's screen position, size and viewport
+  status for 5 km, 50 km and 200 km views at 1920x1080 and 360x740. It also
+  checks that the ship layer is above the live sea and fog, and records
+  surrendered, abandoned and burning ships.
+- Draw layers now go through the shared `runDrawLayer` guard. A thrown layer
+  reports its name and error into the existing readable client banner and
+  console, and the next layer still runs. A regression test proves a thrown
+  flagship layer leaves the other ships intact.
+- Test and dev rooms show `Ships drawn: N (my ships M, other ships K)` in
+  Test tools. The count only includes hulls whose Pixi parent is `fleetLayer`,
+  so this exact bug would read zero. `&layoutdebug=1` now turns on the
+  existing border outlines.
+- The stopped-ship label is corrected: stopped at rest or by an order reads
+  "Hove to", into the wind with no way on reads "In irons", no sails or
+  rudder reads "Drifting", and "Sailing" is only used with way on.
+
+### Checks
+
+- Draw-plan at `73007ff`: 3 planned / 3 drawn at every zoom and viewport.
+- Draw-plan on HEAD before the fix: 3 planned / 0 drawn (`attached=false`).
+- Draw-plan after the fix: 3 planned / 3 drawn at 5, 50 and 200 km on both
+  1920x1080 and 360x740; all markers are in the viewport with 10x23 px
+  (friendly) or 8.5x19.6 px (enemy) bounds.
+- `npm test`: 382 passing, 0 failing.
+- `npm run build`: passed.
+- No browser or headless Chromium is available in this environment, so the
+  map was not visually inspected; the draw plan and source attachment were
+  checked instead.

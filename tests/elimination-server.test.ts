@@ -50,6 +50,17 @@ test("sinking a flagship credits the last enemy damage and hands over the fleet"
   assert.equal(w.gameOver?.winnerIds.includes("b"), true);
 });
 
+test("a one-player test room is never marked game over", () => {
+  const w = world();
+  addPlayer(w, "solo");
+  for (let index = 0; index < 120; index += 1) stepWorld(w, 14.4);
+  assert.equal(w.kind, "test");
+  assert.equal(w.gameOver, null);
+  const state = visibleStateFor(w, "solo");
+  assert.equal(state.go, undefined);
+  assert.equal(state.out, undefined);
+});
+
 test("friendly fire is never credited", () => {
   const w = world();
   const a = player(w, "a");

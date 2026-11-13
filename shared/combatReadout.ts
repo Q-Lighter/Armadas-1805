@@ -66,9 +66,16 @@ export function sailingStateLabel(input: {
   speedKnots: number;
   effectiveSailPercent: number;
   driftSpeedKnots: number;
+  headingIntoWind?: boolean;
+  hasSails?: boolean;
+  hasRudder?: boolean;
 }): "Hove to" | "In irons" | "Drifting" | "Sailing" {
   if (input.hoveTo) return "Hove to";
-  if (input.effectiveSailPercent <= 0 && input.driftSpeedKnots > 0) return "Drifting";
-  if (input.hasOrder === true && input.speedKnots < 0.2) return "In irons";
+  if (input.hasSails === false || input.hasRudder === false) return "Drifting";
+  if (input.effectiveSailPercent <= 0) return "Drifting";
+  if (input.speedKnots < 0.2) {
+    if (input.hasOrder === true && input.headingIntoWind === true) return "In irons";
+    return "Hove to";
+  }
   return "Sailing";
 }

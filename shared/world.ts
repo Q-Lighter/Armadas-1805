@@ -6608,6 +6608,10 @@ export function visibleStateFor(
       speedKnots: ship.speedKnots,
       effectiveSailPercent: performance.effectiveSailPercent,
       driftSpeedKnots: performance.driftSpeedKnots,
+      headingIntoWind:
+        angleOffWindDeg(ship.headingRad, settings.weather.windFromDeg) < spec.closestAngleDeg,
+      hasSails: performance.effectiveSailPercent > 0,
+      hasRudder: performance.rudderPercent > 0,
     });
     const debugCombat = world.kind === "normal" ? undefined : firingReadout({
       order: ship.boardingShipId ? "board" : ship.battleOrder ?? null,

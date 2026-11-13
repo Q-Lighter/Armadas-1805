@@ -168,6 +168,15 @@ export interface Ship {
   /** 3E: final boarding approach uses real turns but a controlled low speed. */
   boardingForcedHeadingRad?: number;
   boardingPowerKnots?: number;
+  /** 3E: the one flagship belonging to this ship's player. */
+  isFlagship?: boolean;
+  /** 3E: last enemy damage, for credit when this ship sinks. */
+  lastDamageOwnerId?: string;
+  lastDamageNavy?: NavyId;
+  lastDamageRealMs?: number;
+  /** 3E: the enemy whose fire is burning this ship, for fire credit. */
+  fireStartedByOwnerId?: string;
+  fireStartedByNavy?: NavyId;
   /** A repair job running while docked at a usable port. */
   portRepair?: {
     mode: "stores" | "pay";

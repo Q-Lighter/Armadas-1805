@@ -10,6 +10,11 @@ import { LoadMetrics } from "@naval/shared/load-metrics";
 import {
   addPlayer,
   acceptShipSurrender,
+  giveSpareShips,
+  resetTestRoom,
+  resignPlayer,
+  setPlayerName,
+  sinkPlayerFlagship,
   boardingOddsFor,
   cancelBoarding,
   chooseCapturedCrew,
@@ -66,7 +71,7 @@ import { GhostCleanup, PlayerSessions } from "@naval/shared/player-sessions";
 import { BlockSendBudget } from "@naval/shared/block-batch";
 import { findPortByName, type PlacedPort } from "@naval/shared/ports";
 import { parseNavy, type NavyId } from "@naval/shared/navies";
-import { chooseJoinNavy, parseDummyBehaviour, type DummyBehaviour } from "@naval/shared/test-setup";
+import { chooseJoinNavy, chooseTeamNavy, parseDummyBehaviour, type DummyBehaviour } from "@naval/shared/test-setup";
 import { parseShipClass } from "@naval/shared/ship-rules";
 import type { ShipClassId } from "@naval/shared/ships";
 import { roomKindForCode } from "@naval/shared/fog";
@@ -121,6 +126,8 @@ export class GameRoom {
     let dummy: DummyBehaviour = "fights";
     let abandonedSpec: string | null = null;
     let enemyCrewPercent: number | null = null;
+    let displayName: string | null = null;
+    let teamJoin = false;
     if (kind !== "normal") {
       const rawNavy = url.searchParams.get("navy");
       if (rawNavy !== null) {
@@ -197,6 +204,22 @@ export class GameRoom {
       }
       dummy = parsedDummy;
 
+      const rawName = url.searchParams.get("name");
+      if (rawName !== null) {
+        if (!/^[A-Za-z0-9 _-]{1,20}$/.test(rawName.trim())) {
+          return new Response("Name must be 1 to 20 letters, numbers, spaces, dash or underscore.", {
+            status: 400,
+          });
+        }
+        displayName = rawName.trim();
+      }
+      const rawTeam = url.searchParams.get("team");
+      if (rawTeam !== null) {
+        if (rawTeam !== "0" && rawTeam !== "1") {
+          return new Response("Team must be 0 or 1.", { status: 400 });
+        }
+        teamJoin = rawTeam === "1";
+      }
       const rawAbandoned = url.searchParams.get("abandoned");
       if (rawAbandoned !== null) {
         if (!/^[a-zA-Z]+:\d+(?:,[a-zA-Z]+:\d+)*$/.test(rawAbandoned)) {
@@ -254,7 +277,9 @@ export class GameRoom {
     const takenNavies = [...this.world.players.values()].map((ship) => ship.navy);
     const chosen = returning
       ? { navy: this.world.players.get(playerId)!.navy, changed: false }
-      : chooseJoinNavy(navy, takenNavies);
+      : teamJoin && kind !== "normal"
+        ? chooseTeamNavy(navy, [...this.world.playerRecords.values()])
+        : chooseJoinNavy(navy, takenNavies);
     addPlayer(
       this.world,
       playerId,
@@ -269,6 +294,7 @@ export class GameRoom {
         `Same navy requested: you are ${chosen.navy}.`,
       ]);
     }
+    if (displayName) setPlayerName(this.world, playerId, displayName);
     const rawFleet = url.searchParams.get("fleet");
     if (kind !== "normal" && rawFleet !== null) {
       if (spawnTestFleet(this.world, playerId, rawFleet) < 0) {
@@ -448,7 +474,10 @@ export class GameRoom {
       choice?: unknown;
       prisoners?: unknown;
       confirm?: unknown;
+      to?: unknown;
     };
+
+    if (this.world.gameOver && order.t !== "resetRoom") return;
 
     if (order.t === "o") {
       applyOrder(this.world, playerId, order.x, order.y, order.ship);
@@ -509,6 +538,16 @@ export class GameRoom {
       removeTestDummies(this.world);
     } else if (order.t === "refillShips") {
       refillPlayerShips(this.world, playerId);
+    } else if (order.t === "sinkFlagship" && this.world.kind !== "normal") {
+      sinkPlayerFlagship(this.world, playerId);
+    } else if (order.t === "spareShips" && this.world.kind !== "normal") {
+      giveSpareShips(this.world, playerId, 3);
+    } else if (order.t === "resetRoom" && this.world.kind !== "normal") {
+      this.world = resetTestRoom(this.world);
+      this.ghosts.clear();
+    } else if (order.t === "resign") {
+      const to = typeof order.to === "string" ? order.to : null;
+      resignPlayer(this.world, playerId, to);
     } else if (order.t === "battleOrder") {
       setShipBattleOrder(this.world, playerId, order.ship, order.order);
     } else if (order.t === "fleetBattleOrder") {

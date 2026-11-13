@@ -493,6 +493,22 @@ export const settings = {
     minReplanTicks: 5,
   },
 
+  /** Flagship loss, inheritance and victory. Draft unless marked AGREED. */
+  elimination: {
+    /** Draft: only damage in the last 600 real seconds is credited. */
+    creditSeconds: 600,
+    /** Draft: an abandoned flagship counts as lost below this crew share. */
+    flagshipAbandonCrewShare: 0.1,
+    /** AGREED: money is part of "everything they own". */
+    inheritMoney: true,
+    /** Draft: at most this many humans may share one navy in a test room. */
+    maxTeamPlayers: 2,
+    /** Draft: flagship danger warning at or below this hull share. */
+    flagshipDangerHullShare: 0.3,
+    /** Draft: at most one flagship danger notice per player per minute. */
+    dangerNoticeSeconds: 60,
+  },
+
   /** Player identity and rooms. */
   players: {
     /** In test and dev rooms only, remove a disconnected player after this

@@ -2343,3 +2343,47 @@ and money in one place; and allow more than 30 ships except when buying.
 
 - `npm test`: 354 passing.
 - `npm run build`: passed.
+
+## Session 3E-b: elimination, inheritance and victory
+
+**Date:** 2026-11-13
+**Branch:** main
+
+### What was asked
+
+Make each player's flagship loss final, credit the right victor, pass on the
+eliminated player's property by the agreed table, let captains resign, and
+end the game when one navy is left standing without building any Phase 4
+feature.
+
+### What was built
+
+- `shared/elimination.ts` holds the pure rules: damage credit in a 600 real
+  second window, team and friendly-fire exclusion, value-based distribution,
+  equal money splits, teammate-first inheritance, navy standings and victory.
+- Each ship carries `isFlagship`; test-room starting ships are flagships and
+  test dummies are never players. Losing a flagship to sinking, explosion,
+  boarding capture, accepted surrender, abandonment or resignation records an
+  elimination with reason, public credit and private heir details.
+- Inheritance gives a surviving teammate everything first, otherwise the
+  credited player or alliance; with neither, remaining ships become
+  abandoned and money is lost. Ships keep names, damage, cargo, ammunition
+  and upgrades, leave fleets and control groups, hold position and take the
+  default stance. More than 30 ships is allowed.
+- Resign is a final order with any other real player or Nobody as recipient.
+  Test and dev rooms also accept `&name=`, `&team=1`, and the "Sink my
+  flagship", "Give me 3 spare ships" and "Reset room" helpers. Dummies and
+  absent-player removal never eliminate anyone.
+- A navy is eliminated when none of its players has a flagship. Victory is
+  checked only in rooms with at least two navies. Game over freezes the
+  world, blocks every order and publishes the winning navy, player list and
+  simple stats. Test rooms can reset to a fresh world.
+- Private state carries only the player's own elimination and stats; public
+  notices carry the eliminated captain's name and navy only. Port and ally
+  hooks are present and empty for Phase 4.
+
+### Checks
+
+- `npm test`: 370 passing, including the new pure and server elimination
+  suites.
+- `npm run build`: passed.

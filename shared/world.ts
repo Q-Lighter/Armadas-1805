@@ -115,6 +115,12 @@ import {
   type SinkingState,
 } from "./boarding.js";
 import { firingReadout, sailingStateLabel } from "./combatReadout.js";
+import {
+  damageCredit, directCredit, distributeByValue, emptyStats, isDamageLoss,
+  naviesWithFlagships, reasonText, splitMoney, survivingTeammate, victoryFor,
+  type DamageCredit, type EliminationReason, type GameOverState, type PlayerStanding,
+  type SimpleStats,
+} from "./elimination.js";
 import { NAVY_IDS, type NavyId } from "./navies.js";
 import type { DummyBehaviour } from "./testSetup.js";
 import {
@@ -184,6 +190,7 @@ import {
   type ShipStores,
   type TransferDirection,
 } from "./trade.js";
+import { DEFAULT_STANCE } from "./stances.js";
 
 const DEG = Math.PI / 180;
 const RAD = 180 / Math.PI;
@@ -197,6 +204,31 @@ export const PORT_FULL_NOTICE = "Port is full: waiting at anchor.";
 export interface OwnerState {
   money: number;
   selectedShipId: string | null;
+}
+
+/** One human player's identity and game record, kept after their ships go. */
+export interface PlayerRecord {
+  id: string;
+  name: string;
+  navy: NavyId;
+  /** The one flagship, or null once it has been lost. */
+  flagshipId: string | null;
+  flagshipName: string | null;
+  /** Real milliseconds when this player's current flagship joined. */
+  flagshipStartedRealMs: number;
+  stats: SimpleStats;
+  eliminated?: EliminationRecord;
+}
+
+export interface EliminationRecord {
+  reason: EliminationReason;
+  atGameMs: number;
+  /** Players credited with the defeat, empty for "no one". */
+  byIds: string[];
+  /** Players who received the remaining property, empty if it was abandoned. */
+  heirIds: string[];
+  shipsGiven: number;
+  moneyGiven: number;
 }
 
 /** The shared crew pool at a port. Lazy-created full. */
@@ -278,8 +310,20 @@ export interface World {
   nextCombatEventId: number;
   /** Deterministic gunnery RNG for this room. */
   combatRandom: SeededRandom;
-  /** Commanders lost, recorded for the later flagship-elimination rules. */
+  /** Commanders lost, kept for old clients and tests. */
   flagshipLost: FlagshipLostEvent[];
+  /** One record per human player, including players who are out. */
+  playerRecords: Map<string, PlayerRecord>;
+  /** Every navy that ever had a player with a flagship in this room. */
+  startedNavies: Set<NavyId>;
+  /** Navies already announced as eliminated. */
+  eliminatedNavies: Set<NavyId>;
+  /** Recent damage by ship, used to credit a sinking. */
+  damageCredits: Map<string, DamageCredit[]>;
+  /** Ships that were destroyed by an explosion instead of gunfire. */
+  explodedShips: Set<string>;
+  /** Set once one navy is the last one standing. */
+  gameOver: GameOverState | null;
   /** Test/dev helper: the enemy dummy fleet has already been spawned. */
   testEnemiesSpawned: Set<string>;
   /** Fleet orders queued behind a Run, per ship. */
@@ -448,6 +492,8 @@ export interface OwnShipSnapshot {
   stateLabel?: string;
   /** Test/dev only: order step and the first reason the guns are silent. */
   debugCombat?: string;
+  /** 3E: this is the player's one flagship. Own ships only. */
+  isFlagship?: boolean;
 }
 
 /** One dotted order line for the selected ship or fleet. */
@@ -608,6 +654,18 @@ export interface StateMessage {
   burning?: string[];
   grappled?: Array<[string, string]>;
   sinking?: string[];
+  /** 3E: this player's own elimination, never another player's. */
+  out?: {
+    reason: string;
+    byNames: string[];
+    byNavies: NavyId[];
+    heirNames: string[];
+    shipsGiven: number;
+    moneyGiven: number;
+    stats: SimpleStats;
+  };
+  /** 3E: the final table, only after one navy has won. */
+  go?: GameOverState;
 }
 
 export interface WorldOptions {
@@ -710,6 +768,12 @@ export function createWorld(roomCode = "main", options: WorldOptions = {}): Worl
     nextCombatEventId: 1,
     combatRandom: createSeededRandom(hashText(roomCode) ^ 0x9e3779b9),
     flagshipLost: [],
+    playerRecords: new Map(),
+    startedNavies: new Set(),
+    eliminatedNavies: new Set(),
+    damageCredits: new Map(),
+    explodedShips: new Set(),
+    gameOver: null,
     testEnemiesSpawned: new Set(),
     queuedRunOrders: new Map(),
     noticeCooldowns: new Map(),
@@ -896,6 +960,38 @@ function initialShipName(world: World, playerId: string): string {
   return pool[hashPlayerId(playerId) % pool.length] ?? shipTypeFor(world.navy, "flagship").name;
 }
 
+/** A player's display name. The id is shown if no name was chosen. */
+export function playerName(world: World, playerId: string): string {
+  return world.playerRecords.get(playerId)?.name ?? playerId;
+}
+
+/** Test/dev `&name=` display name. Empty names are ignored. */
+export function setPlayerName(world: World, playerId: string, rawName: unknown): boolean {
+  if (world.kind === "normal" || typeof rawName !== "string") return false;
+  const name = rawName.trim().slice(0, 20);
+  if (!/^[A-Za-z0-9 _-]{1,20}$/.test(name)) return false;
+  const record = world.playerRecords.get(playerId);
+  if (!record) return false;
+  record.name = name;
+  return true;
+}
+
+/** True while this real player still owns their flagship. */
+export function playerHasFlagship(world: World, playerId: string): boolean {
+  const record = world.playerRecords.get(playerId);
+  if (!record || record.eliminated || !record.flagshipId) return false;
+  return shipsForOwner(world, playerId).some((ship) => ship.id === record.flagshipId);
+}
+
+/** The current standings, human players only. Dummies never appear. */
+export function playerStandings(world: World): PlayerStanding[] {
+  return [...world.playerRecords.values()].map((record) => ({
+    id: record.id,
+    navy: record.navy,
+    hasFlagship: playerHasFlagship(world, record.id),
+  }));
+}
+
 /** Add a player's first ship once. A returning id keeps its fleet and chart. */
 export function addPlayer(
   world: World,
@@ -917,6 +1013,19 @@ export function addPlayer(
       world.charts.set(playerId, chart);
       revealCircle(chart, existing.x, existing.y);
     }
+    if (!world.playerRecords.has(playerId)) {
+      world.playerRecords.set(playerId, {
+        id: playerId,
+        name: playerId,
+        navy: existing.navy,
+        flagshipId: existing.id,
+        flagshipName: existing.name,
+        flagshipStartedRealMs: combatRealSeconds(world) * 1000,
+        stats: emptyStats(),
+      });
+      existing.isFlagship = true;
+      world.startedNavies.add(existing.navy);
+    }
     return existing;
   }
 
@@ -934,14 +1043,106 @@ export function addPlayer(
   ship.crew = ship.fullCrew;
   ship.damage.crew = ship.crew;
   ship.stores = fullStores(shipTypeFor(navy, classId));
+  ship.isFlagship = true;
   world.players.set(playerId, ship);
   world.fleets.set(playerId, [ship]);
   world.owners.set(playerId, { money: startMoney, selectedShipId: ship.id });
+  world.playerRecords.set(playerId, {
+    id: playerId,
+    name: playerId,
+    navy,
+    flagshipId: ship.id,
+    flagshipName: ship.name,
+    flagshipStartedRealMs: combatRealSeconds(world) * 1000,
+    stats: emptyStats(),
+  });
+  world.startedNavies.add(navy);
 
   const chart = createChart(world.kind);
   world.charts.set(playerId, chart);
   revealCircle(chart, ship.x, ship.y);
   return ship;
+}
+
+/** Test/dev only: sink the caller's flagship so the loss path runs normally. */
+export function sinkPlayerFlagship(world: World, playerId: string): boolean {
+  if (world.kind === "normal" || world.gameOver) return false;
+  const record = world.playerRecords.get(playerId);
+  const ship = record?.flagshipId
+    ? shipsForOwner(world, playerId).find((candidate) => candidate.id === record.flagshipId)
+    : null;
+  if (!ship) return false;
+  ship.damage.hull = 0;
+  ship.speedKnots = 0;
+  return true;
+}
+
+/** Test/dev only: give the caller a small spare fleet near their flagship. */
+export function giveSpareShips(world: World, playerId: string, count = 3): number {
+  if (world.kind === "normal" || world.gameOver) return 0;
+  const leader = shipsForOwner(world, playerId)[0];
+  const record = world.playerRecords.get(playerId);
+  if (!leader || !record) return 0;
+  const wanted = Math.max(0, Math.min(10, Math.floor(count)));
+  let made = 0;
+  for (let index = 0; index < wanted; index += 1) {
+    const angle = (index / Math.max(1, wanted)) * Math.PI * 2;
+    let x = leader.x + Math.sin(angle) * 1.2;
+    let y = leader.y - Math.cos(angle) * 1.2;
+    for (let attempt = 0; attempt < 40; attempt += 1) {
+      const candidate = {
+        x: leader.x + Math.sin(angle) * (1.2 + attempt * 0.2),
+        y: leader.y - Math.cos(angle) * (1.2 + attempt * 0.2),
+      };
+      if (isInsideMapFrame(candidate.x, candidate.y) && !isLandAt(candidate.x, candidate.y)) {
+        x = candidate.x;
+        y = candidate.y;
+        break;
+      }
+    }
+    const classId: ShipClassId = "frigate";
+    const shipId = `ship-${world.nextShipId++}`;
+    const ship = createShip(
+      shipId,
+      classId,
+      x,
+      y,
+      leader.headingRad,
+      record.navy,
+      `Spare ${world.nextShipId}`,
+    );
+    ship.crew = ship.fullCrew;
+    ship.damage.crew = ship.crew;
+    ship.stores = fullStores(shipTypeFor(record.navy, classId));
+    ship.isFlagship = false;
+    world.fleets.set(playerId, [...shipsForOwner(world, playerId), ship]);
+    made += 1;
+  }
+  return made;
+}
+
+/** Test/dev only: a fresh world with the same players and names. */
+export function resetTestRoom(world: World): World {
+  if (world.kind === "normal") return world;
+  const fresh = createWorld(world.roomCode, {
+    navy: world.navy,
+    startPort: world.startPort,
+    shipClass: world.startShipClass,
+    startMoney: world.startMoney,
+    hungerMultiplier: world.hungerMultiplier,
+  });
+  for (const record of world.playerRecords.values()) {
+    const current = shipsForOwner(world, record.id)[0];
+    addPlayer(
+      fresh,
+      record.id,
+      current?.classId ?? world.startShipClass,
+      world.startMoney,
+      record.navy,
+    );
+    setPlayerName(fresh, record.id, record.name);
+  }
+  return fresh;
 }
 
 /** Remove a human player's fleet, chart and waiting messages. */
@@ -965,6 +1166,7 @@ export function removePlayer(world: World, playerId: string): boolean {
   world.fleetModels.delete(playerId);
   world.controlGroups.delete(playerId);
   world.testFleetsSpawned.delete(playerId);
+  world.playerRecords.delete(playerId);
   for (const [fleetId, command] of [...world.fleetCommands]) {
     if (command.ownerId === playerId) world.fleetCommands.delete(fleetId);
   }
@@ -1884,7 +2086,7 @@ export function startShipRun(world: World, ownerId: string, ship: Ship): boolean
 
 /** Start the white flag on one ship. The fleet membership stays. */
 export function startShipSurrender(world: World, ownerId: string, ship: Ship): boolean {
-  if (ship.deliveryPortId) return false;
+  if (world.gameOver || ship.deliveryPortId) return false;
   if (!world.players.has(ownerId) && !world.botFleets.has(ownerId)) return false;
   if (ship.surrendered) return true;
   clearEngagement(world, ship.id);
@@ -1929,7 +2131,7 @@ function nearestOwnDistanceKm(world: World, playerId: string, target: Ship): num
 
 /** Move a surrendered ship to the accepting player. */
 export function acceptShipSurrender(world: World, playerId: string, shipId: unknown): boolean {
-  if (typeof shipId !== "string") return false;
+  if (world.gameOver || typeof shipId !== "string") return false;
   const entry = shipEntry(world, shipId);
   if (!entry || !entry.ship.surrendered) return false;
   const target = entry.ship;
@@ -1998,10 +2200,20 @@ export function acceptShipSurrender(world: World, playerId: string, shipId: unkn
   target.hadMinimumCrew = false;
   target.capturedChoiceDeadlineRealMs =
     combatRealSeconds(world) * 1000 + settings.combat.capturedChoiceSeconds * 1000;
-  if (target.classId === "flagship" && !world.flagshipLost.some((event) => event.shipId === target.id)) {
-    world.flagshipLost.push({ ownerId: oldOwner, shipId: target.id, atGameMs: world.gameMs });
-    pushCombatEvent(world, { kind: "flagshipLost", x: target.x, y: target.y, shipId: target.id });
+  if (world.gameOver && target.capturedCrew) {
+    target.crew = target.capturedCrew;
+    target.capturedCrew = 0;
+    target.capturedChoiceDeadlineRealMs = null;
+    target.hadMinimumCrew = true;
+    syncDamageCrew(target);
   }
+  const wasFlagship = target.isFlagship === true;
+  const acceptingRecord = world.playerRecords.get(playerId);
+  if (acceptingRecord) acceptingRecord.stats.shipsCaptured += 1;
+  if (wasFlagship && world.playerRecords.has(oldOwner)) {
+    handleFlagshipLoss(world, oldOwner, target, "surrendered", playerId);
+  }
+  target.isFlagship = false;
   pushNotice(world, oldOwner, `Your ship ${target.name} was taken.`);
   pushNotice(world, playerId, `You accepted the surrender of the ${target.navy} ${target.classId}.`);
   pushBattleLog(world, playerId, `You accepted the surrender of the ${target.navy} ${target.classId}.`);
@@ -2387,6 +2599,7 @@ export function applyFleetOrder(
   rawOrder: unknown,
   queueing = false,
 ): boolean {
+  if (world.gameOver) return false;
   const fleet = fleetFor(world, playerId, fleetId);
   if (!fleet || !isValidFleetOrder(rawOrder)) return false;
   const order = rawOrder;
@@ -2501,7 +2714,7 @@ export function applyShipSpecialOrder(
   shipId: unknown,
   rawOrder: unknown,
 ): boolean {
-  if (typeof shipId !== "string" || !isValidFleetOrder(rawOrder)) return false;
+  if (world.gameOver || typeof shipId !== "string" || !isValidFleetOrder(rawOrder)) return false;
   const ship = shipsForOwner(world, playerId).find((candidate) => candidate.id === shipId);
   if (!ship || ship.deliveryPortId) return false;
   if (ship.runState) clearRun(ship);
@@ -3090,7 +3303,7 @@ export function applyOrder(
   shipId?: unknown,
   fromFleet = false,
 ): boolean {
-  if (typeof x !== "number" || typeof y !== "number") return false;
+  if (world.gameOver || typeof x !== "number" || typeof y !== "number") return false;
 
   const ship = shipForOrder(world, playerId, shipId);
   if (!ship || ship.deliveryPortId) return false;
@@ -3180,6 +3393,7 @@ function removeSunkShips(world: World, sunkIds: Set<string>): void {
   for (const [ownerId, fleet] of world.fleets) owners.set(ownerId, fleet);
   for (const [ownerId, fleet] of world.botFleets) owners.set(ownerId, fleet);
 
+  const flagshipLosses: Array<{ ownerId: string; ship: Ship; reason: EliminationReason }> = [];
   for (const [ownerId, fleet] of owners) {
     const kept: Ship[] = [];
     for (const ship of fleet) {
@@ -3187,10 +3401,21 @@ function removeSunkShips(world: World, sunkIds: Set<string>): void {
         kept.push(ship);
         continue;
       }
-      if (ship.classId === "flagship") {
-        world.flagshipLost.push({ ownerId, shipId: ship.id, atGameMs: world.gameMs });
-        pushCombatEvent(world, { kind: "flagshipLost", x: ship.x, y: ship.y, shipId: ship.id });
-        if (world.players.has(ownerId)) pushNotice(world, ownerId, "Flagship lost.");
+      const record = world.playerRecords.get(ownerId);
+      const wasFlagship = ship.isFlagship === true && record !== undefined;
+      if (record && !wasFlagship) {
+        record.stats.shipsLost += 1;
+        for (const by of creditForSink(world, ship, ownerId, record.navy)) {
+          const credit = world.playerRecords.get(by);
+          if (credit) credit.stats.shipsSunk += 1;
+        }
+      }
+      if (record && wasFlagship) {
+        flagshipLosses.push({
+          ownerId,
+          ship,
+          reason: world.explodedShips.has(ship.id) ? "blewUp" : "sunk",
+        });
       }
       if (world.players.has(ownerId)) pushNotice(world, ownerId, `Ship sunk: ${ship.name}.`);
       if (!world.sinkingShips.some((entry) => entry.ship.id === ship.id)) {
@@ -3204,6 +3429,7 @@ function removeSunkShips(world: World, sunkIds: Set<string>): void {
         }
       }
       world.shipCommands.delete(ship.id);
+      world.explodedShips.delete(ship.id);
     }
     if (world.fleets.has(ownerId)) {
       world.fleets.set(ownerId, kept);
@@ -3220,6 +3446,9 @@ function removeSunkShips(world: World, sunkIds: Set<string>): void {
       if (kept.length > 0) world.botFleets.set(ownerId, kept);
       else world.botFleets.delete(ownerId);
     }
+  }
+  for (const loss of flagshipLosses) {
+    handleFlagshipLoss(world, loss.ownerId, loss.ship, loss.reason);
   }
 }
 
@@ -3287,6 +3516,13 @@ function resolveCombat(world: World): void {
       random: world.combatRandom,
     });
     if (!result.fired) continue;
+    const attackerRecord = world.playerRecords.get(plan.ownerId);
+    if (attackerRecord) {
+      attackerRecord.stats.shotsFired += result.gunsFired;
+      attackerRecord.stats.shotsHit += result.hits;
+      attackerRecord.stats.damageDealtPounds += result.pounds;
+      attackerRecord.stats.crewKilled += result.damageByArea.crew ?? 0;
+    }
 
     const firstOwnExchange = own.lastCombatRealMs === null;
     const firstTargetExchange = target.lastCombatRealMs === null;
@@ -3328,12 +3564,15 @@ function resolveCombat(world: World): void {
         : firstGroup?.mount,
     });
     if (result.hits > 0) {
+      noteDamageCredit(world, target, plan.ownerId, own.navy, nowMs);
       pushCombatEvent(world, { kind: "hit", x: target.x, y: target.y });
       // 3D: each landed hit may start a fire, or feed an existing one.
       for (let hit = 0; hit < result.hits; hit += 1) {
         const before = target.fire?.burning === true;
         target.fire = igniteFire(target.fire ?? { burning: false, strength: 0 }, world.combatRandom, settings.combat.fireIgniteChance);
         if (target.fire.burning && !before) {
+          target.fireStartedByOwnerId = plan.ownerId;
+          target.fireStartedByNavy = own.navy;
           pushCombatEvent(world, { kind: "fireStarted", x: target.x, y: target.y, shipId: target.id });
           if (targetEntry && world.players.has(targetEntry.ownerId)) pushNotice(world, targetEntry.ownerId, "Fire aboard");
         }
@@ -3397,7 +3636,13 @@ function resolveCombat(world: World): void {
               own.stores.ammunition = Math.max(0, own.stores.ammunition - friendlyResult.ammunitionUsed);
               friendly.damage = friendlyResult.damage;
               friendly.crew = friendlyResult.damage.crew;
+              const friendlyWasBurning = friendly.fire?.burning === true;
               friendly.fire = igniteFire(friendly.fire ?? { burning: false, strength: 0 }, world.combatRandom, settings.combat.fireIgniteChance);
+              if (friendly.fire.burning && !friendlyWasBurning) {
+                friendly.fireStartedByOwnerId = plan.ownerId;
+                friendly.fireStartedByNavy = own.navy;
+              }
+              noteDamageCredit(world, friendly, plan.ownerId, own.navy, nowMs);
               pushCombatEvent(world, { kind: "friendlyFire", x: friendly.x, y: friendly.y, shipId: friendly.id });
               pushNotice(world, plan.ownerId, `Friendly fire! Your ${own.name} hit your ${friendly.name}`);
               if (friendlyEntry && world.players.has(friendlyEntry.ownerId)) {
@@ -3569,7 +3814,7 @@ export function applyPortOrder(
   shipId?: unknown,
   fromFleet = false,
 ): boolean {
-  if (typeof portId !== "string") return false;
+  if (world.gameOver || typeof portId !== "string") return false;
   const ship = shipForOrder(world, playerId, shipId);
   if (ship && !fromFleet) {
     if (ship.runState) clearRun(ship);
@@ -3669,6 +3914,7 @@ export function buyShip(
   classId: unknown,
   rawName: unknown,
 ): Ship | null {
+  if (world.gameOver) return null;
   if (typeof portId !== "string" || typeof classId !== "string" || typeof rawName !== "string") {
     return null;
   }
@@ -3869,6 +4115,8 @@ export function buyGoods(
 
   stock[good] = Math.max(0, stock[good] - quote.amount);
   owner.money -= quote.total;
+  const buyer = world.playerRecords.get(playerId);
+  if (buyer) buyer.stats.moneySpent += quote.total;
   addGoodToStores(ship.stores, good, quote.amount);
   refreshStarving(ship);
   pushNotice(
@@ -3921,6 +4169,8 @@ export function sellGoods(
   removeGoodFromStores(ship.stores, good, quote.amount);
   if (storage) storage[good] += quote.amount;
   owner.money += quote.total;
+  const seller = world.playerRecords.get(playerId);
+  if (seller) seller.stats.moneyEarned += quote.total;
   pushNotice(
     world,
     playerId,
@@ -4094,7 +4344,11 @@ export function repairAtPort(
     pushNotice(world, playerId, "Not enough money.");
     return false;
   }
-  if (rawMode === "pay") owner.money -= quote.money;
+  if (rawMode === "pay") {
+    owner.money -= quote.money;
+    const payer = world.playerRecords.get(playerId);
+    if (payer) payer.stats.moneySpent += quote.money;
+  }
   ship.portRepair = {
     mode: rawMode,
     rateMultiplier: quote.rateMultiplier,
@@ -4775,13 +5029,366 @@ function takePrize(
   target.abandoned = false;
   target.boardingShipId = null;
   target.boardingAttacker = false;
+  const wasFlagship = target.isFlagship === true;
   holdPosition(target);
   world.fleets.set(acceptingOwner, [...shipsForOwner(world, acceptingOwner), target]);
-  if (target.classId === "flagship" && !world.flagshipLost.some((event) => event.shipId === target.id)) {
-    world.flagshipLost.push({ ownerId: oldOwner, shipId: target.id, atGameMs: world.gameMs });
-    pushCombatEvent(world, { kind: "flagshipLost", x: target.x, y: target.y, shipId: target.id });
+  const acceptingRecord = world.playerRecords.get(acceptingOwner);
+  if (acceptingRecord) acceptingRecord.stats.shipsCaptured += 1;
+  if (wasFlagship && world.playerRecords.has(oldOwner)) {
+    handleFlagshipLoss(world, oldOwner, target, "captured", acceptingOwner);
   }
+  target.isFlagship = false;
   return true;
+}
+
+function noteDistance(world: World, ownerId: string, fromX: number, fromY: number, ship: Ship): void {
+  const record = world.playerRecords.get(ownerId);
+  if (!record || ship.deliveryPortId) return;
+  const km = Math.hypot(ship.x - fromX, ship.y - fromY);
+  if (Number.isFinite(km) && km > 0) record.stats.distanceSailedKm += km;
+}
+
+function noteDamageCredit(
+  world: World,
+  ship: Ship,
+  ownerId: string,
+  navy: NavyId,
+  atRealMs: number,
+): void {
+  if (!ownerId) return;
+  const list = world.damageCredits.get(ship.id) ?? [];
+  list.push({ playerId: ownerId, navy, atRealMs });
+  while (list.length > 40) list.shift();
+  world.damageCredits.set(ship.id, list);
+  ship.lastDamageOwnerId = ownerId;
+  ship.lastDamageNavy = navy;
+  ship.lastDamageRealMs = atRealMs;
+}
+
+function creditForSink(world: World, ship: Ship, ownerId: string, ownerNavy: NavyId): string[] {
+  return damageCredit({
+    ownerId,
+    ownerNavy,
+    credits: world.damageCredits.get(ship.id) ?? [],
+    nowRealMs: combatRealSeconds(world) * 1000,
+    alliesOf: (playerId) => alliedPlayerIds(world, playerId),
+  });
+}
+
+/** Allies are a Phase 4 hook. Nobody is an ally yet. */
+export function alliedPlayerIds(_world: World, _playerId: string): string[] {
+  return [];
+}
+
+/** Ports are a 3F hook. Nobody owns a port yet. */
+export function portsForPlayer(_world: World, _playerId: string): string[] {
+  return [];
+}
+
+function removeFromControlGroups(world: World, playerId: string, shipId: string): void {
+  const groups = world.controlGroups.get(playerId);
+  if (!groups) return;
+  for (const ids of Object.values(groups)) {
+    const index = ids.indexOf(shipId);
+    if (index >= 0) ids.splice(index, 1);
+  }
+}
+
+/** Value a ship for an even inheritance: price plus cargo and ammunition. */
+function shipAssetValue(world: World, ship: Ship): number {
+  let value = shipPrice(ship.classId) ?? 0;
+  for (const [good, tonnes] of Object.entries(ship.stores.cargo)) {
+    const price = settings.trade.prices[good as keyof typeof settings.trade.prices] ?? 0;
+    value += Math.max(0, tonnes) * price;
+  }
+  value += Math.max(0, ship.stores.ammunition) * settings.trade.prices.ammunition;
+  return value;
+}
+
+/** Move one surviving ship to a new owner without changing its condition. */
+function giveShipToPlayer(world: World, ship: Ship, recipientId: string): void {
+  const oldEntry = shipEntry(world, ship.id);
+  const oldOwner = oldEntry?.ownerId ?? "";
+  if (oldOwner) removeFromOwner(world, oldOwner, ship.id);
+  const recipient = world.playerRecords.get(recipientId);
+  if (!recipient) return;
+  clearBoarding(world, ship);
+  for (const [shipId, engagement] of [...world.engagements]) {
+    if (shipId === ship.id || engagement.targetShipId === ship.id) clearEngagement(world, shipId);
+  }
+  world.shipCommands.delete(ship.id);
+  world.fleetCommands.delete(ship.fleetId ?? "");
+  removeFromControlGroups(world, oldOwner, ship.id);
+  world.abandonedShips = world.abandonedShips.filter((candidate) => candidate.id !== ship.id);
+  ship.navy = recipient.navy;
+  ship.fleetId = null;
+  ship.detached = false;
+  ship.isFlagship = false;
+  ship.surrendered = false;
+  ship.battleOrder = undefined;
+  ship.runState = undefined;
+  ship.stance = DEFAULT_STANCE;
+  holdPosition(ship);
+  world.fleets.set(recipientId, [...shipsForOwner(world, recipientId), ship]);
+  if (!world.players.has(recipientId)) world.players.set(recipientId, ship);
+  syncPlayerFleets(world, recipientId);
+}
+
+/** Leave a ship ownerless, keeping its condition and taking 3D decay. */
+function abandonForInheritance(world: World, ownerId: string, ship: Ship): void {
+  clearBoarding(world, ship);
+  removeFromOwner(world, ownerId, ship.id);
+  for (const [shipId, engagement] of [...world.engagements]) {
+    if (shipId === ship.id || engagement.targetShipId === ship.id) clearEngagement(world, shipId);
+  }
+  removeFromControlGroups(world, ownerId, ship.id);
+  ship.abandoned = true;
+  ship.surrendered = false;
+  ship.battleOrder = undefined;
+  ship.runState = undefined;
+  ship.stance = DEFAULT_STANCE;
+  ship.crew = 0;
+  syncDamageCrew(ship);
+  ship.hadMinimumCrew = false;
+  ship.route = null;
+  ship.order = null;
+  ship.stationSpeedLimit = undefined;
+  ship.speedKnots = 0;
+  ship.fleetId = null;
+  ship.detached = false;
+  if (!world.abandonedShips.some((candidate) => candidate.id === ship.id)) {
+    world.abandonedShips.push(ship);
+  }
+}
+
+function eliminateNavyIfNeeded(world: World, navy: NavyId): void {
+  if (world.eliminatedNavies.has(navy)) return;
+  const standings = playerStandings(world);
+  const hasFlagship = standings.some((entry) => entry.navy === navy && entry.hasFlagship);
+  if (hasFlagship) return;
+  world.eliminatedNavies.add(navy);
+  for (const playerId of world.playerRecords.keys()) {
+    pushNotice(world, playerId, `Navy ${navy} eliminated`);
+    pushBattleLog(world, playerId, `Navy ${navy} eliminated.`);
+  }
+}
+
+function finishGame(world: World): void {
+  if (world.gameOver) return;
+  const standings = playerStandings(world);
+  const victory = victoryFor(standings, world.startedNavies.size);
+  if (!victory) return;
+  const nowReal = combatRealSeconds(world);
+  const gameDays = world.gameMs / (settings.time.hoursPerDay * 60 * 60 * 1000);
+  const winnerIds = new Set(victory.playerIds);
+  const players = [...world.playerRecords.values()].map((record) => {
+    const winner = winnerIds.has(record.id);
+    if (winner && record.flagshipId) {
+      record.stats.flagshipSurvivedRealSeconds = Math.max(0, nowReal - record.flagshipStartedRealMs / 1000);
+    }
+    return {
+      id: record.id,
+      name: record.name,
+      navy: record.navy,
+      flagshipName: record.flagshipName,
+      left: record.eliminated ? reasonText(record.eliminated.reason) : "won",
+      stats: { ...record.stats, gameDaysPlayed: gameDays },
+      winner,
+    };
+  });
+  world.gameOver = {
+    navy: victory.navy,
+    winnerIds: victory.playerIds,
+    players,
+    atGameMs: world.gameMs,
+  };
+  for (const playerId of world.playerRecords.keys()) {
+    pushNotice(world, playerId, `Navy ${victory.navy} wins`);
+    pushBattleLog(world, playerId, `Navy ${victory.navy} wins the war.`);
+  }
+}
+
+/**
+ * The one place a flagship loss becomes an elimination. The lost flagship must
+ * already have left the owner's fleet (sunk, captured, surrendered, abandoned
+ * or resigned). Remaining property follows the AGREED inheritance table.
+ */
+export function handleFlagshipLoss(
+  world: World,
+  ownerId: string,
+  ship: Ship,
+  reason: EliminationReason,
+  byId: string | null = null,
+): boolean {
+  const record = world.playerRecords.get(ownerId);
+  if (!record || record.eliminated) return false;
+  if (!ship.isFlagship) return false;
+  const nowReal = combatRealSeconds(world);
+  const nowMs = nowReal * 1000;
+  if (isDamageLoss(reason)) {
+    const credits = world.damageCredits.get(ship.id) ?? [];
+    const by = damageCredit({
+      ownerId,
+      ownerNavy: record.navy,
+      credits,
+      nowRealMs: nowMs,
+      alliesOf: (playerId) => alliedPlayerIds(world, playerId),
+    });
+    record.eliminated = {
+      reason,
+      atGameMs: world.gameMs,
+      byIds: by,
+      heirIds: [],
+      shipsGiven: 0,
+      moneyGiven: 0,
+    };
+  } else {
+    record.eliminated = {
+      reason,
+      atGameMs: world.gameMs,
+      byIds: directCredit(byId),
+      heirIds: [],
+      shipsGiven: 0,
+      moneyGiven: 0,
+    };
+  }
+  const elimination = record.eliminated!;
+  record.stats.shipsLost += 1;
+  if (reason === "sunk" || reason === "blewUp") {
+    for (const by of elimination.byIds) {
+      const credit = world.playerRecords.get(by);
+      if (!credit) continue;
+      credit.stats.shipsSunk += 1;
+      credit.stats.flagshipsDestroyed += 1;
+    }
+  }
+  record.stats.flagshipSurvivedRealSeconds = Math.max(
+    0, nowReal - record.flagshipStartedRealMs / 1000,
+  );
+  record.flagshipId = null;
+
+  // The surviving teammate inherits first, whatever the cause. Otherwise the
+  // credited player or alliance takes it. With neither, it is abandoned.
+  const teammate = survivingTeammate(ownerId, record.navy, playerStandings(world));
+  const activeCredits = elimination.byIds.filter((id) =>
+    world.playerRecords.has(id) && playerHasFlagship(world, id)
+  );
+  const recipients = teammate ? [teammate] : activeCredits;
+  const remaining = shipsForOwner(world, ownerId).filter((candidate) => candidate.id !== ship.id);
+  const units = remaining.map((candidate) => ({
+    id: candidate.id,
+    value: shipAssetValue(world, candidate),
+  }));
+  const owner = world.owners.get(ownerId);
+  const money = settings.elimination.inheritMoney ? owner?.money ?? 0 : 0;
+  if (recipients.length > 0) {
+    const shipsFor = distributeByValue(units, recipients);
+    const moneyFor = splitMoney(money, recipients);
+    for (const recipientId of recipients) {
+      const ids = shipsFor.get(recipientId) ?? [];
+      for (const id of ids) {
+        const candidate = remaining.find((entry) => entry.id === id);
+        if (candidate) giveShipToPlayer(world, candidate, recipientId);
+      }
+      const share = moneyFor.get(recipientId) ?? 0;
+      const receiver = world.owners.get(recipientId);
+      if (receiver && share > 0) receiver.money += share;
+      if (world.playerRecords.has(recipientId)) {
+        const pieces = share > 0 ? ` (and ${share} pieces)` : "";
+        pushNotice(world, recipientId, `You received ${ids.length} ships${pieces}`);
+      }
+      const recipientRecord = world.playerRecords.get(recipientId);
+      if (recipientRecord) recipientRecord.stats.shipsCaptured += ids.length;
+    }
+    elimination.heirIds = recipients;
+    elimination.shipsGiven = units.length;
+    elimination.moneyGiven = money;
+  } else {
+    for (const candidate of remaining) abandonForInheritance(world, ownerId, candidate);
+  }
+
+  // Phase 4 / 3F hooks: they are deliberately empty today.
+  for (const _port of portsForPlayer(world, ownerId)) void _port;
+  void alliedPlayerIds;
+
+  world.fleetModels.delete(ownerId);
+  world.fleetCommands.delete(ownerId);
+  world.controlGroups.delete(ownerId);
+  world.shipCommands.delete(ship.id);
+  if (owner) owner.money = 0;
+  if (world.flagshipLost.some((event) => event.shipId === ship.id) === false) {
+    world.flagshipLost.push({ ownerId, shipId: ship.id, atGameMs: world.gameMs });
+    pushCombatEvent(world, { kind: "flagshipLost", x: ship.x, y: ship.y, shipId: ship.id });
+  }
+
+  const byNames = elimination.byIds.length > 0
+    ? elimination.byIds.map((id) => `${playerName(world, id)} (${world.playerRecords.get(id)?.navy ?? "unknown"})`).join(", ")
+    : "no one";
+  const publicText = `Captain ${record.name} (${record.navy}) was eliminated by ${byNames}`;
+  for (const otherId of world.playerRecords.keys()) {
+    pushNotice(world, otherId, publicText);
+    pushBattleLog(world, otherId, `${publicText}.`);
+  }
+  pushNotice(world, ownerId,
+    `Your flagship ${ship.name} was ${reasonText(reason)}. You are out of the game.`);
+  if (elimination.heirIds.length > 0) {
+    const heirs = elimination.heirIds.map((id) => playerName(world, id)).join(", ");
+    pushNotice(world, ownerId, `Your remaining ${elimination.shipsGiven} ships went to ${heirs}.`);
+  } else if (remaining.length > 0) {
+    pushNotice(world, ownerId, "Your remaining ships were abandoned.");
+  }
+
+  eliminateNavyIfNeeded(world, record.navy);
+  finishGame(world);
+  return true;
+}
+
+/** Resign is final and sends the flagship and all property to the chosen player. */
+export function resignPlayer(
+  world: World,
+  playerId: string,
+  recipientId: string | null,
+): boolean {
+  const record = world.playerRecords.get(playerId);
+  const ship = record?.flagshipId
+    ? shipsForOwner(world, playerId).find((candidate) => candidate.id === record.flagshipId)
+    : null;
+  if (!record || !ship || record.eliminated || world.gameOver) return false;
+  if (recipientId !== null) {
+    if (recipientId === playerId || !world.playerRecords.has(recipientId)) return false;
+    const recipient = world.playerRecords.get(recipientId);
+    if (!recipient || recipient.eliminated) return false;
+  }
+  removeFromOwner(world, playerId, ship.id);
+  if (recipientId) {
+    giveShipToPlayer(world, ship, recipientId);
+    // The flagship still belongs to the eliminated player for the loss rules;
+    // it simply already rests with its new owner.
+    ship.isFlagship = true;
+  } else {
+    abandonForInheritance(world, playerId, ship);
+  }
+  const result = handleFlagshipLoss(world, playerId, ship, "resigned", recipientId);
+  ship.isFlagship = false;
+  const recipientRecord = recipientId ? world.playerRecords.get(recipientId) : null;
+  if (recipientRecord) recipientRecord.stats.shipsCaptured += 1;
+  return result;
+}
+
+/** Weather is a later hook; the loss path already exists and is testable. */
+export function loseFlagshipToWeather(world: World, playerId: string): boolean {
+  const record = world.playerRecords.get(playerId);
+  const ship = record?.flagshipId
+    ? shipsForOwner(world, playerId).find((candidate) => candidate.id === record.flagshipId)
+    : null;
+  if (!record || !ship) return false;
+  removeFromOwner(world, playerId, ship.id);
+  ship.abandoned = true;
+  ship.crew = 0;
+  ship.damage.crew = 0;
+  ship.damage.hull = 0;
+  world.abandonedShips.push(ship);
+  return handleFlagshipLoss(world, playerId, ship, "weather", null);
 }
 
 function minCrew(ship: Ship): number {
@@ -4977,7 +5584,7 @@ export function orderBoarding(
   shipId: unknown,
   targetId: unknown,
 ): boolean {
-  if (typeof shipId !== "string" || typeof targetId !== "string") return false;
+  if (world.gameOver || typeof shipId !== "string" || typeof targetId !== "string") return false;
   const ship = shipsForOwner(world, playerId).find((candidate) => candidate.id === shipId);
   const targetEntry = shipEntry(world, targetId);
   if (!ship || !targetEntry || !world.players.has(playerId)) return false;
@@ -5321,6 +5928,12 @@ function updateBoarding(world: World, nowRealSeconds: number, windFromDeg: numbe
         defender.capturedChoiceDeadlineRealMs =
           combatRealSeconds(world) * 1000 + settings.combat.capturedChoiceSeconds * 1000;
         defender.hadMinimumCrew = false;
+        if (world.gameOver && defender.capturedCrew) {
+          defender.crew = defender.capturedCrew;
+          defender.capturedCrew = 0;
+          defender.capturedChoiceDeadlineRealMs = null;
+          defender.hadMinimumCrew = true;
+        }
         syncDamageCrew(defender);
         pushNotice(world, fight.attackerOwnerId, `You captured the ${defender.name}.`);
         pushNotice(world, fight.defenderOwnerId, `Your ship ${defender.name} was boarded and taken.`);
@@ -5371,6 +5984,8 @@ export function chooseCapturedCrew(
   } else {
     ship.crew = Math.max(0, ship.crew + plan.join);
     ship.prisoners = (ship.prisoners ?? 0) + plan.prisoners;
+    const captorRecord = world.playerRecords.get(playerId);
+    if (captorRecord) captorRecord.stats.prisonersTaken += plan.prisoners;
     if (ship.crew >= minCrew(ship)) ship.hadMinimumCrew = true;
   }
   syncDamageCrew(ship);
@@ -5401,7 +6016,7 @@ export function claimPlayerShip(
   prizeId: unknown,
   donorId: unknown,
 ): boolean {
-  if (typeof prizeId !== "string" || typeof donorId !== "string") return false;
+  if (world.gameOver || typeof prizeId !== "string" || typeof donorId !== "string") return false;
   const prize = world.abandonedShips.find((ship) => ship.id === prizeId);
   const donor = shipsForOwner(world, playerId).find((ship) => ship.id === donorId);
   if (!prize || !donor) return false;
@@ -5447,6 +6062,8 @@ export function handOverPrisoners(
   if (count <= 0) return false;
   const money = prisonerBounty(count);
   owner.money += money;
+  const captor = world.playerRecords.get(playerId);
+  if (captor) captor.stats.moneyEarned += money;
   ship.prisoners = 0;
   pushNotice(world, playerId, `Handed over ${count} prisoners for ${money} pieces.`);
   return true;
@@ -5480,6 +6097,13 @@ function abandonNow(world: World, ownerId: string, ship: Ship): void {
     }
   }
   world.abandonedShips.push(ship);
+  const wasFlagship = ship.isFlagship === true;
+  const record = world.playerRecords.get(ownerId);
+  if (record && !wasFlagship) record.stats.shipsLost += 1;
+  if (wasFlagship && record) {
+    handleFlagshipLoss(world, ownerId, ship, "abandoned");
+  }
+  ship.isFlagship = false;
 }
 
 function updateAbandonment(world: World, dtGameSeconds: number): void {
@@ -5524,6 +6148,10 @@ function updateFires(world: World, dtGameSeconds: number): void {
     if (!fire.burning) continue;
     const spec = shipSpecFor(ship);
     const damage = fireDamage(fire.strength, spec.hull, spec.crew, seconds);
+    if (ship.fireStartedByOwnerId && ship.fireStartedByNavy) {
+      noteDamageCredit(world, ship, ship.fireStartedByOwnerId, ship.fireStartedByNavy,
+        combatRealSeconds(world) * 1000 + 0);
+    }
     ship.damage.hull = Math.max(0, ship.damage.hull - damage.hullLoss);
     ship.crew = Math.max(0, ship.crew - damage.crewLoss);
     syncDamageCrew(ship);
@@ -5544,6 +6172,7 @@ function updateFires(world: World, dtGameSeconds: number): void {
       ship.crew = 0;
       ship.damage.crew = 0;
       ship.damage.hull = 0;
+      world.explodedShips.add(ship.id);
       sunk.add(ship.id);
       pushCombatEvent(world, { kind: "explosion", x: ship.x, y: ship.y, shipId: ship.id });
       for (const other of allShips(world)) {
@@ -5666,6 +6295,7 @@ export function stepWorld(
   dtGameSeconds: number,
   windFromDeg: number = settings.weather.windFromDeg,
 ): void {
+  if (world.gameOver) return;
   for (const playerId of world.fleets.keys()) {
     syncPlayerFleets(world, playerId);
   }
@@ -5676,7 +6306,10 @@ export function stepWorld(
 
   for (const [playerId, fleet] of world.fleets) {
     for (const ship of fleet) {
+      const fromX = ship.x;
+      const fromY = ship.y;
       stepOwnerShip(world, playerId, ship, dtGameSeconds, windFromDeg);
+      noteDistance(world, playerId, fromX, fromY, ship);
     }
   }
 
@@ -6086,6 +6719,22 @@ export function visibleStateFor(
   if (battleLog && battleLog.length > 0) state.log = battleLog.slice(-settings.combat.maxBattleLogLines);
   if (world.startPort) state.sp = world.startPort.name;
   if (world.kind !== "normal") state.h = world.hungerMultiplier;
+  const ownRecord = world.playerRecords.get(playerId);
+  if (ownRecord?.eliminated) {
+    const elimination = ownRecord.eliminated;
+    state.out = {
+      reason: reasonText(elimination.reason),
+      byNames: elimination.byIds.map((id) => playerName(world, id)),
+      byNavies: elimination.byIds
+        .map((id) => world.playerRecords.get(id)?.navy)
+        .filter((navy): navy is NavyId => navy !== undefined),
+      heirNames: elimination.heirIds.map((id) => playerName(world, id)),
+      shipsGiven: elimination.shipsGiven,
+      moneyGiven: elimination.moneyGiven,
+      stats: { ...ownRecord.stats, gameDaysPlayed: world.gameMs / (settings.time.hoursPerDay * 60 * 60 * 1000) },
+    };
+  }
+  if (world.gameOver) state.go = world.gameOver;
   if (abandonedFlags.length > 0) state.abandoned = abandonedFlags;
   if (burningFlags.length > 0) state.burning = burningFlags;
   if (grappled.length > 0) state.grappled = grappled;

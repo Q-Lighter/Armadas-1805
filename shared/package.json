@@ -186,6 +186,10 @@
       "types": "./dist/crewUi.d.ts",
       "default": "./dist/crewUi.js"
     },
+    "./elimination": {
+      "types": "./dist/elimination.d.ts",
+      "default": "./dist/elimination.js"
+    },
     "./format": {
       "types": "./dist/format.d.ts",
       "default": "./dist/format.js"

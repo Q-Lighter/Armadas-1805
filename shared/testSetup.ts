@@ -47,6 +47,31 @@ export function chooseJoinNavy(
   return { navy: requested, changed: false };
 }
 
+/**
+ * `&team=1` keeps a second human in an existing navy, up to the agreed two
+ * players per navy. Only test and dev rooms call this.
+ */
+export function chooseTeamNavy(
+  requested: NavyId,
+  players: readonly { navy: NavyId }[],
+  maxTeamPlayers = 2,
+): { navy: NavyId; changed: boolean } {
+  const counts = new Map<NavyId, number>();
+  for (const player of players) counts.set(player.navy, (counts.get(player.navy) ?? 0) + 1);
+  const requestedCount = counts.get(requested) ?? 0;
+  if (requestedCount > 0 && requestedCount < maxTeamPlayers) {
+    return { navy: requested, changed: false };
+  }
+  if (requestedCount === 0) {
+    const existing = NAVY_ORDER.find((navy) => (counts.get(navy) ?? 0) < maxTeamPlayers &&
+      (counts.get(navy) ?? 0) > 0);
+    if (existing) return { navy: existing, changed: existing !== requested };
+    return { navy: requested, changed: false };
+  }
+  const taken = [...counts.keys()];
+  return chooseJoinNavy(requested, taken);
+}
+
 /** The next navy for the other device in the invite link. */
 export function otherNavy(navy: NavyId): NavyId {
   return NAVY_ORDER.find((candidate) => candidate !== navy) ?? "French";
@@ -67,6 +92,8 @@ const FORWARDED_TEST_PARAMS = [
   "enemynavy",
   "dummy",
   "fleet",
+  "name",
+  "team",
 ] as const;
 
 function queryValues(search: string): Map<string, string> {

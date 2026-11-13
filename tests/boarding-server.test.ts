@@ -54,7 +54,8 @@ test("a ship that falls below minimum crew becomes abandoned and decays", () => 
   assert.equal(ship.abandoned, true);
   assert.equal(shipsForOwner(w, "p").some((candidate) => candidate.id === ship.id), false);
   assert.ok(w.abandonedShips.some((candidate) => candidate.id === ship.id));
-  assert.ok((w.notices.get("p") ?? []).includes(`Your ship ${ship.name} was abandoned`));
+  assert.equal(w.playerRecords.get("p")?.eliminated?.reason, "abandoned");
+  assert.ok((w.notices.get("p") ?? []).some((line) => /flagship .* was abandoned/.test(line)));
   const before = ship.damage.hull;
   stepWorld(w, 144);
   assert.ok(ship.damage.hull < before);
@@ -114,6 +115,7 @@ test("boarding changes ownership, captures survivors and defaults to join", () =
   assert.equal(target.navy, attacker.navy);
   assert.ok(target.crew > 0);
   assert.equal(target.capturedCrew, 0);
+  assert.equal(w.playerRecords.get("q")?.eliminated?.reason, "captured");
 });
 
 test("captured crew choices join, kill or take prisoners with a limit", () => {

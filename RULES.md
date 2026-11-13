@@ -165,6 +165,68 @@ Read this file at the start of every prompt, then follow it for the whole sessio
   claimed, and its cargo, ammunition, crew and prisoners are lost. The "ship
   sunk" event is sent when sinking starts, then the ship is removed.
 
+## Elimination and winning
+
+- Every player has exactly one flagship. In a normal room it is the navy's
+  flagship ship; in a test or dev room the player's starting ship is their
+  flagship whatever its class. A ship stores `isFlagship`. Ships spawned by
+  test helpers are not players and never count for elimination or victory.
+- Losing the flagship, by any cause, puts that player personally out of the
+  game. The reasons are sunk, blew up, captured by boarding, surrendered and
+  accepted, abandoned (a flagship under 10% crew becomes ownerless) and
+  resigned. Weather and starvation use the same hook when they are built.
+  There is no early protection: a flagship can always be sunk. A player who
+  is merely disconnected, or whose ships are removed by the test-room
+  absent-player timer, is not eliminated.
+- Sunk, blown-up and damage-abandoned flagships credit the player of another
+  navy who dealt the last damage within the last 600 real seconds. Damage
+  from a fire the enemy started counts. Friendly fire and teammates are never
+  credited. If nobody qualifies, nobody defeated them.
+- A boarding capture or an accepted surrender credits the capturing or
+  accepting player. A resignation credits the player the resigning captain
+  chose. Weather credits nobody. The allies hook is empty for now: when it
+  returns allies, every qualifying ally shares the victory.
+- Assets follow the agreed table. A surviving teammate of the same navy
+  inherits first: all remaining ships, ports (hook, none yet), resources
+  aboard them and money. With no teammate, the credited player receives
+  everything. With no teammate and an alliance victory (hook), everything is
+  divided as evenly as possible by value across the alliance: each ship is
+  valued at its price plus the market value of its cargo and ammunition, the
+  highest-value unit goes to the recipient with the lowest running total,
+  and money is split equally. With no teammate and nobody credited, a
+  teammate still inherits if one exists; otherwise ports become unowned
+  (hook, none yet), every other ship becomes abandoned with zero crew under
+  the 3D decay, and money is lost.
+- Inherited ships keep their names, damage, cargo, ammunition and upgrades.
+  They leave their old fleets and control groups, hold position and take the
+  default stance. Owning more than 30 ships is allowed; only buying is
+  blocked at 30. Money inheritance is on. The lost flagship itself already
+  belongs to its captor if captured or handed over, and is gone if sunk.
+- The eliminated player leaves all alliances at once (hook).
+- Resign is final. Any player may surrender their flagship at any time and
+  choose any other real player, or Nobody, as recipient. The flagship and all
+  remaining property go to that recipient; with Nobody, ships become
+  abandoned. The choice cannot be undone.
+- A navy is eliminated once none of its players has a flagship. Everyone is
+  told "Navy X eliminated". Victory is checked after each elimination, and
+  only in rooms where at least two navies had players with flagships. The
+  last navy standing wins; teammates win together. An empty or unused navy
+  counts as already eliminated. A one-navy room never ends.
+- When one navy remains, the world simulation stops: no movement, combat or
+  timers, and all orders are blocked. A game-over state names the winning
+  navy and its players. Only a test room may reset to a fresh world with the
+  same players; a real rematch belongs to Phase 4.
+- Simple per-player stats count ships sunk (by last damage), ships captured,
+  ships lost, flagships destroyed, shots fired, shots hit, damage dealt,
+  crew killed, prisoners taken, ships bought, money earned and spent,
+  distance sailed, game days and flagship survival time. They are shown only
+  after the player is eliminated or the game is won. During play nobody
+  receives another player's stats, flagship status or asset list. Elimination
+  events carry names and navies only; the reason and heir go to the player
+  concerned, and the receiver is told "You received N ships".
+- The port-ownership hook (`portsForPlayer`) and the allies hook
+  (`alliedPlayerIds`) exist and return nothing or nobody for now.
+
 ## Ways of working
 
 - Each prompt is one job and must finish inside one session. At the end of every prompt: test what you built, commit, push to `main`, and report back.

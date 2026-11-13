@@ -779,6 +779,9 @@ async function start(): Promise<void> {
   const testSpawn = element<HTMLButtonElement>("test-spawn");
   const testRemove = element<HTMLButtonElement>("test-remove");
   const testRefill = element<HTMLButtonElement>("test-refill");
+  const testSinkFlagship = element<HTMLButtonElement>("test-sink-flagship");
+  const testSpareShips = element<HTMLButtonElement>("test-spare-ships");
+  const testResetRoom = element<HTMLButtonElement>("test-reset-room");
   const testInviteLink = element<HTMLInputElement>("test-invite-link");
   const testCopyLink = element<HTMLButtonElement>("test-copy-link");
   const debugSection = element<HTMLDetailsElement>("debug-info");
@@ -2839,7 +2842,7 @@ async function start(): Promise<void> {
       button.disabled = !row.selectable;
       button.setAttribute("aria-current", String(ship.id === selectedShipId));
       name.className = "fleet-name";
-      name.textContent = row.name;
+
       type.className = "fleet-type";
       type.textContent = row.typeName;
       crew.className = "fleet-crew";
@@ -3838,6 +3841,7 @@ async function start(): Promise<void> {
     shipDamage.disabled = !row || row.status === "delivery";
   }
 
+
   function closeDamagePanel(): void {
     damagePanel.hidden = true;
     damageShipId = null;
@@ -4765,7 +4769,7 @@ async function start(): Promise<void> {
           style: { fontFamily: "Source Sans 3", fontSize: 9, fill: 0x4a3a2a },
         });
         statusLabel.visible = false;
-        fleetLayer.addChild(hull, ring, flag, runInk, runLabel, statusInk, statusLabel);
+
         ship = {
           id,
           hull,
@@ -5705,6 +5709,18 @@ async function start(): Promise<void> {
   testRefill.addEventListener("click", () => {
     sendCommand({ t: "refillShips" });
     showNotice("Refilling and repairing your ships.");
+  });
+  testSinkFlagship.addEventListener("click", () => {
+    sendCommand({ t: "sinkFlagship" });
+    showNotice("Sinking your flagship.");
+  });
+  testSpareShips.addEventListener("click", () => {
+    sendCommand({ t: "spareShips" });
+    showNotice("Three spare ships requested.");
+  });
+  testResetRoom.addEventListener("click", () => {
+    sendCommand({ t: "resetRoom" });
+    showNotice("Reset room requested.");
   });
   testCopyLink.addEventListener("click", () => {
     refreshTestInvite();

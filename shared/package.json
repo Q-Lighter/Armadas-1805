@@ -110,6 +110,14 @@
       "types": "./dist/renderPlan.d.ts",
       "default": "./dist/renderPlan.js"
     },
+    "./spatial-grid": {
+      "types": "./dist/spatialGrid.d.ts",
+      "default": "./dist/spatialGrid.js"
+    },
+    "./state-delta": {
+      "types": "./dist/stateDelta.d.ts",
+      "default": "./dist/stateDelta.js"
+    },
     "./draw-layer": {
       "types": "./dist/drawLayer.d.ts",
       "default": "./dist/drawLayer.js"

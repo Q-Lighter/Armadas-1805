@@ -320,6 +320,8 @@ export const settings = {
     battleZoneKm: 1.5,
     /** Draft: battle-zone players receive world updates this many times a second. */
     battleSendRate: 10,
+    /** Draft: merge visible fire effects to this many per ship per second. */
+    maxFireEffectsPerShipPerSecond: 2,
     /** Draft: an engaged target unseen this many real seconds ends the chase (3E). */
     targetLostCombatSeconds: 30,
     /** Draft: stand-and-fire closes to this range, in metres. */
@@ -716,6 +718,22 @@ export const settings = {
     broadcastHz: 5,
     /** Longest room code accepted from the web address. Draft: 24. */
     maxRoomCodeLength: 24,
+  },
+
+  /** Network budget and stream timing. Draft values. */
+  network: {
+    /** A socket above this send buffer is skipped until it drains. Draft: 64 KB. */
+    slowClientBufferBytes: 64 * 1024,
+    /** Re-send a full state after this long as a safety net. Draft: 10 s. */
+    fullStateEverySeconds: 10,
+    /** Round-trip ping period. Draft: 2 s. */
+    pingIntervalSeconds: 2,
+    /** Own-fleet detail (ship panel) is sent at this period. Draft: 0.5 s. */
+    fleetDetailSeconds: 0.5,
+    /** A battle-zone player gets the fast rate within this radius. Draft: 3 km. */
+    battleZoneRadiusKm: 3,
+    /** Receive samples used by the performance panel. Draft: 5 s. */
+    performanceWindowSeconds: 5,
   },
 
   /** Fog of war and the chart's private map blocks. */

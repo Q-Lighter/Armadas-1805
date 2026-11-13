@@ -62,6 +62,8 @@ export interface ChartState {
   foundPorts: Set<string>;
   /** Last visible combat event delivered to this player. */
   combatCursor?: number;
+  /** Per-ship visible fire-effect budget for the current second. */
+  fireBudget?: Map<string, { second: number; count: number }>;
   /** A new socket must receive the whole record before normal changes. */
   resume?: boolean;
 }

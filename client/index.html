@@ -367,6 +367,10 @@
         </label>
       </div>
       <p class="test-ships-drawn" id="test-ships-drawn">Ships drawn: 0 (my ships 0, other ships 0)</p>
+      <div class="perf-readout" id="perf-panel" hidden>
+        <p class="perf-title">Performance <span id="perf-visible-state">off</span></p>
+        <pre id="perf-lines"></pre>
+      </div>
       <div class="test-tools-actions">
         <button class="btn btn-seal" id="test-spawn" type="button">Spawn enemies</button>
         <button class="btn" id="test-remove" type="button">Remove all dummies</button>
@@ -374,6 +378,7 @@
         <button class="btn" id="test-sink-flagship" type="button">Sink my flagship</button>
         <button class="btn" id="test-spare-ships" type="button">Give me 3 spare ships</button>
         <button class="btn" id="test-reset-room" type="button">Reset room</button>
+        <button class="btn" id="perf-toggle" type="button" aria-pressed="false">Performance: off</button>
       </div>
       <div class="test-invite">
         <h3>Invite second device</h3>

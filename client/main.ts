@@ -66,6 +66,7 @@ import { readTapToSail, resolveTap, writeTapToSail } from "@naval/shared/tap-to-
 import { fogDebugLine, type FogDebugInfo } from "@naval/shared/fog-view";
 import { GRAPHICS_RESET_NOTICE, GraphicsRecovery } from "@naval/shared/graphics-safety";
 import { runDrawLayer } from "@naval/shared/draw-layer";
+import { applyStateDelta, decodeStateDelta, newestStateWithEvents } from "@naval/shared/state-delta";
 import { formatGameClock, gameClockAt } from "@naval/shared/time";
 import { navyColorNumber, parseNavy, type NavyId } from "@naval/shared/navies";
 import {
@@ -817,6 +818,10 @@ async function start(): Promise<void> {
   const testInviteLink = element<HTMLInputElement>("test-invite-link");
   const testCopyLink = element<HTMLButtonElement>("test-copy-link");
   const testShipsDrawn = element<HTMLElement>("test-ships-drawn");
+  const perfPanel = element<HTMLElement>("perf-panel");
+  const perfLines = element<HTMLElement>("perf-lines");
+  const perfVisibleState = element<HTMLElement>("perf-visible-state");
+  const perfToggle = element<HTMLButtonElement>("perf-toggle");
   const debugSection = element<HTMLDetailsElement>("debug-info");
   const shipPanel = element<HTMLElement>("ship-panel");
   const shipExpand = element<HTMLButtonElement>("ship-expand");
@@ -846,6 +851,8 @@ async function start(): Promise<void> {
   const query = new URLSearchParams(location.search);
   const room = query.get("room") ?? "test";
   const layoutDebug = query.get("layoutdebug") === "1";
+  let perfVisible = query.get("perf") === "1";
+  let perfAutoOpened = false;
   const requestedBots = query.get("bots");
   const requestedNavy = query.get("navy");
   const requestedStart = query.get("start");
@@ -1182,6 +1189,23 @@ async function start(): Promise<void> {
   let fps = 0;
   let lastDebugLineAt = 0;
   let lastShipsDrawnText = "";
+  let lastFrameAt = 0;
+  const frameDurations: Array<{ at: number; ms: number }> = [];
+  let lastStateReceivedAt = 0;
+  let cachedState: StateMessage | null = null;
+  let pendingStateMessages: StateMessage[] = [];
+  let nextOrderId = 0;
+  const pendingOrders = new Map<string, { at: number; label: string }>();
+  let pingAt = 0;
+  let pingMs = 0;
+  let lastPingSentAt = 0;
+  let lastFocusSentAt = 0;
+  let lastPerfRenderAt = 0;
+  let serverWorldMs = 0;
+  const inboundSamples: Array<{ at: number; bytes: number; messages: number }> = [];
+  let domUpdateCount = 0;
+  let domUpdateSamples: Array<{ at: number; count: number }> = [];
+  let lastPassiveAt = 0;
 
   // The server owns game time. The page predicts forward at the game rate and
   // gently settles onto each received value instead of jumping the display.
@@ -2234,11 +2258,27 @@ async function start(): Promise<void> {
 
   function sendCommand(message: Record<string, unknown>): boolean {
     if (socket?.readyState === WebSocket.OPEN) {
-      socket.send(JSON.stringify(message));
+      const id = `cmd-${++nextOrderId}`;
+      pendingOrders.set(id, { at: performance.now(), label: String(message.t ?? "order") });
+      socket.send(JSON.stringify({ ...message, id }));
+      updateOrderSendingStatus();
       return true;
     }
     setStatus("Not connected yet; the order was not sent.", true);
     return false;
+  }
+
+  function updateOrderSendingStatus(): void {
+    if (pendingOrders.size > 0) {
+      setStatus(`Sending ${pendingOrders.size === 1 ? "order" : "orders"}…`);
+    } else if (!takenOver && socket?.readyState === WebSocket.OPEN) {
+      setStatus("Connected");
+    }
+  }
+
+  function acknowledgeOrder(id: string): void {
+    if (!pendingOrders.delete(id)) return;
+    updateOrderSendingStatus();
   }
 
   function groupShipIds(): string[] {
@@ -4631,6 +4671,73 @@ async function start(): Promise<void> {
     }
   }
 
+  function noteInbound(bytes: number, messages: number): void {
+    const at = performance.now();
+    inboundSamples.push({ at, bytes: Math.max(0, bytes), messages: Math.max(0, messages) });
+    while (inboundSamples.length > 0 && inboundSamples[0]!.at < at - settings.network.performanceWindowSeconds * 1000) {
+      inboundSamples.shift();
+    }
+  }
+
+  function updatePerfPanel(now: number): void {
+    if (!perfVisible || roomKind === "normal") {
+      perfPanel.hidden = true;
+      perfVisibleState.textContent = "off";
+      return;
+    }
+    perfPanel.hidden = false;
+    perfVisibleState.textContent = "on";
+    const frameWindow = frameDurations.filter((sample) => sample.at >= now - 5_000);
+    const averageFrame = frameWindow.length === 0
+      ? 0
+      : frameWindow.reduce((sum, sample) => sum + sample.ms, 0) / frameWindow.length;
+    const worstFrame = frameWindow.reduce((worst, sample) => Math.max(worst, sample.ms), 0);
+    const inbound = inboundSamples.filter((sample) => sample.at >= now - settings.network.performanceWindowSeconds * 1000);
+    const inboundSpan = inbound.length >= 2
+      ? Math.max(1, (inbound[inbound.length - 1]!.at - inbound[0]!.at) / 1000)
+      : settings.network.performanceWindowSeconds;
+    const inboundBytes = inbound.reduce((sum, sample) => sum + sample.bytes, 0) / inboundSpan;
+    const inboundMessages = inbound.reduce((sum, sample) => sum + sample.messages, 0) / inboundSpan;
+    domUpdateSamples.push({ at: now, count: domUpdateCount });
+    while (domUpdateSamples.length > 0 && domUpdateSamples[0]!.at < now - 5_000) domUpdateSamples.shift();
+    const domFirst = domUpdateSamples[0];
+    const domLast = domUpdateSamples[domUpdateSamples.length - 1];
+    const domRate = domFirst && domLast && domLast.at > domFirst.at
+      ? ((domLast.count - domFirst.count) * 1000) / (domLast.at - domFirst.at)
+      : 0;
+    const snapshotAge = lastStateReceivedAt === 0 ? "—" : `${Math.round(now - lastStateReceivedAt)} ms`;
+    const quality = "Auto";
+    perfLines.textContent = [
+      `FPS ${fps.toFixed(1)} · frame ${averageFrame.toFixed(1)} avg / ${worstFrame.toFixed(1)} worst ms (5 s)`,
+      `Objects ${app.stage.children.length} · effects ${combatFx.length} · DOM ${domRate.toFixed(0)}/s`,
+      `Ping ${pingMs > 0 ? `${Math.round(pingMs)} ms` : "—"} · in ${(inboundBytes / 1024).toFixed(1)} KB/s · ${inboundMessages.toFixed(1)} msg/s`,
+      `Snapshot age ${snapshotAge} · queued ${pendingStateMessages.length} · server step ${serverWorldMs.toFixed(2)} ms`,
+      `Resolution ${app.renderer.resolution.toFixed(2)}x · quality ${quality} · sending ${pendingOrders.size}`,
+    ].join("\n");
+  }
+
+  let domObserver: MutationObserver | null = null;
+  function setPerfVisible(next: boolean): void {
+    perfVisible = next;
+    perfAutoOpened = true;
+    perfToggle.setAttribute("aria-pressed", String(next));
+    perfToggle.textContent = `Performance: ${next ? "on" : "off"}`;
+    perfPanel.hidden = !next || roomKind === "normal";
+    if (next && !domObserver) {
+      domObserver = new MutationObserver((records) => {
+        for (const record of records) {
+          const target = record.target instanceof Element
+            ? record.target
+            : record.target.parentElement;
+          if (target?.closest("#perf-panel")) continue;
+          domUpdateCount += 1;
+        }
+      });
+      domObserver.observe(document.body, { childList: true, characterData: true, subtree: true });
+    }
+    if (next) updatePerfPanel(performance.now());
+  }
+
   function updateDebugLine(): void {
     const now = performance.now();
     while (receivedAt.length > 0 && receivedAt[0]! < now - 10_000) receivedAt.shift();
@@ -4689,6 +4796,17 @@ async function start(): Promise<void> {
   }
 
   function onState(event: MessageEvent): void {
+    if (event.data instanceof ArrayBuffer) {
+      noteInbound(event.data.byteLength, 1);
+      handleStateDelta(event.data);
+      return;
+    }
+    if (typeof Blob !== "undefined" && event.data instanceof Blob) {
+      noteInbound(event.data.size, 1);
+      void event.data.arrayBuffer().then(handleStateDelta).catch((error) => reportClientError(error, "state delta"));
+      return;
+    }
+    if (typeof event.data === "string") noteInbound(event.data.length, 1);
     let message: unknown;
     try {
       message = JSON.parse(String(event.data));
@@ -4723,12 +4841,55 @@ async function start(): Promise<void> {
       }
       return;
     }
+    if (type === "pong") {
+      const at = Number((message as { at?: unknown }).at);
+      if (Number.isFinite(at)) pingMs = Math.max(0, Date.now() - at);
+      return;
+    }
+    if (type === "ack") {
+      const id = (message as { id?: unknown }).id;
+      if (typeof id === "string") acknowledgeOrder(id);
+      return;
+    }
     if (type !== "s") return;
+    enqueueState(message as StateMessage);
+  }
 
-    const state = message as StateMessage;
+  function handleStateDelta(buffer: ArrayBuffer): void {
+    let delta;
+    try {
+      delta = decodeStateDelta(buffer);
+    } catch (error) {
+      reportClientError(error, "state delta");
+      return;
+    }
+    if (!cachedState || delta.base !== cachedState.seq) {
+      if (socket?.readyState === WebSocket.OPEN) socket.send(JSON.stringify({ t: "resync" }));
+      return;
+    }
+    const next = applyStateDelta(cachedState, delta);
+    cachedState = next;
+    enqueueState(next);
+  }
+
+  function enqueueState(state: StateMessage): void {
     if (!Array.isArray(state.ships)) return;
-
+    lastStateReceivedAt = performance.now();
     noteStateReceived();
+    if (!cachedState || state.full === true) cachedState = state;
+    pendingStateMessages.push(state);
+    if (pendingStateMessages.length > 30) pendingStateMessages.shift();
+  }
+
+  function flushPendingState(): void {
+    if (pendingStateMessages.length === 0) return;
+    const newest = newestStateWithEvents(pendingStateMessages);
+    pendingStateMessages = [];
+    if (newest) applyStateMessage(newest);
+  }
+
+  function applyStateMessage(state: StateMessage): void {
+    if (!Array.isArray(state.ships)) return;
     const receivedGameMs = Number(state.g);
     if (Number.isFinite(receivedGameMs)) {
       clockTargetMs = receivedGameMs;
@@ -4801,19 +4962,19 @@ async function start(): Promise<void> {
       while (combatFx.length > 240) combatFx.shift();
     }
 
-    const incomingFleet: OwnShipSnapshot[] = [];
     if (Array.isArray(state.fleet)) {
+      const incomingFleet: OwnShipSnapshot[] = [];
       for (const raw of state.fleet) {
         const parsed = parseOwnShip(raw);
         if (parsed) incomingFleet.push(parsed);
       }
+      fleetShips = incomingFleet;
     }
-    fleetShips = incomingFleet;
-    playerFleets = Array.isArray(state.fleets)
-      ? state.fleets.map(parseFleet).filter((fleet): fleet is FleetSnapshot => fleet !== null)
-      : [];
-    controlGroups = {};
+    if (Array.isArray(state.fleets)) {
+      playerFleets = state.fleets.map(parseFleet).filter((fleet): fleet is FleetSnapshot => fleet !== null);
+    }
     if (state.groups && typeof state.groups === "object") {
+      controlGroups = {};
       for (const [rawSlot, ids] of Object.entries(state.groups)) {
         const slot = Number(rawSlot);
         if (!Number.isInteger(slot) || slot < 1 || slot > 9 || !Array.isArray(ids)) continue;
@@ -4831,13 +4992,15 @@ async function start(): Promise<void> {
     }
     hungerMultiplier = finiteNumber(state.h) ?? undefined;
     if (typeof state.sp === "string" && state.sp.length > 0) startPortName = state.sp;
-    money = Number.isFinite(state.m) ? Math.max(0, Math.floor(state.m)) : 0;
+    if (Number.isFinite(state.m)) money = Math.max(0, Math.floor(state.m));
     playerNavy = fleetShips[0]?.navy ?? playerNavy;
-    const serverSelection = typeof state.sel === "string" ? state.sel : "";
-    if (fleetShips.some((ship) => ship.id === serverSelection && ship.status !== "delivery")) {
-      selectedShipId = serverSelection;
-    } else if (!fleetShips.some((ship) => ship.id === selectedShipId)) {
-      selectedShipId = fleetShips.find((ship) => ship.status !== "delivery")?.id ?? "";
+    if (state.sel === null || typeof state.sel === "string") {
+      const serverSelection = typeof state.sel === "string" ? state.sel : "";
+      if (fleetShips.some((ship) => ship.id === serverSelection && ship.status !== "delivery")) {
+        selectedShipId = serverSelection;
+      } else if (!fleetShips.some((ship) => ship.id === selectedShipId)) {
+        selectedShipId = fleetShips.find((ship) => ship.status !== "delivery")?.id ?? "";
+      }
     }
     for (const id of [...selectedShipIds]) {
       if (!fleetShips.some((ship) => ship.id === id && ship.status !== "delivery")) {
@@ -4866,8 +5029,13 @@ async function start(): Promise<void> {
       : [];
 
     windFrom = Number.isFinite(state.w) ? state.w : settings.weather.windFromDeg;
+    serverWorldMs = typeof state.sv === "number" && Number.isFinite(state.sv) ? state.sv : serverWorldMs;
     roomKind = validRoomKind(state.k) ? state.k : "normal";
     latestRoomKind = roomKind;
+    if (perfVisible && roomKind !== "normal" && !perfAutoOpened) {
+      perfAutoOpened = true;
+      testTools.hidden = false;
+    }
     bordersButton.hidden = roomKind === "normal";
     debugSection.hidden = roomKind === "normal";
     testToolsButton.hidden = roomKind === "normal";
@@ -5122,12 +5290,13 @@ async function start(): Promise<void> {
     safeLayer("surrender offer", renderSurrenderOffer);
     safeLayer("status screens", renderEndScreens);
 
-    lastSeen = Array.isArray(state.l) ? state.l : [];
+    if (Array.isArray(state.l)) lastSeen = state.l;
     drawLastSeen();
     refreshPortPanel();
     updateKnownPortsButton();
     updateDebugLine();
-    setStatus("Connected");
+    if (pendingOrders.size === 0) setStatus("Connected");
+    else updateOrderSendingStatus();
   }
 
   function connect(): void {
@@ -5964,6 +6133,9 @@ async function start(): Promise<void> {
     });
   }
 
+  if (perfVisible) {
+    setPerfVisible(true);
+  }
   testToolsButton.addEventListener("click", () => {
     menuPanel.hidden = true;
     menuButton.setAttribute("aria-expanded", "false");
@@ -5975,6 +6147,7 @@ async function start(): Promise<void> {
     refreshTestInvite();
   });
   testToolsClose.addEventListener("click", closeTestTools);
+  perfToggle.addEventListener("click", () => setPerfVisible(!perfVisible));
   testSpawn.addEventListener("click", () => {
     const classId = testEnemyClass.value;
     const navy = parseNavy(testEnemyNavy.value);
@@ -6227,6 +6400,13 @@ async function start(): Promise<void> {
     }
 
     const dt = Math.min(0.1, app.ticker.deltaMS / 1000);
+    const frameGap = lastFrameAt === 0 ? 0 : now - lastFrameAt;
+    lastFrameAt = now;
+    if (frameGap > 0) {
+      frameDurations.push({ at: now, ms: frameGap });
+      while (frameDurations.length > 0 && frameDurations[0]!.at < now - 5_000) frameDurations.shift();
+    }
+    flushPendingState();
     updateClockAndNight(now);
     const own = selectedShipView();
 
@@ -6302,6 +6482,22 @@ async function start(): Promise<void> {
     if (drawnText !== lastShipsDrawnText) {
       lastShipsDrawnText = drawnText;
       testShipsDrawn.textContent = drawnText;
+    }
+
+    if (socket?.readyState === WebSocket.OPEN) {
+      if (now - lastPingSentAt >= settings.network.pingIntervalSeconds * 1000) {
+        lastPingSentAt = now;
+        pingAt = Date.now();
+        socket.send(JSON.stringify({ t: "ping", at: pingAt }));
+      }
+      if (now - lastFocusSentAt >= settings.network.pingIntervalSeconds * 1000) {
+        lastFocusSentAt = now;
+        socket.send(JSON.stringify({ t: "focus", x: view.x, y: view.y }));
+      }
+    }
+    if (perfVisible && now - lastPerfRenderAt >= 500) {
+      lastPerfRenderAt = now;
+      updatePerfPanel(now);
     }
 
     safeLayer("discovered outline", () => refreshDiscoveredOutline(now));

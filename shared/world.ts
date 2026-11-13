@@ -83,6 +83,7 @@ import {
   smoothRoute,
 } from "./route.js";
 import type { DebugStats } from "./loadMetrics.js";
+import { SpatialGrid } from "./spatialGrid.js";
 import {
   ammunitionBroadsideCount,
   applyDriftingHullDamage,
@@ -307,6 +308,10 @@ export interface World {
   engagements: Map<string, Engagement>;
   /** Short, non-damaging combat events for visible players. */
   combatEvents: CombatEvent[];
+  /** Rebuilt once per tick for neighbour queries. */
+  spatial?: SpatialGrid<{ ownerId: string; ship: Ship; x: number; y: number }>;
+  /** Rebuilt with the grid so id lookups do not scan the whole world. */
+  shipIndex?: Map<string, { ownerId: string; ship: Ship }>;
   nextCombatEventId: number;
   /** Deterministic gunnery RNG for this room. */
   combatRandom: SeededRandom;
@@ -611,6 +616,10 @@ export interface FlagshipLostEvent {
 export interface StateMessage {
   /** "s" means world state. */
   t: "s";
+  /** Stream sequence, set by the room for full and delta messages. */
+  seq?: number;
+  /** True only for a full state that starts or restarts a stream. */
+  full?: boolean;
   tick: number;
   /** The receiving player's own id. */
   you: string;
@@ -647,6 +656,8 @@ export interface StateMessage {
   sp?: string;
   /** Test/dev provisions multiplier, shown by TEMP-DEBUG only. */
   h?: number;
+  /** Average server world-step time over the last five seconds, in ms. */
+  sv?: number;
   /** TEMP-DEBUG: dev-room load-test counters. */
   d?: DebugStats;
   /** 3D public flags. No crew, prisoner or fire-strength numbers. */
@@ -1471,6 +1482,8 @@ function isValidFleetOrder(order: unknown): order is FleetOrder {
 }
 
 function shipEntry(world: World, shipId: string): { ownerId: string; ship: Ship } | null {
+  const indexed = world.shipIndex?.get(shipId);
+  if (indexed) return indexed;
   for (const entry of allShips(world)) {
     if (entry.ship.id === shipId) return entry;
   }
@@ -2453,6 +2466,29 @@ export function setFleetFightingStyle(
 }
 
 /** Visible enemies with a live engagement, for the 10 Hz battle-zone send. */
+/** True when a visible engaged pair is within the focus radius of a point. */
+export function battleZoneNear(
+  world: World,
+  playerId: string,
+  point: { x: number; y: number } | null,
+  radiusKm: number,
+): boolean {
+  if (!point) return false;
+  const radiusSq = Math.max(0, radiusKm) ** 2;
+  for (const [shipId, engagement] of world.engagements) {
+    const own = shipEntry(world, shipId)?.ship;
+    const target = shipEntry(world, engagement.targetShipId)?.ship;
+    if (!own || !target) continue;
+    if (Math.hypot(own.x - target.x, own.y - target.y) > settings.combat.battleZoneKm) continue;
+    if (!ownerCanSeeShip(world, playerId, own) && !ownerCanSeeShip(world, playerId, target)) continue;
+    if (
+      (own.x - point.x) ** 2 + (own.y - point.y) ** 2 <= radiusSq ||
+      (target.x - point.x) ** 2 + (target.y - point.y) ** 2 <= radiusSq
+    ) return true;
+  }
+  return false;
+}
+
 export function battleZoneVisibleFor(world: World, playerId: string): boolean {
   const flagged = new Set<string>();
   for (const [shipId, engagement] of world.engagements) {
@@ -3600,7 +3636,10 @@ function resolveCombat(world: World): void {
         y: target.y - Math.cos(angle) * offset,
       });
       // 3D: a missed shot can strike the nearest friend behind the target.
-      const friendlyCandidates = allShips(world)
+      const nearby = world.spatial
+        ? world.spatial.query(target.x, target.y, settings.combat.friendlyFireRangeM / 1000 + 0.02)
+        : allShips(world).map(({ ownerId, ship }) => ({ ownerId, ship, x: ship.x, y: ship.y }));
+      const friendlyCandidates = nearby
         .filter(({ ship }) => ship.id !== own.id)
         .filter(({ ownerId, ship }) => {
           const friend = isFriendlyShip(world, plan.ownerId, own.navy, ownerId, ship);
@@ -6209,7 +6248,10 @@ function updateFires(world: World, dtGameSeconds: number): void {
   // Spread to any ship within 100 m, including friends. A burning target is skipped.
   for (const source of allShips(world)) {
     if (!source.ship.fire?.burning) continue;
-    for (const target of allShips(world)) {
+    const spreadTargets = world.spatial
+      ? world.spatial.query(source.ship.x, source.ship.y, settings.combat.fireSpreadRangeM / 1000 + 0.02)
+      : allShips(world).map(({ ownerId, ship }) => ({ ownerId, ship, x: ship.x, y: ship.y }));
+    for (const target of spreadTargets) {
       if (target.ship.id === source.ship.id || target.ship.fire?.burning) continue;
       const distanceM = Math.hypot(target.ship.x - source.ship.x, target.ship.y - source.ship.y) * 1000;
       const chance = fireSpreadChance({
@@ -6321,6 +6363,16 @@ function updateFlagshipDanger(world: World): void {
   }
 }
 
+function buildSpatialGrid(world: World): SpatialGrid<{ ownerId: string; ship: Ship; x: number; y: number }> {
+  const grid = new SpatialGrid<{ ownerId: string; ship: Ship; x: number; y: number }>(0.1);
+  world.shipIndex = new Map();
+  for (const { ownerId, ship } of allShips(world)) {
+    grid.insert({ ownerId, ship, x: ship.x, y: ship.y });
+    world.shipIndex.set(ship.id, { ownerId, ship });
+  }
+  return grid;
+}
+
 export function stepWorld(
   world: World,
   dtGameSeconds: number,
@@ -6353,6 +6405,7 @@ export function stepWorld(
 
   updateFleetCommands(world);
   updateShipCommands(world);
+  world.spatial = buildSpatialGrid(world);
   resolveCombat(world);
   updateAutoBoarding(world);
   updateBoarding(world, combatRealSeconds(world), windFromDeg);
@@ -6399,13 +6452,16 @@ export function visibleStateFor(
   playerId: string,
   blockLookup?: ReadonlyMap<string, ChartBlock>,
   maxBlocks: number = settings.fog.maxBlocksPerMessage,
+  includeFleet = true,
 ): StateMessage {
   const own = shipsForOwner(world, playerId);
   const ownIds = new Set(own.map((ship) => ship.id));
   const sightSq = settings.fog.sightRangeKm ** 2;
   const activeOwn = own.filter((ship) => !ship.deliveryPortId);
+  const ownGrid = new SpatialGrid<Ship>(settings.fog.sightRangeKm);
+  for (const ship of activeOwn) ownGrid.insert(ship);
   const isVisible = (ship: Ship): boolean =>
-    activeOwn.some((mine) => (ship.x - mine.x) ** 2 + (ship.y - mine.y) ** 2 <= sightSq);
+    ownGrid.query(ship.x, ship.y, settings.fog.sightRangeKm).length > 0;
 
   const chart = world.charts.get(playerId) ?? createChart(world.kind);
   world.charts.set(playerId, chart);
@@ -6523,7 +6579,7 @@ export function visibleStateFor(
 
   const owner = world.owners.get(playerId);
   const nowRealMs = combatRealSeconds(world) * 1000;
-  const fleet: OwnShipSnapshot[] = own.map((ship) => {
+  const fleet: OwnShipSnapshot[] = !includeFleet ? [] : own.map((ship) => {
     const spec = shipSpecFor(ship);
     const capacities = shipStoreCapacities(spec);
     const combatCapacities = damageCapacities(spec);
@@ -6703,11 +6759,27 @@ export function visibleStateFor(
     };
   });
 
-  const events = world.combatEvents.filter((event) => {
+  const visibleEvents = world.combatEvents.filter((event) => {
     if (event.id <= (chart.combatCursor ?? 0)) return false;
     return activeOwn.some((ship) =>
       (ship.x - event.x) ** 2 + (ship.y - event.y) ** 2 <= sightSq,
     );
+  });
+  // Fire is the noisiest effect. Keep the first two per ship in each second;
+  // the client only needs enough to read the battle, not every gun.
+  const fireSecond = Math.floor(nowRealMs / 1000);
+  const fireBudget = chart.fireBudget ?? (chart.fireBudget = new Map());
+  const events = visibleEvents.filter((event) => {
+    if (event.kind !== "fire") return true;
+    const key = event.shipId ?? `event-${event.id}`;
+    let entry = fireBudget.get(key);
+    if (!entry || entry.second !== fireSecond) {
+      entry = { second: fireSecond, count: 0 };
+      fireBudget.set(key, entry);
+    }
+    if (entry.count >= settings.combat.maxFireEffectsPerShipPerSecond) return false;
+    entry.count += 1;
+    return true;
   });
   const lastEventId = world.combatEvents[world.combatEvents.length - 1]?.id;
   if (lastEventId !== undefined) chart.combatCursor = lastEventId;
@@ -6748,7 +6820,7 @@ export function visibleStateFor(
     m: owner?.money ?? 0,
     sel: owner?.selectedShipId ?? null,
     fleet,
-    fleets: fleetSnapshotsFor(world, playerId),
+    fleets: includeFleet ? fleetSnapshotsFor(world, playerId) : [],
     groups: world.controlGroups.get(playerId) ?? {},
   };
   if (events.length > 0) state.events = events;
@@ -6780,6 +6852,10 @@ export function visibleStateFor(
   if (burningFlags.length > 0) state.burning = burningFlags;
   if (grappled.length > 0) state.grappled = grappled;
   if (sinkingFlags.length > 0) state.sinking = sinkingFlags;
+  if (!includeFleet) {
+    delete (state as Partial<StateMessage>).fleet;
+    delete (state as Partial<StateMessage>).fleets;
+  }
   return state;
 }
 

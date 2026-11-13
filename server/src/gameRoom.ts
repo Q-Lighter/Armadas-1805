@@ -34,7 +34,6 @@ import {
   applyOrder,
   applyPortOrder,
   applyShipSpecialOrder,
-  battleZoneVisibleFor,
   createPlayerFleet,
   detachPlayerShip,
   buyGoods,
@@ -63,9 +62,13 @@ import {
   transferGoods,
   undock,
   visibleStateFor,
+  battleZoneNear,
+  shipsForOwner,
   type NoticeMessage,
+  type StateMessage,
   type World,
 } from "@naval/shared/world";
+import { buildStateDelta, encodeStateDelta } from "@naval/shared/state-delta";
 import { RoomLoop } from "@naval/shared/room-loop";
 import { GhostCleanup, PlayerSessions } from "@naval/shared/player-sessions";
 import { BlockSendBudget } from "@naval/shared/block-batch";
@@ -84,6 +87,14 @@ export class GameRoom {
   private readonly sockets = new PlayerSessions<WebSocket>();
   private ticks = 0;
   private readonly metrics = new LoadMetrics();
+  private readonly streams = new Map<string, {
+    seq: number;
+    base: StateMessage | null;
+    fleetAt: number;
+    fullAt: number;
+    forceFull: boolean;
+  }>();
+  private readonly focus = new Map<string, { x: number; y: number }>();
   private readonly blockBudget = new BlockSendBudget(
     settings.fog.blockBatchPerSecond,
     settings.fog.maxBlocksPerMessage,
@@ -338,10 +349,11 @@ export class GameRoom {
     // The newest connection owns this id. Adding it first means the old
     // socket's close event cannot remove the new one.
     this.sockets.add(playerId, server);
+    this.streams.delete(playerId);
 
     if (!this.loop.running) this.metrics.reset(Date.now());
     this.loop.start();
-    this.sendState(playerId, server);
+    this.sendState(playerId, server, true);
 
     return new Response(null, { status: 101, webSocket: client });
   }
@@ -356,7 +368,9 @@ export class GameRoom {
       Math.round(settings.server.tickHz / settings.server.broadcastHz),
     );
 
+    const stepStarted = performance.now();
     stepWorld(this.world, gameSecondsPerTick);
+    this.metrics.noteWorldStep(performance.now() - stepStarted, now);
     this.ticks += 1;
     const regular = this.ticks % broadcastEvery === 0;
     const battleEvery = Math.max(
@@ -372,6 +386,7 @@ export class GameRoom {
   /** Drop one socket and, in test/dev rooms, schedule its ship's removal. */
   private dropSocket(playerId: string, socket: WebSocket): void {
     if (!this.sockets.remove(playerId, socket)) return;
+    this.streams.delete(playerId);
     this.ghosts.disconnected(playerId);
     this.stopWhenEmpty();
   }
@@ -381,10 +396,42 @@ export class GameRoom {
     if (this.sockets.size === 0) this.loop.stop();
   }
 
+  private bufferedBytes(socket: WebSocket): number {
+    const value = (socket as unknown as { bufferedAmount?: unknown }).bufferedAmount;
+    return typeof value === "number" && Number.isFinite(value) ? Math.max(0, value) : 0;
+  }
+
+  private battleFocus(playerId: string): { x: number; y: number } | null {
+    const focused = this.focus.get(playerId);
+    if (focused) return focused;
+    const own = shipsForOwner(this.world, playerId);
+    const selectedId = this.world.owners.get(playerId)?.selectedShipId;
+    const selected = selectedId ? own.find((ship) => ship.id === selectedId) : undefined;
+    const fallback = selected ?? own[0];
+    return fallback ? { x: fallback.x, y: fallback.y } : null;
+  }
+
   /** Send the world to every connected player, through visibleStateFor only. */
   private broadcast(regular: boolean, battleNow: boolean): void {
     for (const [playerId, socket] of this.sockets.entries()) {
-      if (regular || (battleNow && battleZoneVisibleFor(this.world, playerId))) {
+      const stream = this.streams.get(playerId);
+      // A client that was skipped for backpressure gets one fresh state as
+      // soon as its send buffer drains, without replaying stale snapshots.
+      if (stream?.forceFull) {
+        if (this.bufferedBytes(socket) <= settings.network.slowClientBufferBytes) {
+          this.sendState(playerId, socket);
+        }
+        continue;
+      }
+      if (
+        regular ||
+        (battleNow && battleZoneNear(
+          this.world,
+          playerId,
+          this.battleFocus(playerId),
+          settings.network.battleZoneRadiusKm,
+        ))
+      ) {
         this.sendState(playerId, socket);
       }
     }
@@ -404,11 +451,25 @@ export class GameRoom {
     }
   }
 
-  private sendState(playerId: string, socket: WebSocket): void {
+  private sendState(playerId: string, socket: WebSocket, forceFull = false): void {
     try {
       const now = Date.now();
+      let stream = this.streams.get(playerId);
+      if (!stream) {
+        stream = { seq: 0, base: null, fleetAt: 0, fullAt: 0, forceFull: true };
+        this.streams.set(playerId, stream);
+      }
+      if (!forceFull && this.bufferedBytes(socket) > settings.network.slowClientBufferBytes) {
+        stream.forceFull = true;
+        return;
+      }
+      if (now - stream.fullAt > settings.network.fullStateEverySeconds * 1000) {
+        stream.forceFull = true;
+      }
       const allowed = this.blockBudget.take(now);
-      const state = visibleStateFor(this.world, playerId, CHART_BLOCKS, allowed);
+      const includeFleet = forceFull || stream.forceFull || stream.base === null ||
+        now - stream.fleetAt >= settings.network.fleetDetailSeconds * 1000;
+      const state = visibleStateFor(this.world, playerId, CHART_BLOCKS, allowed, includeFleet);
       this.blockBudget.note(state.chart.blocks.length, now);
       // TEMP-DEBUG: dev rooms carry the live load-test counters.
       if (this.world.kind === "dev") {
@@ -418,7 +479,23 @@ export class GameRoom {
           now,
         );
       }
-      socket.send(JSON.stringify(state));
+      state.sv = this.metrics.worldStepAverage(now);
+      stream.seq += 1;
+      state.seq = stream.seq;
+      if (forceFull || stream.forceFull || stream.base === null) {
+        state.full = true;
+        socket.send(JSON.stringify(state));
+        stream.base = state;
+        stream.fullAt = now;
+        stream.fleetAt = now;
+        stream.forceFull = false;
+      } else {
+        const delta = buildStateDelta(stream.base, state, stream.seq, includeFleet);
+        const binary = encodeStateDelta(delta);
+        socket.send(binary);
+        stream.base = state;
+      }
+      if (includeFleet) stream.fleetAt = now;
 
       // Notices are short events, not world state, so they travel separately.
       const notice = takeNotice(this.world, playerId);
@@ -448,6 +525,8 @@ export class GameRoom {
 
     const order = message as {
       t?: unknown;
+      id?: unknown;
+      at?: unknown;
       x?: unknown;
       y?: unknown;
       port?: unknown;
@@ -476,6 +555,29 @@ export class GameRoom {
       confirm?: unknown;
       to?: unknown;
     };
+
+    if (order.t === "ping") {
+      const at = typeof order.at === "number" ? order.at : Date.now();
+      this.sockets.get(playerId)?.send(JSON.stringify({ t: "pong", at }));
+      return;
+    }
+    if (order.t === "focus" && typeof order.x === "number" && typeof order.y === "number") {
+      if (Number.isFinite(order.x) && Number.isFinite(order.y)) {
+        this.focus.set(playerId, { x: order.x, y: order.y });
+      }
+      const socket = this.sockets.get(playerId);
+      if (socket) this.sendState(playerId, socket, false);
+      return;
+    }
+    if (order.t === "resync") {
+      const socket = this.sockets.get(playerId);
+      if (socket) {
+        const stream = this.streams.get(playerId);
+        if (stream) stream.forceFull = true;
+        this.sendState(playerId, socket, true);
+      }
+      return;
+    }
 
     if (this.world.gameOver && order.t !== "resetRoom") return;
     if (this.world.playerRecords.get(playerId)?.eliminated && order.t !== "resetRoom") return;
@@ -546,6 +648,7 @@ export class GameRoom {
     } else if (order.t === "resetRoom" && this.world.kind !== "normal") {
       this.world = resetTestRoom(this.world);
       this.ghosts.clear();
+      for (const stream of this.streams.values()) stream.forceFull = true;
     } else if (order.t === "resign") {
       const to = typeof order.to === "string" ? order.to : null;
       resignPlayer(this.world, playerId, to);
@@ -591,6 +694,10 @@ export class GameRoom {
       if (typeof order.count === "number") setTestEnemyCrew(this.world, order.count);
     } else if (order.t === "setFire" && this.world.kind !== "normal") {
       setTestFire(this.world, playerId, order.ship);
+    }
+
+    if (typeof order.id === "string" && order.id.length <= 80) {
+      this.sockets.get(playerId)?.send(JSON.stringify({ t: "ack", id: order.id }));
     }
   }
 }

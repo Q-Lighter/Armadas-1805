@@ -3,6 +3,7 @@
 // the unchanged 5 Hz rate. Not Cloudflare CPU time.
 
 import { addBots } from "@naval/shared/bots";
+import { buildStateDelta, encodeStateDelta } from "@naval/shared/state-delta";
 import { createShip } from "@naval/shared/sailing";
 import { shipTypeFor } from "@naval/shared/ships";
 import { settings } from "@naval/shared/settings";
@@ -94,6 +95,28 @@ for (let tick = 0; tick < STEPS; tick += 1) {
     if (tick % 2 === 0) bytes5 += JSON.stringify(visibleStateFor(world, id)).length;
   }
 }
+const deltaStreams = new Map();
+for (const id of ["one", "two"]) {
+  const full = visibleStateFor(world, id);
+  full.seq = 1;
+  deltaStreams.set(id, { seq: 1, base: full });
+}
+let deltaBytes10 = 0;
+let deltaBytes5 = 0;
+for (let tick = 0; tick < STEPS; tick += 1) {
+  stepWorld(world, TICK);
+  for (const id of ["one", "two"]) {
+    const stream = deltaStreams.get(id);
+    const includeFleet = tick % Math.max(1, Math.round(settings.network.fleetDetailSeconds * settings.server.tickHz)) === 0;
+    const current = visibleStateFor(world, id, undefined, undefined, includeFleet);
+    stream.seq += 1;
+    current.seq = stream.seq;
+    const bytes = encodeStateDelta(buildStateDelta(stream.base, current, stream.seq, includeFleet)).byteLength;
+    deltaBytes10 += bytes;
+    if (tick % 2 === 0) deltaBytes5 += bytes;
+    stream.base = current;
+  }
+}
 const simulatedSeconds = STEPS / settings.server.tickHz;
 console.log({
   initialShips: 102,
@@ -106,5 +129,8 @@ console.log({
   bytesPerPlayerPerSecond10Hz: Math.round(bytes10 / 2 / simulatedSeconds),
   bytesPerPlayerPerSecond5Hz: Math.round(bytes5 / 2 / simulatedSeconds),
   dataRatio10To5: Number((bytes10 / bytes5).toFixed(2)),
+  deltaBytesPerPlayerPerSecond10Hz: Math.round(deltaBytes10 / 2 / simulatedSeconds),
+  deltaBytesPerPlayerPerSecond5Hz: Math.round(deltaBytes5 / 2 / simulatedSeconds),
+  deltaMessagesPerPlayerPerSecond: Math.round(STEPS / simulatedSeconds),
   combatEvents: world.combatEvents.length,
 });

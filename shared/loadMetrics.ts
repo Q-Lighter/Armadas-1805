@@ -5,6 +5,7 @@
 // a function. Byte counts come from the full state a fake player would receive.
 
 export const DEBUG_WINDOW_MS = 10_000;
+const WORLD_STEP_WINDOW_MS = 5_000;
 
 /**
  * [total ships, bot ships, world updates per second, average gap ms,
@@ -24,15 +25,22 @@ interface ByteSample {
   bytes: number;
 }
 
+interface WorldStepSample {
+  at: number;
+  ms: number;
+}
+
 export class LoadMetrics {
   private gaps: Gap[] = [];
   private bytes: ByteSample[] = [];
+  private worldSteps: WorldStepSample[] = [];
   private lastTickAt: number | null = null;
   private startedAt = 0;
 
   reset(at = 0): void {
     this.gaps = [];
     this.bytes = [];
+    this.worldSteps = [];
     this.lastTickAt = null;
     this.startedAt = at;
   }
@@ -51,6 +59,21 @@ export class LoadMetrics {
   notePlayerUpdate(owner: string, bytes: number, at: number): void {
     this.bytes.push({ at, owner, bytes });
     this.trim(at);
+  }
+
+  /** Record the measured shared-world step duration. */
+  noteWorldStep(ms: number, at: number): void {
+    this.worldSteps.push({ at, ms: Math.max(0, ms) });
+    this.trim(at);
+  }
+
+  /** Average world-step time over the last five seconds. */
+  worldStepAverage(at: number): number {
+    this.trim(at);
+    const samples = this.worldSteps.filter((sample) => sample.at >= at - WORLD_STEP_WINDOW_MS);
+    if (samples.length === 0) return 0;
+    const total = samples.reduce((sum, sample) => sum + sample.ms, 0);
+    return Math.round((total / samples.length) * 100) / 100;
   }
 
   snapshot(ships: number, bots: number, at: number): DebugStats {
@@ -106,5 +129,6 @@ export class LoadMetrics {
     const cutoff = at - DEBUG_WINDOW_MS;
     while (this.gaps.length > 0 && this.gaps[0]!.at < cutoff) this.gaps.shift();
     while (this.bytes.length > 0 && this.bytes[0]!.at < cutoff) this.bytes.shift();
+    while (this.worldSteps.length > 0 && this.worldSteps[0]!.at < cutoff) this.worldSteps.shift();
   }
 }

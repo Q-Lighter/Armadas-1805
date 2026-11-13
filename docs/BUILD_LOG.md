@@ -2479,3 +2479,43 @@ add safety nets and visible test helpers.
 - No browser or headless Chromium is available in this environment, so the
   map was not visually inspected; the draw plan and source attachment were
   checked instead.
+
+## Session 3E-perf-a: performance panel and network
+
+**Date:** 2026-11-13
+**Branch:** main
+
+### What was built
+
+- Test/dev performance readout in the existing Test tools panel, also opened by
+  `&perf=1`: FPS, average/worst frame time over 5 s, objects, live effects,
+  DOM updates/s, ping, inbound bytes/messages/s, snapshot age, queued messages,
+  server world-step average and render resolution/quality.
+- A 10 v 10 benchmark beside the 100-ship one, both measuring world-step time,
+  full-state bytes, delta bytes, message rate and combat events.
+- State streaming now sends one full JSON state, then compact binary deltas
+  from `visibleStateFor`. Positions are whole metres relative to a per-player
+  origin, headings 0.1 degree and speeds 0.1 knot; fleet details refresh twice
+  a second instead of being rebuilt on every tick.
+- Slow clients are skipped once their send buffer passes the 64 KB draft limit
+  and receive one fresh full state when it drains. The client coalesces
+  snapshots, applies only the newest and merges all events; orders carry an id
+  and stay "Sending..." until the server acknowledges them, with a 2 s ping.
+- The battle-zone rate keeps 10 updates a second near the selected ship or
+  camera centre and 5 a second elsewhere. Fire events are capped at two per
+  ship per second upstream in `visibleStateFor`.
+- Neighbour scans use a spatial grid for visibility, fire spread and friendly
+  fire, plus an id index for ship lookups. The per-ship fleet payload is only
+  rebuilt on the 0.5 s detail ticks.
+
+### Checks
+
+- `npm test`: 388 passing, 0 failing.
+- `npm run build`: passed.
+- 10 v 10, before: 0.40 ms/world step, 615,728 bytes/player/s, 10 messages/s.
+  After: 0.24 ms/world step, 53,635 delta bytes/player/s, 10 messages/s.
+- 100 ships, before: 1.84 ms/world step, 489,236 bytes/player/s at 10 Hz
+  (238,591 at 5 Hz). After: 1.25 ms/world step, 45,160 delta bytes/player/s
+  at 10 Hz (22,855 at 5 Hz).
+- No browser or headless Chromium is available in this environment, so the
+  panel was checked structurally (DOM ids, build and tests), not visually.

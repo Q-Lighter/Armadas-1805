@@ -300,6 +300,58 @@ export function smoothRoute(
   return out;
 }
 
+/**
+ * Pure-pursuit aim point: the point a look-ahead distance along the path from
+ * the nearest place on the path. Points behind the ship are skipped, so the
+ * helm follows the curve rather than aiming at a corner vertex.
+ */
+export function routeLookAheadPoint(
+  points: readonly MapPoint[],
+  position: MapPoint,
+  lookAheadKm: number,
+): MapPoint | null {
+  if (points.length === 0) return null;
+  if (points.length === 1) return { ...points[0]! };
+
+  let total = 0;
+  const lengths: number[] = [0];
+  for (let index = 1; index < points.length; index += 1) {
+    total += distance(points[index - 1]!, points[index]!);
+    lengths.push(total);
+  }
+  if (total < 1e-9) return { ...points[points.length - 1]! };
+
+  // Find the nearest point on the polyline, including segment interiors.
+  let bestDistance = Number.POSITIVE_INFINITY;
+  let bestAt = 0;
+  for (let index = 0; index + 1 < points.length; index += 1) {
+    const from = points[index]!;
+    const to = points[index + 1]!;
+    const dx = to.x - from.x;
+    const dy = to.y - from.y;
+    const segment = dx * dx + dy * dy;
+    const t = segment > 1e-12
+      ? Math.max(0, Math.min(1, ((position.x - from.x) * dx + (position.y - from.y) * dy) / segment))
+      : 0;
+    const x = from.x + dx * t;
+    const y = from.y + dy * t;
+    const d = Math.hypot(position.x - x, position.y - y);
+    if (d < bestDistance) {
+      bestDistance = d;
+      bestAt = lengths[index]! + Math.sqrt(segment) * t;
+    }
+  }
+
+  const want = Math.min(total, bestAt + Math.max(0, lookAheadKm));
+  let index = 0;
+  while (index + 1 < points.length && lengths[index + 1]! < want) index += 1;
+  const from = points[index]!;
+  const to = points[index + 1] ?? from;
+  const segment = lengths[index + 1]! - lengths[index]!;
+  const t = segment > 1e-9 ? Math.max(0, Math.min(1, (want - lengths[index]!) / segment)) : 0;
+  return { x: from.x + (to.x - from.x) * t, y: from.y + (to.y - from.y) * t };
+}
+
 /** Resample a smooth route at a fixed spacing, with a hard point ceiling. */
 export function sampleRouteCurve(
   points: readonly MapPoint[],

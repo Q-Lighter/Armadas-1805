@@ -78,10 +78,12 @@ import {
   ROUTE_NEAREST_SEA,
   remainingRouteCurve,
   routeSegmentClear,
+  routeLookAheadPoint,
   routeSegmentHasClearance,
   sampleRouteCurve,
   smoothRoute,
 } from "./route.js";
+import { predictRoutePath } from "./prediction.js";
 import type { DebugStats } from "./loadMetrics.js";
 import { SpatialGrid } from "./spatialGrid.js";
 import {
@@ -268,6 +270,13 @@ export interface World {
   shipCommands: Map<string, ShipCommand>;
   /** Recent leader paths used by line ahead. */
   fleetPaths: Map<string, Array<{ x: number; y: number }>>;
+  /** Cached ghost paths for the owner's chart, by ship id. */
+  routePredictions: Map<string, {
+    points: Array<{ x: number; y: number }>;
+    routeTick: number;
+    windFromDeg: number;
+    computedGameMs: number;
+  }>;
   /** Test/dev helper spawns only once per player id. */
   testFleetsSpawned: Set<string>;
   /** Next internal fleet id. */
@@ -449,6 +458,8 @@ export interface OwnShipSnapshot {
   starving: boolean;
   /** The selected ship's planned route, own ships only. */
   route?: Array<[number, number]> | null;
+  /** Real-steering prediction for the planned route, own ships only. */
+  predictedPath?: Array<[number, number]> | null;
   /** Fleet membership and direct-order route geometry, own ships only. */
   fleetId?: string | null;
   detached?: boolean;
@@ -768,6 +779,7 @@ export function createWorld(roomCode = "main", options: WorldOptions = {}): Worl
     fleetCommands: new Map(),
     shipCommands: new Map(),
     fleetPaths: new Map(),
+    routePredictions: new Map(),
     testFleetsSpawned: new Set(),
     nextFleetId: 1,
     owners: new Map(),
@@ -3291,26 +3303,54 @@ function takeReplanBudget(world: World, playerId: string): boolean {
   return true;
 }
 
-/** Put the current planned waypoint in front of the ship. */
+/** Aim the helm at a pure-pursuit point on the predicted route curve. */
 function startRouteLeg(ship: Ship): "sailing" | "arrived" | "blocked" {
   const route = ship.route;
   if (!route) return "blocked";
-  while (route.index < route.waypoints.length) {
-    const waypoint = route.waypoints[route.index]!;
-    if (distanceKm(ship, waypoint) <= settings.sailing.arrivalRadiusKm) {
-      route.index += 1;
-      continue;
-    }
-    if (sailTo(ship, waypoint.x, waypoint.y)) return "sailing";
-    route.index += 1;
+  if (distanceKm(ship, route.goal) <= settings.sailing.arrivalRadiusKm) {
+    const partial = route.partial;
+    ship.route = null;
+    ship.order = null;
+    // Reaching the last point of a partial plan is not arriving at the
+    // destination; say so and leave the ship available for a new order.
+    ship.arrived = !partial;
+    return "arrived";
   }
-
-  const partial = route.partial;
-  ship.route = null;
-  // Reaching the last waypoint of a partial plan is not arriving at the
-  // destination; say so and leave the ship available for a new order.
-  ship.arrived = !partial;
-  return "arrived";
+  const path = route.curve && route.curve.length > 1 ? route.curve : route.waypoints;
+  const aim = routeLookAheadPoint(path, ship, settings.route.steerLookAheadKm);
+  if (!aim) {
+    const partial = route.partial;
+    ship.route = null;
+    ship.order = null;
+    ship.helmTarget = undefined;
+    ship.arrived = !partial;
+    return "arrived";
+  }
+  if (distanceKm(ship, aim) < settings.sailing.minOrderDistanceKm) {
+    // The look-ahead landed almost on the ship at the end of the path.
+    const partial = route.partial;
+    ship.route = null;
+    ship.order = null;
+    ship.helmTarget = undefined;
+    ship.arrived = !partial;
+    return "arrived";
+  }
+  // Keep the corridor line from the route order. A normal sailTo would
+  // recentre it at every look-ahead point and turn one beat into a series of
+  // tiny tacks. If the previous look-ahead arrival cleared the line, rebuild
+  // it from the current position to the route goal.
+  ship.tackLine ??= {
+    startX: ship.x,
+    startY: ship.y,
+    targetX: route.goal.x,
+    targetY: route.goal.y,
+  };
+  ship.helmTarget = { type: "sailTo", x: aim.x, y: aim.y };
+  // Keep the literal goal in the order so arrival, queued orders and fleet
+  // checks see the real destination; pure pursuit lives in helmTarget.
+  ship.order = { type: "sailTo", x: route.goal.x, y: route.goal.y };
+  ship.arrived = false;
+  return "sailing";
 }
 
 /** Plan and install a route. Returns false only when there is no waypoint. */
@@ -3373,6 +3413,14 @@ function installRoute(
   };
   ship.route = route;
   if (plan.message) pushNotice(world, playerId, plan.message);
+  // The corridor for a planned route follows its final goal, not the first
+  // look-ahead point. The pure-pursuit helm can then use one stable line.
+  ship.tackLine = {
+    startX: ship.x,
+    startY: ship.y,
+    targetX: goal.x,
+    targetY: goal.y,
+  };
   return startRouteLeg(ship) !== "blocked";
 }
 
@@ -4767,7 +4815,14 @@ function haltAt(
   // A short seaward order may simply need a few ticks to turn away from the
   // shore. Keep that order alive; an order whose straight path crosses land,
   // or that goes past the chart, still ends at the coast.
-  if (!orderHasClearWaterPath(ship)) ship.order = null;
+  if (ship.route) {
+    // A routed ship that hits the coast stops at the coast. Re-planning the
+    // same look-ahead point every tick would otherwise leave it pinned there.
+    ship.order = null;
+    ship.route = null;
+  } else if (!orderHasClearWaterPath(ship)) {
+    ship.order = null;
+  }
   // The held escape heading may itself have run into a headland. Pick a fresh
   // one at the new safe position next tick.
   ship.coastEscapeHeadingRad = null;
@@ -4962,16 +5017,9 @@ function stepOwnerShip(
   }
 
   if (ship.route) {
-    // A waypoint reached last tick advances the route. If the order vanished
-    // well short of that waypoint, the coast stopped the ship: re-plan.
-    if (!ship.order) {
-      const current = ship.route.waypoints[ship.route.index];
-      if (current && distanceKm(ship, current) > settings.sailing.arrivalRadiusKm + 0.5) {
-        replanRoute(world, ownerId, ship);
-      } else {
-        startRouteLeg(ship);
-      }
-    }
+    // The helm follows a pure-pursuit point, not the next waypoint vertex.
+    // If the order vanished, either finish or take the next point.
+    if (!ship.order) startRouteLeg(ship);
 
     const activeRoute = ship.route;
     if (activeRoute) {
@@ -5083,19 +5131,9 @@ function stepOwnerShip(
   );
   resolveMovement(world, ownerId, ship, fromX, fromY);
 
-  // stepShip clears the order on reaching a waypoint. Continue the route in
-  // the same tick so the ship never pauses between legs, and re-plan at once
-  // if the coast stopped it well short of the waypoint.
-  if (ship.route && !ship.order) {
-    const route = ship.route;
-    const current = route.waypoints[route.index];
-    if (current && distanceKm(ship, current) <= settings.sailing.arrivalRadiusKm + 0.5) {
-      route.index += 1;
-      startRouteLeg(ship);
-    } else if (current) {
-      replanRoute(world, ownerId, ship);
-    }
-  }
+  // stepShip clears the order on reaching a look-ahead point. Continue the
+  // route in the same tick so the ship never pauses between curves.
+  if (ship.route && !ship.order) startRouteLeg(ship);
 
   finishPortOrder(world, ownerId, ship);
 }
@@ -6674,6 +6712,7 @@ export function stepWorld(
   updateFlagshipDanger(world);
   updateSinkingShips(world);
   recordFleetPaths(world);
+  refreshPredictedRoutes(world, windFromDeg);
   refreshBotOrders(world);
   world.tick += 1;
   // Integer milliseconds avoid a slowly drifting clock. A tick always adds the
@@ -6689,6 +6728,44 @@ export function stepWorld(
   deliverReadyShips(world);
   updateFog(world);
   tryWaitingShips(world);
+}
+
+/** Refresh at most one ghost route per tick, selected ships first. */
+function refreshPredictedRoutes(world: World, windFromDeg: number): void {
+  if (world.gameOver) return;
+  const candidates: Array<{ playerId: string; ship: Ship; selected: boolean }> = [];
+  for (const [playerId, fleet] of world.fleets) {
+    const selectedId = world.owners.get(playerId)?.selectedShipId;
+    for (const ship of fleet) {
+      if (!ship.route || ship.dockedPortId || ship.deliveryPortId) continue;
+      candidates.push({ playerId, ship, selected: ship.id === selectedId });
+    }
+  }
+  candidates.sort((a, b) => Number(b.selected) - Number(a.selected));
+  for (const candidate of candidates) {
+    const { ship } = candidate;
+    const route = ship.route;
+    if (!route) continue;
+    const cached = world.routePredictions.get(ship.id);
+    const windChanged = !cached ||
+      Math.abs(((windFromDeg - cached.windFromDeg + 540) % 360) - 180) >
+        settings.route.predictionWindChangeDeg;
+    const stale = !cached ||
+      cached.routeTick !== route.plannedTick ||
+      (world.gameMs - cached.computedGameMs) / 1000 >= settings.route.predictionRefreshGameSeconds ||
+      windChanged;
+    if (!stale) continue;
+    // The selected ship is first in the sorted list. One prediction per tick
+    // keeps the ghost job inside the two-millisecond world budget.
+    const predicted = predictRoutePath(ship, route, windFromDeg);
+    world.routePredictions.set(ship.id, {
+      points: predicted.points,
+      routeTick: route.plannedTick,
+      windFromDeg,
+      computedGameMs: world.gameMs,
+    });
+    return;
+  }
 }
 
 /** Normalise a heading in radians to whole compass degrees. */
@@ -6966,6 +7043,10 @@ export function visibleStateFor(
             Number(point.y.toFixed(2)),
           ])
         : null,
+      predictedPath: world.routePredictions.get(ship.id)?.points.map((point) => [
+        Number(point.x.toFixed(2)),
+        Number(point.y.toFixed(2)),
+      ]) ?? null,
       fleetId: ship.fleetId,
       detached: ship.detached,
       stance: ship.stance,

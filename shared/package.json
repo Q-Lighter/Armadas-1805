@@ -34,6 +34,10 @@
       "types": "./dist/route.d.ts",
       "default": "./dist/route.js"
     },
+    "./prediction": {
+      "types": "./dist/prediction.d.ts",
+      "default": "./dist/prediction.js"
+    },
     "./fog": {
       "types": "./dist/fog.d.ts",
       "default": "./dist/fog.js"

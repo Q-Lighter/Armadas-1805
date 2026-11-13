@@ -22,6 +22,7 @@ import {
   createShipDamage,
   shipPerformance,
   type ShipDamage,
+  type ShipPerformance,
 } from "./combat.js";
 
 /** One knot is 1.852 km/h. A definition, not a tuning value. */
@@ -83,6 +84,8 @@ export interface Ship {
   speedKnots: number;
   /** The current order, or null when the ship is holding position. */
   order: SailToOrder | null;
+  /** Look-ahead point used to steer a planned route; order keeps the goal. */
+  helmTarget?: SailToOrder;
   /** Combat intention. */
   stance: Stance;
   /** Stand and fire (default) or match the target alongside. */
@@ -107,8 +110,7 @@ export interface Ship {
   /** Game seconds left in the fast tack turn. */
   tackManoeuvreSeconds?: number;
   /** Side of the corridor we are crossing after an edge tack. */
-  tackHoldSign?: 1 | -1;
-  /** A held escape heading while turning away from a nearby coast. */
+  tackHoldSign?: 1 | -1;  /** A held escape heading while turning away from a nearby coast. */
   coastEscapeHeadingRad?: number | null;
   /** True once the last order was completed. */
   arrived: boolean;
@@ -447,8 +449,14 @@ function corridorHeadingRad(
 ): number {
   const windRad = windFromDeg * DEG;
   const closest = spec.closestAngleDeg * DEG;
-  const dx = order.x - ship.x;
-  const dy = order.y - ship.y;
+  const line = ship.tackLine;
+  // A route's corridor is measured to its final goal, not to the current
+  // look-ahead point. Otherwise a 6 km look-ahead shrinks the corridor to its
+  // 0.5 km floor and the ship tacks every kilometre.
+  const goalX = line?.targetX ?? order.x;
+  const goalY = line?.targetY ?? order.y;
+  const dx = goalX - ship.x;
+  const dy = goalY - ship.y;
   const remainingKm = Math.max(1e-6, Math.hypot(dx, dy));
   const bearingRad = Math.atan2(dx, -dy);
 
@@ -464,13 +472,14 @@ function corridorHeadingRad(
     ) {
       return bearingRad;
     }
-    const bestSide = preferredTackSide ?? bestTackSide(spec, bearingRad, windFromDeg);
+    // Keep the tack already made. Switching to the mathematically best side
+    // just before arrival adds a turn without fetching the target any sooner.
+    const bestSide = preferredTackSide ?? ship.tackSide;
     ship.tackSide = bestSide;
     ship.tackHoldSign = undefined;
     return windRad + bestSide * closest;
   }
 
-  const line = ship.tackLine;
   if (!line) return bearingRad;
   const lineLength = Math.hypot(line.targetX - line.startX, line.targetY - line.startY);
   if (lineLength < 1e-6) return bearingRad;
@@ -562,12 +571,13 @@ export function stepShip(
   arrivalRadiusKm: number = settings.sailing.arrivalRadiusKm,
   finalApproachKm: number = settings.sailing.finalApproachKm,
   legacyTack: boolean = false,
+  precomputed?: { spec: ShipSpec; performance: ShipPerformance },
 ): void {
   if (!(dtGameSeconds > 0) || !Number.isFinite(dtGameSeconds)) return;
 
-  const spec = shipSpecFor(ship);
-  const order = ship.order;
-  const performance = shipPerformance(spec, ship.damage, windFromDeg);
+  const spec = precomputed?.spec ?? shipSpecFor(ship);
+  const order = ship.route ? (ship.helmTarget ?? ship.order) : ship.order;
+  const performance = precomputed?.performance ?? shipPerformance(spec, ship.damage, windFromDeg);
   ship.tackCooldownSeconds = Math.max(0, (ship.tackCooldownSeconds ?? 0) - dtGameSeconds);
   ship.tackManoeuvreSeconds = Math.max(0, (ship.tackManoeuvreSeconds ?? 0) - dtGameSeconds);
 
@@ -629,8 +639,7 @@ export function stepShip(
     (ship.tackManoeuvreSeconds ?? 0) > 0
       ? settings.sailing.tackTurnDegPerGameSecond * dtGameSeconds
       : 0,
-  );
-  const turnDeg = Math.max(
+  );  const turnDeg = Math.max(
     -maxTurnDeg,
     Math.min(maxTurnDeg, shortestTurnDegrees(ship.headingRad, wantedRad)),
   );

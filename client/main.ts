@@ -62,7 +62,7 @@ import { buildBlockCommands, findChartSuspects } from "@naval/shared/chart-paint
 import { isLandAt } from "@naval/shared/land";
 import { cameraScale, screenToWorld, worldToScreen } from "@naval/shared/camera";
 import { buildDiscoveredOutline, type OutlineRing } from "@naval/shared/discovered-outline";
-import { dotsAlongPath } from "@naval/shared/route-ink";
+import { catmullRomPath, dotsAlongPath } from "@naval/shared/route-ink";
 import { readTapToSail, resolveTap, writeTapToSail } from "@naval/shared/tap-to-sail";
 import { fogDebugLine, type FogDebugInfo } from "@naval/shared/fog-view";
 import { GRAPHICS_RESET_NOTICE, GraphicsRecovery } from "@naval/shared/graphics-safety";
@@ -508,6 +508,20 @@ function parseOwnShip(raw: unknown): OwnShipSnapshot | null {
         points.push([px, py]);
       }
       return points.length > 0 && points.length <= settings.route.maxWaypoints
+        ? points
+        : null;
+    })(),
+    predictedPath: (() => {
+      if (!Array.isArray(source.predictedPath)) return null;
+      const points: Array<[number, number]> = [];
+      for (const rawPoint of source.predictedPath) {
+        if (!Array.isArray(rawPoint) || rawPoint.length !== 2) return null;
+        const px = finiteNumber(rawPoint[0]);
+        const py = finiteNumber(rawPoint[1]);
+        if (px === null || py === null) return null;
+        points.push([px, py]);
+      }
+      return points.length > 0 && points.length <= settings.route.predictionMaxPoints
         ? points
         : null;
     })(),
@@ -2154,12 +2168,20 @@ async function start(): Promise<void> {
   }
 
   /** Dotted route ink for every selected ship, on either screen. */
-  function drawDotted(points: Array<[number, number]>, colour = INK_COLOR): number {
+  function drawDotted(
+    points: Array<[number, number]>,
+    colour = INK_COLOR,
+    smooth = false,
+  ): number {
     if (points.length < 2) return 0;
     const spacing = quality.routeDetail
       ? settings.view.routeDotSpacingPx
       : settings.view.routeDotSpacingPx * 2.5;
-    const dots = dotsAlongPath(points.map(([x, y]) => toScreen(x, y)), spacing);
+    const screen = points.map(([x, y]) => toScreen(x, y));
+    const dots = dotsAlongPath(
+      smooth ? catmullRomPath(screen, quality.routeDetail ? 8 : 4) : screen,
+      spacing,
+    );
     for (const dot of dots) {
       routeInk.circle(dot.x, dot.y, settings.view.routeDotRadiusPx).fill({ color: colour, alpha: 0.82 });
     }
@@ -2174,7 +2196,7 @@ async function start(): Promise<void> {
         : ship.id === selectedFleetShip()?.id,
     );
     const key = JSON.stringify([
-      selected.map((ship) => [ship.id, ship.route, ship.orderLines]),
+      selected.map((ship) => [ship.id, ship.predictedPath, ship.route, ship.orderLines]),
       view.x, view.y, view.kmAcross, quality.routeDetail,
       headingPreviewOn && !headingSheet.hidden,
     ]);
@@ -2187,8 +2209,10 @@ async function start(): Promise<void> {
     for (const label of routeLabels.removeChildren()) label.destroy();
     let drew = false;
     for (const own of selected) {
-      if (own.route && own.route.length > 1) {
-        drew = drawDotted(own.route) > 0 || drew;
+      if (own.predictedPath && own.predictedPath.length > 1) {
+        drew = drawDotted(own.predictedPath, 0x8a6a45, true) > 0 || drew;
+      } else if (own.route && own.route.length > 1) {
+        drew = drawDotted(own.route, 0x8a6a45, true) > 0 || drew;
       }
       for (const line of own.orderLines ?? []) {
         drew = drawDotted(line.points) > 0 || drew;

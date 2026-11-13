@@ -188,7 +188,7 @@ export const settings = {
      *  stray this share of the remaining distance either side. Draft: 8%. */
     tackCorridorShare: 0.08,
     /** Corridor half-width never drops below this, in km. Draft: 0.5 km. */
-    tackCorridorMinKm: 0.5,
+    tackCorridorMinKm: 0.8,
     /** Corridor half-width never grows above this, in km. Draft: 6 km. */
     tackCorridorMaxKm: 6,
     /** The other tack must make this much more progress to be worth an early
@@ -533,6 +533,22 @@ export const settings = {
     curveRadiusFactor: 1.5,
     /** Look-ahead distance when steering along a smooth route curve. */
     steerLookAheadKm: 6,
+    /** Predicted path is sampled in this many game seconds. Draft: 2. */
+    predictionStepGameSeconds: 2,
+    /** Never predict more than this much game time. Draft: 60 minutes. */
+    predictionMaxGameMinutes: 60,
+    /** Simplify a predicted path to this tolerance, in metres. Draft: 15 m. */
+    predictionToleranceM: 15,
+    /** Hard ceiling on points in one predicted path. Draft: 300. */
+    predictionMaxPoints: 300,
+    /** Refresh a prediction at least this often, in game seconds. Draft: 20. */
+    predictionRefreshGameSeconds: 20,
+    /** Recompute when the wind moves by more than this. Draft: 10 degrees. */
+    predictionWindChangeDeg: 10,
+    /** At most this many ships per player are refreshed in one pass. */
+    predictionShipsPerRefresh: 6,
+    /** Draft budget for the prediction job per server tick, in milliseconds. */
+    predictionBudgetMs: 2,
     /** Server route curve spacing sent to the client. */
     curveSampleKm: 1.5,
     /** Hard ceiling on points in one route curve. */

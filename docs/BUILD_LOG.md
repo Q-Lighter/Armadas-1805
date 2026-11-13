@@ -2646,7 +2646,7 @@ crossing its own track.
 ### Changes
 
 - A corridor around the straight start-to-target line: half-width 8% of the
-  remaining distance, clamped to 0.5-6 km. The ship holds the tack until the
+  remaining distance, clamped to 0.8-6 km. The ship holds the tack until the
   edge, with a 15% progress margin before an early change and a 60 game-second
   cooldown. It commits to crossing the corridor after an edge tack, which stops
   the old bang-bang oscillation.
@@ -2667,7 +2667,7 @@ crossing its own track.
 | case | time | made good / own speed | turns | longest leg | sideways |
 | --- | --- | --- | --- | --- | --- |
 | 10 km dead upwind | 1.20 h | 0.602 | 7 | 1.8 km | 0.8 km |
-| 30 km dead upwind | 5.00 h | 0.602 | 16 (8 complete tacks) | 5.4 km | 2.3 km |
+| 30 km dead upwind | 5.06 h | 0.602 | 16 (8 complete tacks) | 3.7 km | 2.3 km |
 | 100 km dead upwind | 18.23 h | 0.602 | 26 | 15.0 km | 6.0 km |
 | 30 km +15 deg | 4.83 h | 0.623 | 14 | 6.1 km | 2.2 km |
 | 30 km +30 deg | 4.35 h | 0.691 | 10 | 8.6 km | 2.0 km |
@@ -2685,3 +2685,32 @@ planner's clearance waypoints without adding a sideways zigzag.
 - `npm test`: 399 passing, 0 failing.
 - `npm run build`: passed.
 - Tack manoeuvre test: 18 game seconds from tack-side change to the new course.
+
+
+## 3E-sail-b: real predicted routes
+
+- Added a server-side ghost prediction in `shared/prediction.ts`. It copies the
+  ship and runs the real `stepShip` steering, speed curve, corridor, tacking,
+  coast checks and arrival slow-down in 2 game-second steps, for up to 60 game
+  minutes or the rest of the route. The path is capped at 300 points and is
+  sent only in the owner's fleet snapshots.
+- The world caches predictions by ship and refreshes the selected ship first,
+  then other routed ships, at most one ghost per tick. A cached path is reused
+  until the route changes, the wind moves more than 10 degrees, or 20 game
+  seconds pass.
+- Routed ships now keep their literal destination in `order` and steer with a
+  pure-pursuit look-ahead point. The client draws the predicted path with a
+  Catmull-Rom screen spline, retaining the 2G dotted style; straight heading
+  orders stay straight.
+- Predicted versus actual over a 5 km leg: 15.0 m in a reaching run and 18.6 m
+  on a tacking run (limits 50 m / 150 m). Predicted paths had 206 and 212
+  points. A warm ghost computation took 0.63 ms for 422 two-second steps, under
+  the 2 ms budget.
+- Also fixed the final-approach tack to keep the current side (removing one
+  late turn) and raised the corridor floor to 0.8 km, giving 16 turns (8
+  complete tacks) on the 30 km dead-upwind run.
+
+### Checks
+
+- `npm test`: passed (406 tests including the new prediction and spline tests).
+- `npm run build`: passed.

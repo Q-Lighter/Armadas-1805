@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import { isLandAt } from "@naval/shared/land";
-import { dotsAlongPath } from "@naval/shared/route-ink";
+import { catmullRomPath, dotsAlongPath } from "@naval/shared/route-ink";
 import {
   planRoute,
   remainingRouteCurve,
@@ -85,4 +85,29 @@ test("the remaining route starts at the ship-side end", () => {
     remainingRouteCurve(curve, { x: 16, y: 1 }).map((point) => point.x),
     [20, 30],
   );
+});
+
+test("a Catmull-Rom route has rounded bends and keeps its ends", () => {
+  const points = [
+    { x: 0, y: 0 },
+    { x: 50, y: 0 },
+    { x: 50, y: 50 },
+    { x: 0, y: 50 },
+  ];
+  const curve = catmullRomPath(points, 8);
+  assert.deepEqual(curve[0], points[0]);
+  assert.deepEqual(curve[curve.length - 1], points[points.length - 1]);
+  assert.ok(curve.length > points.length * 4);
+  let sharpest = Infinity;
+  for (let index = 1; index + 1 < curve.length; index += 1) {
+    const a = curve[index - 1]!;
+    const b = curve[index]!;
+    const c = curve[index + 1]!;
+    const ab = Math.hypot(b.x - a.x, b.y - a.y);
+    const bc = Math.hypot(c.x - b.x, c.y - b.y);
+    const ca = Math.hypot(a.x - c.x, a.y - c.y);
+    const area2 = Math.abs((b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x));
+    if (area2 > 1e-9) sharpest = Math.min(sharpest, (ab * bc * ca) / (2 * area2));
+  }
+  assert.ok(sharpest > 5, `spline has a sharp corner of radius ${sharpest}`);
 });

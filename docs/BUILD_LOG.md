@@ -2666,17 +2666,18 @@ crossing its own track.
 
 | case | time | made good / own speed | turns | longest leg | sideways |
 | --- | --- | --- | --- | --- | --- |
-| 10 km dead upwind | 1.20 h | 0.602 | 7 | 1.8 km | 0.8 km |
+| 10 km dead upwind | 1.24 h | 0.612 | 6 | 2.0 km | 1.4 km |
 | 30 km dead upwind | 5.06 h | 0.602 | 16 (8 complete tacks) | 3.7 km | 2.3 km |
-| 100 km dead upwind | 18.23 h | 0.602 | 26 | 15.0 km | 6.0 km |
-| 30 km +15 deg | 4.83 h | 0.623 | 14 | 6.1 km | 2.2 km |
-| 30 km +30 deg | 4.35 h | 0.691 | 10 | 8.6 km | 2.0 km |
-| 30 km +45 deg | 3.53 h | 0.852 | 8 | 11.0 km | 1.5 km |
-| 100 km +45 deg | 13.35 h | 0.846 | 19 | 36.7 km | 5.1 km |
-| coast west Jamaica | 8.20 h | 0.675 | 14 | 13.8 km | 3.6 km |
+| 100 km dead upwind | 21.24 h | 0.602 | 15 | 70.5 km | 5.6 km |
+| 30 km +15 deg | 4.91 h | 0.619 | 14 | 6.2 km | 3.8 km |
+| 30 km +30 deg | 4.32 h | 0.701 | 9 | 8.9 km | 3.6 km |
+| 30 km +45 deg | 3.50 h | 0.868 | 4 | 21.3 km | 3.0 km |
+| 100 km +45 deg | 14.48 h | 0.864 | 18 | 79.5 km | 4.9 km |
+| coast west Jamaica | 8.53 h | 0.678 | 14 | 21.0 km | 6.3 km |
 
-The 30 km dead-upwind run meets 60% made good and stays inside the 2.4 km
-corridor. Every table case finishes in under twice its ideal-tack time. The
+These are the final numbers after the Part B final-approach and 0.8 km floor
+tuning. The 30 km dead-upwind run meets 60% made good and stays inside the
+2.4 km corridor. Every table case finishes in under twice its ideal-tack time. The
 exact 0/5/10/20 degree upwind targets all arrive. The coast route uses the
 planner's clearance waypoints without adding a sideways zigzag.
 

@@ -2711,6 +2711,7 @@ export function applyFleetOrder(
   const leader = shipsForOwner(world, playerId).find((ship) => ship.id === next.leaderId);
   if (!leader) return false;
   if (leader.dockedPortId) undock(world, playerId, leader.id);
+  startJourney(world, playerId, leader);
   const command: FleetCommand = {
     ownerId: playerId,
     fleetId: next.id,

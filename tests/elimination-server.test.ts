@@ -143,6 +143,21 @@ test("resigning sends the flagship and assets to the chosen enemy, or nobody", (
   assert.equal(other.playerRecords.get("a")!.eliminated?.heirIds.length, 0);
 });
 
+test("resigning to an enemy overrides a surviving teammate", () => {
+  const w = world();
+  player(w, "a");
+  player(w, "mate");
+  player(w, "b", "French");
+  giveSpareShips(w, "a", 1);
+  w.owners.get("a")!.money = 300;
+  assert.equal(resignPlayer(w, "a", "b"), true);
+  stepWorld(w, 14.4);
+  assert.equal(shipsForOwner(w, "mate").length, 1, "teammate keeps only its own flagship");
+  assert.equal(shipsForOwner(w, "b").length, 3);
+  assert.equal(w.owners.get("b")!.money, 50_300);
+  assert.deepEqual(w.playerRecords.get("a")!.eliminated?.heirIds, ["b"]);
+});
+
 test("a navy is eliminated, the last navy wins, and the world and orders stop", () => {
   const w = world();
   player(w, "a");

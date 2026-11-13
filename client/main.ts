@@ -80,6 +80,14 @@ import {
   whiteFlagVisible,
 } from "@naval/shared/combat-ui";
 import {
+  eliminatedAssetsText,
+  eliminatedByText,
+  eliminatedTitle,
+  resignRecipients,
+  statsRows,
+  victoryRows,
+} from "@naval/shared/status-ui";
+import {
   abandonedMarkerSize,
   boardSheet,
   boardingProgress,
@@ -442,6 +450,7 @@ function parseOwnShip(raw: unknown): OwnShipSnapshot | null {
   return {
     id,
     name,
+    isFlagship: source.isFlagship === true,
     classId: classId as OwnShipSnapshot["classId"],
     navy,
     crew,
@@ -543,6 +552,7 @@ interface ShipView {
   hull: Graphics;
   ring: Graphics;
   flag: Graphics;
+  flagshipInk: Graphics;
   runInk: Graphics;
   runLabel: Text;
   own: boolean;
@@ -561,6 +571,7 @@ interface ShipView {
   abandoned: boolean;
   burning: boolean;
   sinking: boolean;
+  isFlagship: boolean;
   statusInk: Graphics;
   statusLabel: Text;
 }
@@ -735,6 +746,7 @@ async function start(): Promise<void> {
   const actionPort = element<HTMLButtonElement>("action-port");
   const actionClose = element<HTMLButtonElement>("action-close");
   const shipNameOut = element<HTMLElement>("ship-name");
+  const shipFlagshipTag = element<HTMLElement>("ship-flagship-tag");
   const shipTypeOut = element<HTMLElement>("ship-type");
   const shipCrewOut = element<HTMLElement>("ship-crew");
   const shipStateOut = element<HTMLElement>("ship-state");
@@ -769,6 +781,25 @@ async function start(): Promise<void> {
   const menuButton = element<HTMLButtonElement>("menu-btn");
   const menuPanel = element<HTMLElement>("menu-panel");
   const menuClose = element<HTMLButtonElement>("menu-close");
+  const resignButton = element<HTMLButtonElement>("resign-btn");
+  const resignSheet = element<HTMLElement>("resign-sheet");
+  const resignRecipientsOut = element<HTMLElement>("resign-recipients");
+  const resignConfirm = element<HTMLButtonElement>("resign-confirm");
+  const resignCancel = element<HTMLButtonElement>("resign-cancel");
+  const eliminatedScreen = element<HTMLElement>("eliminated-screen");
+  const eliminatedTitleOut = element<HTMLElement>("eliminated-title");
+  const eliminatedReasonOut = element<HTMLElement>("eliminated-reason");
+  const eliminatedByOut = element<HTMLElement>("eliminated-by");
+  const eliminatedAssetsOut = element<HTMLElement>("eliminated-assets");
+  const eliminatedStatsOut = element<HTMLElement>("eliminated-stats");
+  const eliminatedClose = element<HTMLButtonElement>("eliminated-close");
+  const victoryScreen = element<HTMLElement>("victory-screen");
+  const victoryTitleOut = element<HTMLElement>("victory-title");
+  const victoryWinnersOut = element<HTMLElement>("victory-winners");
+  const victoryPlayersOut = element<HTMLElement>("victory-players");
+  const victoryStatsOut = element<HTMLElement>("victory-stats");
+  const victoryClose = element<HTMLButtonElement>("victory-close");
+  const victoryReset = element<HTMLButtonElement>("victory-reset");
   const testToolsButton = element<HTMLButtonElement>("test-tools-btn");
   const testTools = element<HTMLElement>("test-tools");
   const testToolsClose = element<HTMLButtonElement>("test-tools-close");
@@ -1016,6 +1047,15 @@ async function start(): Promise<void> {
   let sinkingFlags = new Set<string>();
   let grappledPairs: Array<[string, string]> = [];
   let surrenderConfirmShipId: string | null = null;
+  let latestRoster: Array<{ id: string; name: string; navy: NavyId }> = [];
+  let latestOut: StateMessage["out"] | null = null;
+  let latestGo: StateMessage["go"] | null = null;
+  let latestRoomKind: StateMessage["k"] = "normal";
+  let resignSelection: string | "nobody" | null = null;
+  let eliminatedClosed = false;
+  let victoryClosed = false;
+  let lastOutKey = "";
+  let lastGoAt = -1;
   let surrenderOfferShipId: string | null = null;
   let surrenderOfferKey = "";
   const surrenderDismissed = new Set<string>();
@@ -2463,7 +2503,8 @@ async function start(): Promise<void> {
       });
       const leader = document.createElement("span");
       leader.className = "fleet-card-leader";
-      leader.textContent = `⚑ ${shipById(fleet.leaderId)?.name ?? "Leader"}`;
+      const leaderShip = shipById(fleet.leaderId);
+      leader.textContent = `${leaderShip?.isFlagship ? "⚑ " : ""}${leaderShip?.name ?? "Leader"}`;
       head.append(name, leader);
 
       const selects = document.createElement("div");
@@ -2511,7 +2552,8 @@ async function start(): Promise<void> {
         const memberName = document.createElement("button");
         memberName.type = "button";
         memberName.className = "fleet-member-name btn-link";
-        memberName.textContent = shipById(member.id)?.name ?? member.id;
+        const memberShip = shipById(member.id);
+        memberName.textContent = `${memberShip?.isFlagship ? "⚑ " : ""}${memberShip?.name ?? member.id}`;
         memberName.addEventListener("click", () => {
           const ship = shipById(member.id);
           if (!ship || ship.status === "delivery") return;
@@ -2535,7 +2577,6 @@ async function start(): Promise<void> {
         } else {
           item.append(document.createElement("span"));
         }
-        const memberShip = shipById(member.id);
         if (memberShip && memberShip.status !== "delivery") {
           const battle = document.createElement("div");
           battle.className = "fleet-member-battle";
@@ -3809,6 +3850,7 @@ async function start(): Promise<void> {
     fleetCountOut.textContent = String(fleetShips.length);
     fleetSummary.textContent = `${fleetCountText(fleetShips.length)} ships · ${formatMoney(money)} pieces`;
     shipNameOut.textContent = row?.name ?? "No ship selected";
+    shipFlagshipTag.hidden = viewRow?.isFlagship !== true;
     shipTypeOut.textContent = viewRow?.typeName ?? "–";
     updateShipStores(row);
     shipCrewOut.textContent = viewRow?.crewText ?? "–";
@@ -3841,6 +3883,197 @@ async function start(): Promise<void> {
     shipDamage.disabled = !row || row.status === "delivery";
   }
 
+
+
+  // ---- 3E-c: resign, eliminated and victory screens ----------------------
+
+  function renderStatusStats(container: HTMLElement, rows: ReturnType<typeof statsRows>): void {
+    container.replaceChildren();
+    for (const row of rows) {
+      const label = document.createElement("span");
+      label.className = "status-stat-label";
+      label.textContent = row.label;
+      const value = document.createElement("span");
+      value.className = "status-stat-value";
+      value.textContent = row.value;
+      container.append(label, value);
+    }
+  }
+
+  function closeResignSheet(): void {
+    resignSheet.hidden = true;
+    resignSelection = null;
+    resignConfirm.disabled = true;
+  }
+
+  function renderResignRecipients(): void {
+    const teammate = latestRoster.find(
+      (player) => player.navy === playerNavy && player.id !== ownId,
+    );
+    const { choices, nobodyLabel } = resignRecipients(
+      latestRoster,
+      ownId,
+      teammate?.id ?? null,
+    );
+    resignRecipientsOut.replaceChildren();
+    const addChoice = (id: string, label: string, detail: string): void => {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = "btn resign-choice";
+      button.dataset.resignRecipient = id;
+      button.setAttribute("aria-pressed", String(resignSelection === id));
+      const strong = document.createElement("strong");
+      strong.textContent = label;
+      const small = document.createElement("small");
+      small.textContent = detail;
+      button.append(strong, small);
+      button.addEventListener("click", () => {
+        resignSelection = id;
+        resignConfirm.disabled = false;
+        for (const other of resignRecipientsOut.querySelectorAll<HTMLButtonElement>("[data-resign-recipient]")) {
+          other.setAttribute("aria-pressed", String(other.dataset.resignRecipient === id));
+        }
+      });
+      resignRecipientsOut.append(button);
+    };
+    for (const choice of choices) {
+      addChoice(
+        choice.id,
+        `${choice.name}${choice.isTeammate ? " (teammate)" : ""}`,
+        choice.navy,
+      );
+    }
+    addChoice("nobody", nobodyLabel, "Your ships become abandoned.");
+  }
+
+  function openResignSheet(): void {
+    if (latestOut || latestGo || !fleetShips.some((ship) => ship.isFlagship)) return;
+    closeMenuPanel();
+    closeResignSheet();
+    renderResignRecipients();
+    resignSheet.hidden = false;
+  }
+
+  function sendResign(): void {
+    if (resignSelection === null) return;
+    const to = resignSelection === "nobody" ? null : resignSelection;
+    if (sendCommand({ t: "resign", to })) {
+      closeResignSheet();
+      showNotice("Resignation sent. The decision is final.");
+    }
+  }
+
+  function renderEliminatedScreen(): void {
+    const out = latestOut;
+    if (!out) return;
+    eliminatedTitleOut.textContent = eliminatedTitle(out.flagshipName, out.reason);
+    eliminatedReasonOut.textContent =
+      "Orders are blocked. Your remaining ships and money have already been handed over or abandoned.";
+    const by = out.byNames.map((name, index) => {
+      const navy = out.byNavies[index];
+      return navy ? `${name} (${navy})` : name;
+    });
+    eliminatedByOut.textContent = eliminatedByText(by);
+    eliminatedAssetsOut.textContent = eliminatedAssetsText(
+      out.heirNames,
+      out.shipsGiven,
+      out.moneyGiven,
+    );
+    renderStatusStats(eliminatedStatsOut, statsRows(out.stats));
+    eliminatedScreen.hidden = false;
+  }
+
+  function renderVictoryScreen(): void {
+    const go = latestGo;
+    if (!go) return;
+    const rows = victoryRows(go.players);
+    victoryTitleOut.textContent = `Victory — ${go.navy}`;
+    const winners = rows.filter((row) => row.winner);
+    victoryWinnersOut.textContent =
+      `The ${go.navy} navy is the last navy standing. ` +
+      (winners.length > 0
+        ? `Winners: ${winners.map((row) => `${row.name} (${row.navy})`).join(", ")}.`
+        : "No captain survived.");
+    victoryPlayersOut.replaceChildren();
+    for (const row of rows) {
+      const line = document.createElement("div");
+      line.className = "victory-player";
+      const name = document.createElement("b");
+      name.textContent = `${row.winner ? "★ " : ""}${row.name}`;
+      const navy = document.createElement("span");
+      navy.textContent = row.navy;
+      const flagship = document.createElement("span");
+      flagship.textContent = `⚑ ${row.flagshipName}`;
+      const left = document.createElement("span");
+      left.textContent = row.left === "won" ? "Won" : `Left: ${row.left}`;
+      line.append(name, navy, flagship, left);
+      victoryPlayersOut.append(line);
+    }
+
+    const table = document.createElement("table");
+    table.className = "victory-table";
+    const head = document.createElement("thead");
+    const headRow = document.createElement("tr");
+    for (const label of ["Captain", "Navy", "Flagship", "Left", ...rows[0]!.stats.map((stat) => stat.label)]) {
+      const th = document.createElement("th");
+      th.scope = "col";
+      th.textContent = label;
+      headRow.append(th);
+    }
+    head.append(headRow);
+    const body = document.createElement("tbody");
+    for (const row of rows) {
+      const tr = document.createElement("tr");
+      const cells = [
+        row.name,
+        row.navy,
+        row.flagshipName,
+        row.left === "won" ? "Won" : row.left,
+        ...row.stats.map((stat) => stat.value),
+      ];
+      for (const value of cells) {
+        const td = document.createElement("td");
+        td.textContent = value;
+        tr.append(td);
+      }
+      body.append(tr);
+    }
+    table.append(head, body);
+    victoryStatsOut.replaceChildren(table);
+    victoryStatsOut.setAttribute("tabindex", "0");
+    victoryReset.hidden = latestRoomKind === "normal";
+    victoryScreen.hidden = false;
+  }
+
+  function renderEndScreens(): void {
+    const canResign = !latestOut && !latestGo && fleetShips.some((ship) => ship.isFlagship);
+    resignButton.hidden = !canResign;
+    if (latestGo) {
+      if (lastGoAt !== latestGo.atGameMs) {
+        lastGoAt = latestGo.atGameMs;
+        victoryClosed = false;
+        eliminatedClosed = true;
+      }
+      closeResignSheet();
+      if (!victoryClosed) renderVictoryScreen();
+      else victoryScreen.hidden = true;
+      eliminatedScreen.hidden = true;
+      return;
+    }
+    victoryScreen.hidden = true;
+    if (latestOut) {
+      const key = JSON.stringify(latestOut);
+      if (key !== lastOutKey) {
+        lastOutKey = key;
+        eliminatedClosed = false;
+      }
+      closeResignSheet();
+      if (!eliminatedClosed) renderEliminatedScreen();
+      else eliminatedScreen.hidden = true;
+      return;
+    }
+    eliminatedScreen.hidden = true;
+  }
 
   function closeDamagePanel(): void {
     damagePanel.hidden = true;
@@ -4518,6 +4751,19 @@ async function start(): Promise<void> {
     }
 
     ownId = state.you;
+    latestRoster = Array.isArray(state.roster)
+      ? state.roster.filter((player) =>
+          player && typeof player.id === "string" &&
+          typeof player.name === "string" &&
+          typeof player.navy === "string")
+        .map((player) => ({
+          id: player.id,
+          name: player.name,
+          navy: player.navy as NavyId,
+        }))
+      : [];
+    latestOut = state.out ?? null;
+    latestGo = state.go ?? null;
     if (Array.isArray(state.events)) {
       const receivedAtClient = performance.now();
       for (const raw of state.events) {
@@ -4621,6 +4867,7 @@ async function start(): Promise<void> {
 
     windFrom = Number.isFinite(state.w) ? state.w : settings.weather.windFromDeg;
     roomKind = validRoomKind(state.k) ? state.k : "normal";
+    latestRoomKind = roomKind;
     bordersButton.hidden = roomKind === "normal";
     debugSection.hidden = roomKind === "normal";
     testToolsButton.hidden = roomKind === "normal";
@@ -4750,6 +4997,13 @@ async function start(): Promise<void> {
         const flag = new Graphics();
         drawWhiteFlag(flag);
         flag.visible = false;
+        const flagshipInk = new Graphics();
+        flagshipInk
+          .moveTo(8, 2).lineTo(8, -12)
+          .stroke({ width: 1.4, color: 0x2a1c10, alpha: 0.95 })
+          .moveTo(8, -12).lineTo(16, -9).lineTo(8, -6).closePath()
+          .fill({ color: 0x8c1d1d });
+        flagshipInk.visible = false;
         const runInk = new Graphics();
         runInk.moveTo(0, 0).lineTo(0, -34).stroke({
           width: 1.6,
@@ -4775,6 +5029,7 @@ async function start(): Promise<void> {
           hull,
           ring,
           flag,
+          flagshipInk,
           runInk,
           runLabel,
           own: ownHere,
@@ -4793,6 +5048,7 @@ async function start(): Promise<void> {
           abandoned: false,
           burning: false,
           sinking: false,
+          isFlagship: false,
           statusInk,
           statusLabel,
         };
@@ -4812,6 +5068,7 @@ async function start(): Promise<void> {
       ship.abandoned = abandonedFlags.has(id) || ownRow?.abandoned === true;
       ship.burning = burningFlags.has(id) || ownRow?.burning === true;
       ship.sinking = sinkingFlags.has(id);
+      ship.isFlagship = ownRow?.isFlagship === true;
       if (ship.sinking) ship.surrendered = false;
       if (id === selectedShipId) own = snapshot;
     }
@@ -4821,6 +5078,7 @@ async function start(): Promise<void> {
         ship.hull.destroy();
         ship.ring.destroy();
         ship.flag.destroy();
+        ship.flagshipInk.destroy();
         ship.runInk.destroy();
         ship.runLabel.destroy();
         ship.statusInk.destroy();
@@ -4859,6 +5117,7 @@ async function start(): Promise<void> {
     safeLayer("battle log", () => renderBattleLog(state.log));
     safeLayer("battle bar", renderBattleBar);
     safeLayer("surrender offer", renderSurrenderOffer);
+    safeLayer("status screens", renderEndScreens);
 
     lastSeen = Array.isArray(state.l) ? state.l : [];
     drawLastSeen();
@@ -5656,6 +5915,11 @@ async function start(): Promise<void> {
     }
   }
 
+  function closeMenuPanel(): void {
+    menuPanel.hidden = true;
+    menuButton.setAttribute("aria-expanded", "false");
+  }
+
   menuButton.addEventListener("click", () => {
     menuPanel.hidden = !menuPanel.hidden;
     menuButton.setAttribute("aria-expanded", String(!menuPanel.hidden));
@@ -5664,6 +5928,23 @@ async function start(): Promise<void> {
   menuClose.addEventListener("click", () => {
     menuPanel.hidden = true;
     menuButton.setAttribute("aria-expanded", "false");
+  });
+  resignButton.addEventListener("click", openResignSheet);
+  resignCancel.addEventListener("click", closeResignSheet);
+  resignConfirm.addEventListener("click", sendResign);
+  eliminatedClose.addEventListener("click", () => {
+    eliminatedClosed = true;
+    eliminatedScreen.hidden = true;
+  });
+  victoryClose.addEventListener("click", () => {
+    victoryClosed = true;
+    victoryScreen.hidden = true;
+  });
+  victoryReset.addEventListener("click", () => {
+    if (latestRoomKind === "normal") return;
+    sendCommand({ t: "resetRoom" });
+    victoryClosed = true;
+    victoryScreen.hidden = true;
   });
 
   function closeTestTools(): void {
@@ -5971,6 +6252,10 @@ async function start(): Promise<void> {
         ship.flag.rotation = ship.heading;
         ship.flag.scale.set(flagScale);
         ship.flag.visible = whiteFlagVisible(ship.hull.visible, ship.surrendered);
+        ship.flagshipInk.position.set(screen.x, screen.y);
+        ship.flagshipInk.rotation = ship.heading;
+        ship.flagshipInk.scale.set(flagScale);
+        ship.flagshipInk.visible = ship.own && ship.isFlagship && ship.hull.visible;
         ship.runInk.position.set(screen.x, screen.y);
         ship.runInk.rotation = ship.heading;
         ship.runInk.visible = ship.running && ship.hull.visible;

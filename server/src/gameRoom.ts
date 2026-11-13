@@ -478,6 +478,7 @@ export class GameRoom {
     };
 
     if (this.world.gameOver && order.t !== "resetRoom") return;
+    if (this.world.playerRecords.get(playerId)?.eliminated && order.t !== "resetRoom") return;
 
     if (order.t === "o") {
       applyOrder(this.world, playerId, order.x, order.y, order.ship);

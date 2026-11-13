@@ -657,6 +657,7 @@ export interface StateMessage {
   /** 3E: this player's own elimination, never another player's. */
   out?: {
     reason: string;
+    flagshipName: string | null;
     byNames: string[];
     byNavies: NavyId[];
     heirNames: string[];
@@ -664,6 +665,8 @@ export interface StateMessage {
     moneyGiven: number;
     stats: SimpleStats;
   };
+  /** 3E: public names and navies, used only by the resign recipient list. */
+  roster?: Array<{ id: string; name: string; navy: NavyId }>;
   /** 3E: the final table, only after one navy has won. */
   go?: GameOverState;
 }
@@ -5219,6 +5222,7 @@ export function handleFlagshipLoss(
   ship: Ship,
   reason: EliminationReason,
   byId: string | null = null,
+  forcedRecipients?: string[],
 ): boolean {
   const record = world.playerRecords.get(ownerId);
   if (!record || record.eliminated) return false;
@@ -5273,7 +5277,11 @@ export function handleFlagshipLoss(
   const activeCredits = elimination.byIds.filter((id) =>
     world.playerRecords.has(id) && playerHasFlagship(world, id)
   );
-  const recipients = teammate ? [teammate] : activeCredits;
+  // A resignation names its heir explicitly, even over a surviving teammate.
+  // An empty list means the resigning captain chose Nobody.
+  const recipients = forcedRecipients
+    ? forcedRecipients.filter((id) => world.playerRecords.has(id) && playerHasFlagship(world, id))
+    : teammate ? [teammate] : activeCredits;
   const remaining = shipsForOwner(world, ownerId).filter((candidate) => candidate.id !== ship.id);
   const units = remaining.map((candidate) => ({
     id: candidate.id,
@@ -5368,7 +5376,14 @@ export function resignPlayer(
   } else {
     abandonForInheritance(world, playerId, ship);
   }
-  const result = handleFlagshipLoss(world, playerId, ship, "resigned", recipientId);
+  const result = handleFlagshipLoss(
+    world,
+    playerId,
+    ship,
+    "resigned",
+    recipientId,
+    recipientId ? [recipientId] : [],
+  );
   ship.isFlagship = false;
   const recipientRecord = recipientId ? world.playerRecords.get(recipientId) : null;
   if (recipientRecord) recipientRecord.stats.shipsCaptured += 1;
@@ -6290,6 +6305,22 @@ export function setTestFire(world: World, playerId: string, shipId: unknown): bo
   return true;
 }
 
+function updateFlagshipDanger(world: World): void {
+  for (const record of world.playerRecords.values()) {
+    if (record.eliminated || !record.flagshipId) continue;
+    const ship = shipsForOwner(world, record.id).find((candidate) => candidate.id === record.flagshipId);
+    if (!ship) continue;
+    const spec = shipSpecFor(ship);
+    const hullShare = spec.hull > 0 ? ship.damage.hull / spec.hull : 0;
+    const grappling = [...world.boardingFights.values()].some((fight) =>
+      fight.attackerId === ship.id || fight.defenderId === ship.id
+    );
+    if (hullShare > settings.elimination.flagshipDangerHullShare &&
+        ship.fire?.burning !== true && !grappling) continue;
+    pushNoticeOnce(world, record.id, ship.id, "flagshipDanger", "Your flagship is in danger");
+  }
+}
+
 export function stepWorld(
   world: World,
   dtGameSeconds: number,
@@ -6331,6 +6362,7 @@ export function stepWorld(
   updateAbandonment(world, dtGameSeconds);
   updateRepairs(world, dtGameSeconds);
   updatePortRepairs(world, dtGameSeconds);
+  updateFlagshipDanger(world);
   updateSinkingShips(world);
   recordFleetPaths(world);
   refreshBotOrders(world);
@@ -6593,6 +6625,7 @@ export function visibleStateFor(
     return {
       id: ship.id,
       name: ship.name,
+      isFlagship: world.playerRecords.get(playerId)?.flagshipId === ship.id,
       classId: ship.classId,
       navy: ship.navy,
       crew: ship.crew,
@@ -6724,6 +6757,7 @@ export function visibleStateFor(
     const elimination = ownRecord.eliminated;
     state.out = {
       reason: reasonText(elimination.reason),
+      flagshipName: ownRecord.flagshipName,
       byNames: elimination.byIds.map((id) => playerName(world, id)),
       byNavies: elimination.byIds
         .map((id) => world.playerRecords.get(id)?.navy)
@@ -6735,6 +6769,9 @@ export function visibleStateFor(
     };
   }
   if (world.gameOver) state.go = world.gameOver;
+  state.roster = [...world.playerRecords.values()]
+    .filter((record) => !record.eliminated)
+    .map((record) => ({ id: record.id, name: record.name, navy: record.navy }));
   if (abandonedFlags.length > 0) state.abandoned = abandonedFlags;
   if (burningFlags.length > 0) state.burning = burningFlags;
   if (grappled.length > 0) state.grappled = grappled;

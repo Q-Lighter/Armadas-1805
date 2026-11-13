@@ -2839,3 +2839,135 @@ body.game {
   line-height: 1.35;
   overflow-wrap: anywhere;
 }
+
+/* 3E: resign, eliminated and victory sheets. They sit above the map; the
+   existing panels are untouched. Every action is at least 44 px. */
+.resign-recipients {
+  display: grid;
+  gap: 0.4rem;
+  max-height: min(42dvh, 18rem);
+  overflow-y: auto;
+  margin-top: 0.6rem;
+}
+.resign-choice {
+  min-height: 44px;
+  width: 100%;
+  text-align: left;
+  padding: 0.45rem 0.6rem;
+}
+.resign-choice small {
+  display: block;
+  color: var(--ink-faded);
+  font-size: 0.78rem;
+}
+.resign-choice[aria-pressed="true"] {
+  box-shadow: inset 0 0 0 2px var(--wax);
+  font-weight: 700;
+}
+.status-screen {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: max(0.5rem, env(safe-area-inset-top)) max(0.5rem, env(safe-area-inset-right))
+    max(0.5rem, env(safe-area-inset-bottom)) max(0.5rem, env(safe-area-inset-left));
+  background: rgba(27, 20, 12, 0.58);
+  overflow: auto;
+}
+.status-screen[hidden] { display: none; }
+.status-sheet {
+  width: min(58rem, 100%);
+  max-height: calc(100dvh - 1rem);
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: 0.9rem;
+}
+.status-lead {
+  margin: 0.3rem 0 0.45rem;
+  font-size: 1rem;
+  line-height: 1.35;
+}
+.status-detail {
+  margin: 0.25rem 0;
+  font-size: 0.9rem;
+  color: var(--ink-faded);
+}
+.status-subtitle {
+  margin: 0.85rem 0 0.4rem;
+  font-size: 0.95rem;
+  border-bottom: 1px solid var(--rule);
+}
+.status-stats {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 0.18rem 0.8rem;
+  font-size: 0.86rem;
+}
+.status-stat-label { color: var(--ink-faded); }
+.status-stat-value { text-align: right; font-variant-numeric: tabular-nums; }
+.status-stats-wide {
+  display: block;
+  overflow-x: auto;
+}
+.victory-players {
+  display: grid;
+  gap: 0.35rem;
+  margin-top: 0.45rem;
+}
+.victory-player {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem 0.7rem;
+  align-items: baseline;
+  padding: 0.4rem 0;
+  border-bottom: 1px solid rgba(42, 28, 16, 0.22);
+  font-size: 0.88rem;
+}
+.victory-player b { font-size: 0.95rem; }
+.victory-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.78rem;
+  min-width: 34rem;
+}
+.victory-table th,
+.victory-table td {
+  padding: 0.32rem 0.4rem;
+  border-bottom: 1px solid rgba(42, 28, 16, 0.22);
+  text-align: right;
+  white-space: nowrap;
+}
+.victory-table th:first-child,
+.victory-table td:first-child { text-align: left; }
+.victory-table thead th {
+  position: sticky;
+  top: 0;
+  background: var(--paper);
+  font-weight: 700;
+}
+@media (max-width: 640px) {
+  .status-screen { align-items: stretch; padding: 0.4rem; }
+  .status-sheet { max-height: calc(100dvh - 0.8rem); padding: 0.7rem; }
+  .status-stats { grid-template-columns: minmax(0, 1fr) auto; }
+}
+@media (max-height: 440px) and (orientation: landscape) {
+  .status-screen { align-items: stretch; padding: 0.3rem; }
+  .status-sheet { max-height: calc(100dvh - 0.6rem); padding: 0.55rem 0.7rem; }
+  .status-lead { font-size: 0.9rem; }
+}
+/* 3E: the flagship marker. A flag, never a colour-only signal. */
+.flagship-tag {
+  display: inline-block;
+  margin-left: 0.35rem;
+  padding: 0.05rem 0.35rem;
+  border: 1px solid var(--wax);
+  border-radius: 0.2rem;
+  color: var(--wax);
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  vertical-align: middle;
+}
+.fleet-name .flagship-flag { color: var(--wax); margin-right: 0.2rem; }

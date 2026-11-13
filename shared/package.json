@@ -190,6 +190,10 @@
       "types": "./dist/elimination.d.ts",
       "default": "./dist/elimination.js"
     },
+    "./status-ui": {
+      "types": "./dist/statusUi.d.ts",
+      "default": "./dist/statusUi.js"
+    },
     "./format": {
       "types": "./dist/format.d.ts",
       "default": "./dist/format.js"

@@ -122,8 +122,8 @@ function runScenario(name: string, scenario: Scenario): Metrics {
   let boardingDistanceM: number | null = null;
   let boardingSpeedDifferenceKnots: number | null = null;
   let boardingHeadingDifferenceDeg: number | null = null;
-  let minUnderSixHundredM = Infinity;
-  let maxUnderSixHundredM = 0;
+  let closestDistanceM = Infinity;
+  let maxOvershootM = 0;
   let lastDistanceM: number | null = null;
   const sailAwayReasons: string[] = [];
   let result = "no result";
@@ -156,9 +156,11 @@ function runScenario(name: string, scenario: Scenario): Metrics {
       }
       if (event.kind === "hit") hits += 1;
     }
-    if (distanceM < 600 && !lastBoarding) {
-      minUnderSixHundredM = Math.min(minUnderSixHundredM, distanceM);
-      maxUnderSixHundredM = Math.max(maxUnderSixHundredM, distanceM);
+    // Overshoot is distance gained after the closest approach, not the
+    // distance range while the ships first come under 600 m.
+    if (distanceM < closestDistanceM) closestDistanceM = distanceM;
+    else if (distanceM < 600) {
+      maxOvershootM = Math.max(maxOvershootM, distanceM - closestDistanceM);
     }
     if (previousDistanceM !== null && distanceM > previousDistanceM + 150 &&
       distanceM < 600 && !attacker.combatStep && !attacker.boardingStep) {
@@ -202,7 +204,7 @@ function runScenario(name: string, scenario: Scenario): Metrics {
     boardingDistanceM,
     boardingSpeedDifferenceKnots,
     boardingHeadingDifferenceDeg,
-    overshootM: Math.max(0, maxUnderSixHundredM - minUnderSixHundredM),
+    overshootM: maxOvershootM,
     result,
     states,
     notices,

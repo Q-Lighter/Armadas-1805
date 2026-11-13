@@ -165,6 +165,7 @@
       <button class="ship-strip" id="ship-expand" type="button" aria-expanded="false" aria-controls="ship-detail">
         <span class="ship-strip-copy">
           <strong class="ship-name" id="ship-name">Your ship</strong>
+          <span class="flagship-tag" id="ship-flagship-tag" hidden>⚑ Flagship</span>
           <span class="ship-strip-meta">
             <span id="ship-strip-speed">–</span>
             <span id="ship-strip-heading">–</span>
@@ -306,6 +307,7 @@
         <button class="btn" id="known-ports-btn" type="button" hidden>Known ports</button>
         <button class="btn" id="borders-btn" type="button" aria-pressed="false" hidden>Show borders</button>
         <button class="btn" id="test-tools-btn" type="button" hidden>Test tools</button>
+        <button class="btn btn-seal" id="resign-btn" type="button">Resign</button>
       </div>
       <div class="size-picker" role="group" aria-label="UI size">
         <span class="size-label">Text size</span>
@@ -382,6 +384,60 @@
     </section>
 
     <p class="chart-notice" id="notice" role="status" aria-live="polite" hidden></p>
+
+    <!-- 3E: resign confirmation. The choice is final. -->
+    <section class="surrender-sheet paper" id="resign-sheet" role="dialog" aria-labelledby="resign-title" hidden>
+      <div class="panel-head">
+        <div>
+          <p class="kicker">Final decision</p>
+          <h2 id="resign-title">Resign</h2>
+        </div>
+        <button class="btn panel-close" id="resign-cancel" type="button">Cancel</button>
+      </div>
+      <p class="surrender-confirm-text">Your flagship is handed over and you leave the game. This cannot be undone.</p>
+      <p class="surrender-confirm-text">Choose who receives your flagship, ships and money.</p>
+      <div class="resign-recipients" id="resign-recipients"></div>
+      <div class="surrender-confirm-actions">
+        <button class="btn btn-seal" id="resign-confirm" type="button" disabled>Resign for good</button>
+      </div>
+    </section>
+
+    <!-- 3E: eliminated and victory screens. Orders are blocked; the map is frozen. -->
+    <section class="status-screen" id="eliminated-screen" role="dialog" aria-labelledby="eliminated-title" hidden>
+      <div class="status-sheet paper">
+        <div class="panel-head">
+          <div>
+            <p class="kicker">Your command has ended</p>
+            <h2 id="eliminated-title">You are out of the game</h2>
+          </div>
+          <button class="btn panel-close" id="eliminated-close" type="button">Close</button>
+        </div>
+        <p class="status-lead" id="eliminated-reason"></p>
+        <p class="status-detail" id="eliminated-by"></p>
+        <p class="status-detail" id="eliminated-assets"></p>
+        <h3 class="status-subtitle">Your simple stats</h3>
+        <div class="status-stats" id="eliminated-stats"></div>
+      </div>
+    </section>
+
+    <section class="status-screen" id="victory-screen" role="dialog" aria-labelledby="victory-title" hidden>
+      <div class="status-sheet paper">
+        <div class="panel-head">
+          <div>
+            <p class="kicker">The war is decided</p>
+            <h2 id="victory-title">Victory</h2>
+          </div>
+          <button class="btn panel-close" id="victory-close" type="button">Close</button>
+        </div>
+        <p class="status-lead" id="victory-winners"></p>
+        <div class="victory-players" id="victory-players"></div>
+        <h3 class="status-subtitle">Everyone's simple stats</h3>
+        <div class="status-stats status-stats-wide" id="victory-stats"></div>
+        <div class="surrender-confirm-actions">
+          <button class="btn btn-seal" id="victory-reset" type="button" hidden>Reset room</button>
+        </div>
+      </div>
+    </section>
 
     <!-- Long-press or right-click orders. On a phone it is a bottom sheet. -->
     <section class="order-menu paper" id="order-menu" role="dialog" aria-labelledby="order-menu-title" hidden>

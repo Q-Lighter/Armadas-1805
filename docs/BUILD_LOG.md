@@ -2387,3 +2387,43 @@ feature.
 - `npm test`: 370 passing, including the new pure and server elimination
   suites.
 - `npm run build`: passed.
+
+## Session 3E-c: resign, eliminated and victory screens
+
+**Date:** 2026-11-13
+**Branch:** main
+
+### What was asked
+
+Fit the new sheets into the existing layout without moving it: a flagship
+marker, a final Resign flow, an eliminated screen, victory screen and the
+missing danger notice. Keep 44 px targets and phone scrolling.
+
+### What was built
+
+- A small wax-red flag marks the player's flagship in the ship panel, in the
+  Fleet panel's leader and member rows, and above the hull on the map. It is
+  drawn only for the player's own flagship.
+- Menu now has Resign. Its confirm sheet lists the teammate first, every other
+  active player with navy, and Nobody; nothing can be sent until a recipient
+  is chosen, and the warning says the choice is final.
+- The eliminated screen names the flagship and reason, the credited captains
+  and navies, where the remaining ships and money went, and the player's own
+  simple stats. Orders are blocked on the server; the map stays frozen.
+- The victory screen names the winning navy and players, each flagship, how
+  each captain left, and a scrollable simple-stats table for everyone. Close
+  stays on the frozen map; Reset room appears only in test and dev rooms.
+- A flagship at or under 30% hull, on fire or being boarded now raises "Your
+  flagship is in danger", at most once a minute through the existing notice
+  cooldown.
+- The resign, eliminated and victory sheets scroll within the existing
+  layout at 360x740, 412x915, 740x360, 768x1024 and 1280x800, keep 44 px
+  actions and do not overlap the old panels.
+
+### Checks
+
+- `npm test`: 378 passing, including seven new status-screen and privacy
+  tests plus a resignation-with-teammate regression test.
+- `npm run build`: passed.
+- No browser or headless Chromium is available in this environment, so the
+  sheets were compiled and layout-tested as data but not visually inspected.

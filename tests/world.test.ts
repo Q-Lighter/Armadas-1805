@@ -55,7 +55,7 @@ test("the state for one player is compact and public", () => {
   const bytes = Buffer.byteLength(JSON.stringify(state), "utf8");
 
   assert.deepEqual(Object.keys(state).sort(), [
-    "chart", "fleet", "fleets", "g", "groups", "k", "l", "m", "ports", "sel", "ships", "t", "tick", "w", "you",
+    "chart", "fleet", "fleets", "g", "groups", "k", "l", "m", "ports", "roster", "sel", "ships", "t", "tick", "w", "you",
   ]);
   assert.equal(state.g, 0);
   assert.equal(state.you, "alpha");
@@ -63,6 +63,8 @@ test("the state for one player is compact and public", () => {
   assert.equal(state.ships.length, 2);
   assert.equal(state.ships[0]?.length, 9);
   assert.equal(state.ships[0]?.[6], "British");
+  assert.deepEqual(state.roster?.map((entry) => entry.id).sort(), ["alpha", "beta"]);
+  assert.ok(state.roster?.every((entry) => !("stats" in entry) && !("flagshipName" in entry)));
   assert.ok(Array.isArray(state.l));
   assert.ok(Array.isArray(state.chart.cells));
 

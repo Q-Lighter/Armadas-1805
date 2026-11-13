@@ -47,6 +47,8 @@ export function crewPercent(crew: number, fullCrew: number): number {
 export interface FleetShipRow {
   id: string;
   name: string;
+  /** 3E: my one flagship, marked in the Fleet panel. */
+  isFlagship: boolean;
   typeName: string;
   crewText: string;
   crewPercent: number;
@@ -156,6 +158,7 @@ export function buildFleetRow(
   return {
     id: ship.id,
     name: ship.name,
+    isFlagship: ship.isFlagship === true,
     typeName: type.name,
     crewText: formatCrew(ship.crew, ship.fullCrew),
     crewPercent: percent,

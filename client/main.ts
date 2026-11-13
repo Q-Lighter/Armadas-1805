@@ -4210,7 +4210,10 @@ async function start(): Promise<void> {
       : "";
     portCaptureRangeOut.textContent =
       `Capture range ${Math.round(port.rangeKm ?? 0)} km` +
-      (port.rangeKm !== undefined && port.rangeKm < 30 ? " (night or weather)" : "") +
+      (port.rangeKm !== undefined &&
+        port.rangeKm < settings.ports.battle.captureRangeKm[port.size]
+        ? " (reduced by night or weather)"
+        : "") +
       captureStatus;
     const canBuild = ownPort && tier < 3;
     portBuildOut.hidden = !canBuild && !port.build;

@@ -2519,3 +2519,42 @@ add safety nets and visible test helpers.
   at 10 Hz (22,855 at 5 Hz).
 - No browser or headless Chromium is available in this environment, so the
   panel was checked structurally (DOM ids, build and tests), not visually.
+
+## Session 3E-perf-b: drawing cost and quality governor
+
+**Date:** 2026-11-13
+**Branch:** main
+
+### What was built
+
+- Ship display lists are pooled and reused instead of destroyed on every
+  disappear. Status ink is rebuilt only when a flag or the abandoned-marker
+  zoom bucket changes, not on every animation frame.
+- Combat effects are capped at 150, the oldest and any off-screen effects are
+  dropped, and effect drawing stays in one batched graphics object. Route ink
+  is skipped when neither its data nor the camera moved, and route dots thin
+  out when quality is reduced. The chart already redraws only on data or pose
+  changes.
+- DOM work is throttled: the selected-ship readout at 2/s, the Fleet card and
+  battle log at 4/s. The Fleet panel is only rebuilt when its content key
+  changes.
+- New quality governor, Auto by default: after 3 s of frames over 40 ms it
+  drops smoke/splash, then wind streaks, then route detail, then fire glow, and
+  only then render resolution; 10 s of good frames restores one step at a
+  time. Menu Quality offers Auto, High and Low. A small "Reduced effects for
+  speed" note appears while reduced.
+- Same-fleet ships closer than 14 screen pixels are drawn as one paper marker
+  with `xN`; the individual hulls and selection rings are hidden until they
+  separate or the camera zooms in. The marker has its own ring when a member is
+  selected.
+
+### Checks
+
+- `npm test`: 393 passing, 0 failing.
+- `npm run build`: passed.
+- Pure render-network tests cover governor order and recovery, grouping count,
+  different-fleet isolation, the 150-effect/off-screen cap and independent DOM
+  throttles.
+- No browser or headless Chromium is available, so the governor, grouping and
+  pooled display list were not visually inspected; the build and pure tests
+  were run.

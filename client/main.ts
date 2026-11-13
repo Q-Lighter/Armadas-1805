@@ -67,6 +67,18 @@ import { fogDebugLine, type FogDebugInfo } from "@naval/shared/fog-view";
 import { GRAPHICS_RESET_NOTICE, GraphicsRecovery } from "@naval/shared/graphics-safety";
 import { runDrawLayer } from "@naval/shared/draw-layer";
 import { applyStateDelta, decodeStateDelta, newestStateWithEvents } from "@naval/shared/state-delta";
+import { DomThrottle } from "@naval/shared/dom-throttle";
+import { selectVisibleEffects } from "@naval/shared/effect-budget";
+import { groupFleetMarkers } from "@naval/shared/fleet-markers";
+import {
+  qualityFeatures,
+  qualityLevelForPreference,
+  qualityPreference as parseQualityPreference,
+  QualityGovernor,
+  type QualityFeatures,
+  type QualityLevel,
+  type QualityPreference,
+} from "@naval/shared/quality";
 import { formatGameClock, gameClockAt } from "@naval/shared/time";
 import { navyColorNumber, parseNavy, type NavyId } from "@naval/shared/navies";
 import {
@@ -576,6 +588,7 @@ interface ShipView {
   isFlagship: boolean;
   statusInk: Graphics;
   statusLabel: Text;
+  statusKey: string;
 }
 
 interface Camera {
@@ -822,6 +835,7 @@ async function start(): Promise<void> {
   const perfLines = element<HTMLElement>("perf-lines");
   const perfVisibleState = element<HTMLElement>("perf-visible-state");
   const perfToggle = element<HTMLButtonElement>("perf-toggle");
+  const qualityNote = element<HTMLElement>("quality-note");
   const debugSection = element<HTMLDetailsElement>("debug-info");
   const shipPanel = element<HTMLElement>("ship-panel");
   const shipExpand = element<HTMLButtonElement>("ship-expand");
@@ -853,6 +867,10 @@ async function start(): Promise<void> {
   const layoutDebug = query.get("layoutdebug") === "1";
   let perfVisible = query.get("perf") === "1";
   let perfAutoOpened = false;
+  const qualityGovernor = new QualityGovernor();
+  let qualityPreference: QualityPreference = parseQualityPreference(query.get("quality"));
+  let qualityLevel: QualityLevel = 0;
+  let quality: QualityFeatures = qualityFeatures(0);
   const requestedBots = query.get("bots");
   const requestedNavy = query.get("navy");
   const requestedStart = query.get("start");
@@ -874,16 +892,46 @@ async function start(): Promise<void> {
   }
   roomOut.textContent = room;
 
+  const baseResolution = Math.min(window.devicePixelRatio || 1, settings.client.maxDevicePixelRatio);
+  let appliedResolution = baseResolution;
   const app = new Application();
   await app.init({
     resizeTo: window,
     background: PAPER_COLOR,
     antialias: true,
     autoDensity: true,
-    resolution: Math.min(window.devicePixelRatio || 1, settings.client.maxDevicePixelRatio),
+    resolution: baseResolution,
     preference: "webgl",
   });
   root.appendChild(app.canvas);
+
+  function qualityLabel(): string {
+    const mode = qualityPreference === "auto" ? "Auto" : qualityPreference === "high" ? "High" : "Low";
+    return qualityPreference === "auto" ? `${mode} L${qualityLevel}` : mode;
+  }
+
+  function applyQuality(level: QualityLevel): void {
+    qualityLevel = level;
+    quality = qualityFeatures(level);
+    qualityNote.hidden = level === 0;
+    qualityNote.textContent = level > 0 ? "Reduced effects for speed" : "";
+    const targetResolution = quality.fullResolution
+      ? baseResolution
+      : Math.max(0.5, baseResolution * settings.client.lowResolutionScale);
+    if (Math.abs(targetResolution - appliedResolution) > 0.01) {
+      appliedResolution = targetResolution;
+      app.renderer.resize(app.screen.width, app.screen.height, targetResolution);
+    }
+    for (const button of document.querySelectorAll<HTMLButtonElement>("[data-quality]")) {
+      button.setAttribute("aria-pressed", String(button.dataset.quality === qualityPreference));
+    }
+  }
+
+  function setQualityPreference(next: QualityPreference): void {
+    qualityPreference = next;
+    qualityGovernor.reset();
+    applyQuality(qualityLevelForPreference(next, 0));
+  }
 
   // The screen layers are in screen pixels. Chart blocks are built for one
   // camera snapshot and shifted while the player pans. There are no screen
@@ -956,6 +1004,7 @@ async function start(): Promise<void> {
   marker.visible = false;
 
   const fleetLayer = new Container();
+  const fleetGroupLayer = new Container();
   const combatFxInk = new Graphics();
   const combatRangeInk = new Graphics();
   const lastSeenLayer = new Container();
@@ -987,6 +1036,7 @@ async function start(): Promise<void> {
     portLayer,
     lastSeenLayer,
     fleetLayer,
+    fleetGroupLayer,
     combatFxInk,
     windLayer,
     borderLayer,
@@ -1106,6 +1156,8 @@ async function start(): Promise<void> {
   let storeRenderKey = "";
   let lastSeen: LastSeenSnapshot[] = [];
   let lastSeenViews: Container[] = [];
+  let lastRouteKey = "";
+  let fleetPanelKey = "";
 
   interface BlockPaint {
     blockId: string;
@@ -1206,6 +1258,7 @@ async function start(): Promise<void> {
   let domUpdateCount = 0;
   let domUpdateSamples: Array<{ at: number; count: number }> = [];
   let lastPassiveAt = 0;
+  const domThrottle = new DomThrottle();
 
   // The server owns game time. The page predicts forward at the game rate and
   // gently settles onto each received value instead of jumping the display.
@@ -2083,7 +2136,10 @@ async function start(): Promise<void> {
   /** Dotted route ink for every selected ship, on either screen. */
   function drawDotted(points: Array<[number, number]>, colour = INK_COLOR): number {
     if (points.length < 2) return 0;
-    const dots = dotsAlongPath(points.map(([x, y]) => toScreen(x, y)), settings.view.routeDotSpacingPx);
+    const spacing = quality.routeDetail
+      ? settings.view.routeDotSpacingPx
+      : settings.view.routeDotSpacingPx * 2.5;
+    const dots = dotsAlongPath(points.map(([x, y]) => toScreen(x, y)), spacing);
     for (const dot of dots) {
       routeInk.circle(dot.x, dot.y, settings.view.routeDotRadiusPx).fill({ color: colour, alpha: 0.82 });
     }
@@ -2092,13 +2148,23 @@ async function start(): Promise<void> {
 
   /** Every selected ship keeps all of its active order geometry on screen. */
   function drawSelectedRoute(): void {
-    routeInk.clear();
-    for (const label of routeLabels.removeChildren()) label.destroy();
     const selected = fleetShips.filter((ship) =>
       multiSelect && selectedShipIds.size > 0
         ? selectedShipIds.has(ship.id)
         : ship.id === selectedFleetShip()?.id,
     );
+    const key = JSON.stringify([
+      selected.map((ship) => [ship.id, ship.route, ship.orderLines]),
+      view.x, view.y, view.kmAcross, quality.routeDetail,
+      headingPreviewOn && !headingSheet.hidden,
+    ]);
+    if (key === lastRouteKey) {
+      drawHeadingPreview();
+      return;
+    }
+    lastRouteKey = key;
+    routeInk.clear();
+    for (const label of routeLabels.removeChildren()) label.destroy();
     let drew = false;
     for (const own of selected) {
       if (own.route && own.route.length > 1) {
@@ -2106,7 +2172,7 @@ async function start(): Promise<void> {
       }
       for (const line of own.orderLines ?? []) {
         drew = drawDotted(line.points) > 0 || drew;
-        if (line.queueNumber && line.points.length > 0) {
+        if (quality.routeDetail && line.queueNumber && line.points.length > 0) {
           const point = toScreen(line.points[0]![0], line.points[0]![1]);
           const label = new Text({
             text: String(line.queueNumber),
@@ -2143,16 +2209,103 @@ async function start(): Promise<void> {
     }
   }
 
+  interface FleetGroupView {
+    container: Container;
+    ink: Graphics;
+    label: Text;
+  }
+  const fleetGroupPool: FleetGroupView[] = [];
+  const fleetGroupActive: FleetGroupView[] = [];
+
+  function makeFleetGroupView(): FleetGroupView {
+    const container = new Container();
+    const ink = new Graphics();
+    const label = new Text({
+      text: "",
+      style: { fontFamily: "Source Sans 3", fontSize: 11, fill: INK_COLOR, fontWeight: "700" },
+    });
+    label.anchor.set(0.5);
+    container.addChild(ink, label);
+    fleetGroupLayer.addChild(container);
+    return { container, ink, label };
+  }
+
+  /** At far zoom one fleet marker stands in for a cluster of its ships. */
+  function drawFleetGroups(): void {
+    const fleetByShip = new Map<string, string>();
+    for (const row of fleetShips) {
+      if (row.fleetId) fleetByShip.set(row.id, row.fleetId);
+    }
+    const members = [...ships.values()]
+      .filter((ship) => ship.own && fleetByShip.has(ship.id))
+      .map((ship) => ({
+        id: ship.id,
+        fleetId: fleetByShip.get(ship.id) ?? null,
+        x: ship.x,
+        y: ship.y,
+      }));
+    const plan = groupFleetMarkers(members, scale(), settings.client.fleetGroupPx);
+    const selected = multiSelect ? selectedShipIds : new Set([selectedShipId]);
+    let used = 0;
+    for (const group of plan.groups) {
+      let view = fleetGroupActive[used];
+      if (!view) {
+        view = fleetGroupPool.pop() ?? makeFleetGroupView();
+        fleetGroupActive[used] = view;
+      }
+      used += 1;
+      const screen = toScreen(group.x, group.y);
+      view.container.position.set(screen.x, screen.y);
+      view.ink.clear();
+      view.ink.circle(0, 0, 11).fill({ color: PAPER_COLOR, alpha: 0.94 }).stroke({ width: 1.5, color: INK_COLOR });
+      if (group.ids.some((id) => selected.has(id))) {
+        view.ink.circle(0, 0, 15).stroke({ width: 2.5, color: 0x8c1d1d });
+      }
+      view.label.text = `x${group.count}`;
+      view.container.visible = true;
+    }
+    for (let index = used; index < fleetGroupActive.length; index += 1) {
+      const view = fleetGroupActive[index];
+      if (!view) continue;
+      view.container.visible = false;
+      fleetGroupPool.push(view);
+    }
+    fleetGroupActive.length = used;
+    for (const id of plan.groupedIds) {
+      const ship = ships.get(id);
+      if (!ship) continue;
+      ship.hull.visible = false;
+      ship.ring.visible = false;
+      ship.flag.visible = false;
+      ship.flagshipInk.visible = false;
+      ship.runInk.visible = false;
+      ship.runLabel.visible = false;
+      ship.statusInk.visible = false;
+      ship.statusLabel.visible = false;
+    }
+    fleetGroupLayer.visible = used > 0;
+  }
+
   /** Grey smoke, splashes, hit flashes and a sinking cloud, in paper ink. */
   function drawCombatFx(now: number): void {
     combatFxInk.clear();
+    if (combatFx.length > settings.client.maxLiveEffects) {
+      combatFx.splice(0, combatFx.length - settings.client.maxLiveEffects);
+    }
     const zoom = Math.max(0.55, Math.min(2.2, scale() / 700));
     let write = 0;
     for (const fx of combatFx) {
       const age = now - fx.at;
       if (age < 0 || age > 2_400) continue;
-      combatFx[write++] = fx;
+      if (!quality.smoke && (fx.kind === "fire" || fx.kind === "miss")) continue;
       const screen = toScreen(fx.x, fx.y);
+      if (
+        screen.x < -120 || screen.x > app.screen.width + 120 ||
+        screen.y < -120 || screen.y > app.screen.height + 120
+      ) {
+        continue;
+      }
+      combatFx[write++] = fx;
       const t = age / 1_000;
       if (fx.kind === "fire") {
         const ship = fx.shipId ? ships.get(fx.shipId) : undefined;
@@ -2866,7 +3019,10 @@ async function start(): Promise<void> {
     if (!from) return;
     const target = headingTarget(from, heading, distance);
     const points = [toScreen(from.x, from.y), toScreen(target.x, target.y)];
-    const dots = dotsAlongPath(points, settings.view.routeDotSpacingPx);
+    const spacing = quality.routeDetail
+      ? settings.view.routeDotSpacingPx
+      : settings.view.routeDotSpacingPx * 2.5;
+    const dots = dotsAlongPath(points, spacing);
     for (const dot of dots) {
       headingPreviewInk.circle(dot.x, dot.y, settings.view.routeDotRadiusPx).fill({ color: 0x8c1d1d, alpha: 0.9 });
     }
@@ -2883,7 +3039,17 @@ async function start(): Promise<void> {
     showNotice(`Heading ${heading.toFixed(0)}° for ${distance.toFixed(1)} km.`);
   }
 
-  function renderFleetPanel(): void {
+  function renderFleetPanel(force = false): void {
+    const key = JSON.stringify([
+      money,
+      selectedShipId,
+      multiSelect,
+      [...selectedShipIds].sort(),
+      fleetShips,
+      playerFleets,
+    ]);
+    if (!force && key === fleetPanelKey) return;
+    fleetPanelKey = key;
     fleetCountOut.textContent = String(fleetShips.length);
     fleetSummary.textContent = `${fleetCountText(fleetShips.length)} ships · ${formatMoney(money)} pieces`;
     fleetSelectedCount.textContent = `${selectedShipIds.size} selected`;
@@ -2973,7 +3139,7 @@ async function start(): Promise<void> {
     closeShipActions();
     knownPortsPanel.hidden = true;
     fleetPanel.hidden = false;
-    renderFleetPanel();
+    renderFleetPanel(true);
   }
 
   function stockSize(port: PortInfo): "small" | "mid" | "large" {
@@ -3819,11 +3985,10 @@ async function start(): Promise<void> {
       .stroke({ width: 1, color: INK_COLOR });
   }
 
-  function makeHull(own: boolean, navy: string): Graphics {
-    const hull = new Graphics();
+  function paintHull(hull: Graphics, own: boolean, navy: string): Graphics {
     const size = own ? 1 : 0.85;
     const fleetColor = navyColorNumber(parseNavy(navy) ?? "British");
-
+    hull.clear();
     hull
       .poly([
         0, -13 * size,
@@ -3835,8 +4000,82 @@ async function start(): Promise<void> {
       ])
       .fill(fleetColor)
       .stroke({ width: 1.4, color: own ? 0xf3e7cb : 0x1b2f3d });
-
     return hull;
+  }
+
+  function makeHull(own: boolean, navy: string): Graphics {
+    return paintHull(new Graphics(), own, navy);
+  }
+
+  const shipPool: ShipView[] = [];
+
+  /** One ship's whole display list, made once and reused after it leaves view. */
+  function createShipView(): ShipView {
+    const hull = new Graphics();
+    const ring = new Graphics();
+    ring.visible = false;
+    const flag = new Graphics();
+    drawWhiteFlag(flag);
+    flag.visible = false;
+    const flagshipInk = new Graphics();
+    flagshipInk
+      .moveTo(8, 2).lineTo(8, -12)
+      .stroke({ width: 1.4, color: 0x2a1c10, alpha: 0.95 })
+      .moveTo(8, -12).lineTo(16, -9).lineTo(8, -6).closePath()
+      .fill({ color: 0x8c1d1d });
+    flagshipInk.visible = false;
+    const runInk = new Graphics();
+    runInk.moveTo(0, 0).lineTo(0, -34).stroke({
+      width: 1.6,
+      color: 0xfff8e6,
+      alpha: 0.95,
+      cap: "round",
+    });
+    runInk.visible = false;
+    const runLabel = new Text({
+      text: "Running",
+      style: { fontFamily: "Source Sans 3", fontSize: 10, fill: 0xfff8e6 },
+    });
+    runLabel.visible = false;
+    const statusInk = new Graphics();
+    const statusLabel = new Text({
+      text: "Abandoned",
+      style: { fontFamily: "Source Sans 3", fontSize: 9, fill: 0x4a3a2a },
+    });
+    statusLabel.visible = false;
+    return {
+      id: "",
+      hull,
+      ring,
+      flag,
+      flagshipInk,
+      runInk,
+      runLabel,
+      own: false,
+      classId: "frigate",
+      navy: "British",
+      x: 0,
+      y: 0,
+      heading: 0,
+      targetX: 0,
+      targetY: 0,
+      targetHeading: 0,
+      dockedPortId: null,
+      waitingPortId: null,
+      surrendered: false,
+      running: false,
+      abandoned: false,
+      burning: false,
+      sinking: false,
+      isFlagship: false,
+      statusInk,
+      statusLabel,
+      statusKey: "",
+    };
+  }
+
+  function shipDisplayChildren(ship: ShipView): Array<Container | Graphics | Text> {
+    return [ship.hull, ship.ring, ship.flag, ship.flagshipInk, ship.runInk, ship.runLabel, ship.statusInk, ship.statusLabel];
   }
 
   function updateShipStores(ship: OwnShipSnapshot | null): void {
@@ -4706,13 +4945,12 @@ async function start(): Promise<void> {
       ? ((domLast.count - domFirst.count) * 1000) / (domLast.at - domFirst.at)
       : 0;
     const snapshotAge = lastStateReceivedAt === 0 ? "—" : `${Math.round(now - lastStateReceivedAt)} ms`;
-    const quality = "Auto";
     perfLines.textContent = [
       `FPS ${fps.toFixed(1)} · frame ${averageFrame.toFixed(1)} avg / ${worstFrame.toFixed(1)} worst ms (5 s)`,
-      `Objects ${app.stage.children.length} · effects ${combatFx.length} · DOM ${domRate.toFixed(0)}/s`,
+      `Objects ${app.stage.children.length + fleetGroupActive.length} · effects ${combatFx.length} · DOM ${domRate.toFixed(0)}/s`,
       `Ping ${pingMs > 0 ? `${Math.round(pingMs)} ms` : "—"} · in ${(inboundBytes / 1024).toFixed(1)} KB/s · ${inboundMessages.toFixed(1)} msg/s`,
       `Snapshot age ${snapshotAge} · queued ${pendingStateMessages.length} · server step ${serverWorldMs.toFixed(2)} ms`,
-      `Resolution ${app.renderer.resolution.toFixed(2)}x · quality ${quality} · sending ${pendingOrders.size}`,
+      `Resolution ${app.renderer.resolution.toFixed(2)}x · quality ${qualityLabel()} · sending ${pendingOrders.size}`,
     ].join("\n");
   }
 
@@ -4959,7 +5197,7 @@ async function start(): Promise<void> {
           }
         }
       }
-      while (combatFx.length > 240) combatFx.shift();
+      while (combatFx.length > settings.client.maxLiveEffects) combatFx.shift();
     }
 
     if (Array.isArray(state.fleet)) {
@@ -5157,72 +5395,28 @@ async function start(): Promise<void> {
 
       seen.add(id);
       let ship = ships.get(id);
+      const ownHere = ownIds.has(id);
       if (!ship) {
-        const ownHere = ownIds.has(id);
-        const hull = makeHull(ownHere, navy);
-        const ring = new Graphics();
-        ring.visible = false;
-        const flag = new Graphics();
-        drawWhiteFlag(flag);
-        flag.visible = false;
-        const flagshipInk = new Graphics();
-        flagshipInk
-          .moveTo(8, 2).lineTo(8, -12)
-          .stroke({ width: 1.4, color: 0x2a1c10, alpha: 0.95 })
-          .moveTo(8, -12).lineTo(16, -9).lineTo(8, -6).closePath()
-          .fill({ color: 0x8c1d1d });
-        flagshipInk.visible = false;
-        const runInk = new Graphics();
-        runInk.moveTo(0, 0).lineTo(0, -34).stroke({
-          width: 1.6,
-          color: 0xfff8e6,
-          alpha: 0.95,
-          cap: "round",
-        });
-        runInk.visible = false;
-        const runLabel = new Text({
-          text: "Running",
-          style: { fontFamily: "Source Sans 3", fontSize: 10, fill: 0xfff8e6 },
-        });
-        runLabel.visible = false;
-        const statusInk = new Graphics();
-        const statusLabel = new Text({
-          text: "Abandoned",
-          style: { fontFamily: "Source Sans 3", fontSize: 9, fill: 0x4a3a2a },
-        });
-        statusLabel.visible = false;
-
-        ship = {
-          id,
-          hull,
-          ring,
-          flag,
-          flagshipInk,
-          runInk,
-          runLabel,
-          own: ownHere,
-          classId: String(classId),
-          navy,
-          x,
-          y,
-          heading: headingDeg * (Math.PI / 180),
-          targetX: x,
-          targetY: y,
-          targetHeading: headingDeg * (Math.PI / 180),
-          dockedPortId,
-          waitingPortId,
-          surrendered: false,
-          running: false,
-          abandoned: false,
-          burning: false,
-          sinking: false,
-          isFlagship: false,
-          statusInk,
-          statusLabel,
-        };
-        // 3E-c dropped this call when the flagship pennant was added. Without
-        // it the sprites are created and animated but never reach the map.
-        fleetLayer.addChild(hull, ring, flag, flagshipInk, runInk, runLabel, statusInk, statusLabel);
+        ship = shipPool.pop() ?? createShipView();
+        ship.id = id;
+        ship.own = ownHere;
+        ship.x = x;
+        ship.y = y;
+        ship.heading = headingDeg * (Math.PI / 180);
+        ship.statusKey = "";
+        paintHull(ship.hull, ownHere, navy);
+        ship.ring.clear();
+        ship.ring.visible = false;
+        ship.flag.visible = false;
+        ship.flagshipInk.visible = false;
+        ship.runInk.visible = false;
+        ship.runLabel.visible = false;
+        ship.statusInk.clear();
+        ship.statusLabel.visible = false;
+        ship.hull.alpha = 1;
+        for (const child of shipDisplayChildren(ship)) {
+          if (!child.parent) fleetLayer.addChild(child);
+        }
         ships.set(id, ship);
       }
 
@@ -5246,15 +5440,9 @@ async function start(): Promise<void> {
 
     for (const [id, ship] of ships) {
       if (!seen.has(id)) {
-        ship.hull.destroy();
-        ship.ring.destroy();
-        ship.flag.destroy();
-        ship.flagshipInk.destroy();
-        ship.runInk.destroy();
-        ship.runLabel.destroy();
-        ship.statusInk.destroy();
-        ship.statusLabel.destroy();
+        for (const child of shipDisplayChildren(ship)) child.removeFromParent();
         ships.delete(id);
+        if (shipPool.length < 80) shipPool.push(ship);
       }
     }
 
@@ -5266,7 +5454,8 @@ async function start(): Promise<void> {
       view.y = selectedView.y;
     }
 
-    updateHud(own);
+    const domNow = performance.now();
+    if (domThrottle.due("hud", domNow, settings.client.shipPanelHz)) updateHud(own);
     if (own && target) {
       const distance = Math.hypot(own[2] - target.x, own[3] - target.y);
       if (distance <= settings.sailing.arrivalRadiusKm) {
@@ -5275,8 +5464,10 @@ async function start(): Promise<void> {
       }
     }
 
-    if (!fleetPanel.hidden) renderFleetPanel();
-    renderGroupBar();
+    if (!fleetPanel.hidden && domThrottle.due("fleet", domNow, settings.client.panelHz)) {
+      renderFleetPanel();
+    }
+    if (domThrottle.due("groups", domNow, settings.client.panelHz)) renderGroupBar();
     if (!headingSheet.hidden) drawHeadingPreview();
     if (!shipyardPanel.hidden) refreshShipyardSummary();
     if (!hirePanel.hidden && !hirePanel.contains(document.activeElement)) {
@@ -5285,7 +5476,9 @@ async function start(): Promise<void> {
     if (!tradePanel.hidden) renderTradePanel();
     if (damageShipId && !shipById(damageShipId)) closeDamagePanel();
     if (!damagePanel.hidden) renderDamagePanel();
-    safeLayer("battle log", () => renderBattleLog(state.log));
+    if (domThrottle.due("log", domNow, settings.client.panelHz)) {
+      safeLayer("battle log", () => renderBattleLog(state.log));
+    }
     safeLayer("battle bar", renderBattleBar);
     safeLayer("surrender offer", renderSurrenderOffer);
     safeLayer("status screens", renderEndScreens);
@@ -6405,6 +6598,10 @@ async function start(): Promise<void> {
     if (frameGap > 0) {
       frameDurations.push({ at: now, ms: frameGap });
       while (frameDurations.length > 0 && frameDurations[0]!.at < now - 5_000) frameDurations.shift();
+      const sampled = qualityPreference === "auto"
+        ? qualityGovernor.sample(Math.min(frameGap, 250), now)
+        : qualityLevelForPreference(qualityPreference, qualityLevel);
+      if (sampled !== qualityLevel) applyQuality(sampled);
     }
     flushPendingState();
     updateClockAndNight(now);
@@ -6445,35 +6642,43 @@ async function start(): Promise<void> {
         ship.runLabel.position.set(screen.x + 10, screen.y - 20);
         ship.runLabel.visible = ship.running && ship.hull.visible;
 
-        // 3D status layers: abandoned, fire and sinking stay cheap.
-        ship.statusInk.clear();
+        // 3D status layers are pooled graphics. Rebuild the ink only when the
+        // flags or zoom bucket change, not on every animation frame.
+        const abandonedSize = abandonedMarkerSize(view.kmAcross);
+        const statusKey = `${ship.abandoned}|${ship.burning}|${ship.sinking}|${quality.fireGlow}|${abandonedSize}`;
+        if (statusKey !== ship.statusKey) {
+          ship.statusKey = statusKey;
+          ship.statusInk.clear();
+          if (ship.abandoned) {
+            ship.statusInk
+              .moveTo(-2, 8).lineTo(-2, -abandonedSize)
+              .moveTo(-2, -abandonedSize + 4).lineTo(8, -abandonedSize + 8)
+              .stroke({ width: 1.6, color: 0x3b3024, alpha: 0.9 });
+          }
+          if (ship.burning && quality.fireGlow) {
+            ship.statusInk.circle(0, 0, 12).fill({ color: 0xe06a1f, alpha: 0.22 });
+            ship.statusInk.circle(0, 0, 6).fill({ color: 0xff9b2e, alpha: 0.55 });
+            ship.statusInk.circle(-5, -12, 4).fill({ color: 0x2d2a28, alpha: 0.25 });
+            ship.statusInk.circle(4, -18, 6).fill({ color: 0x2d2a28, alpha: 0.18 });
+          }
+        }
         ship.statusLabel.visible = false;
         ship.hull.alpha = ship.sinking ? 0.5 : 1;
         if (ship.abandoned) {
-          const size = abandonedMarkerSize(view.kmAcross);
-          ship.statusInk
-            .moveTo(-2, 8).lineTo(-2, -size)
-            .moveTo(-2, -size + 4).lineTo(8, -size + 8)
-            .stroke({ width: 1.6, color: 0x3b3024, alpha: 0.9 });
           ship.statusLabel.position.set(screen.x - 18, screen.y + 12);
           ship.statusLabel.text = "Abandoned";
           ship.statusLabel.visible = ship.hull.visible;
-        }
-        if (ship.burning) {
-          ship.statusInk.circle(0, 0, 12).fill({ color: 0xe06a1f, alpha: 0.22 });
-          ship.statusInk.circle(0, 0, 6).fill({ color: 0xff9b2e, alpha: 0.55 });
-          ship.statusInk.circle(-5, -12, 4).fill({ color: 0x2d2a28, alpha: 0.25 });
-          ship.statusInk.circle(4, -18, 6).fill({ color: 0x2d2a28, alpha: 0.18 });
         }
         if (ship.sinking) {
           ship.statusLabel.position.set(screen.x - 15, screen.y + 12);
           ship.statusLabel.text = "Sinking";
           ship.statusLabel.visible = ship.hull.visible;
         }
-        ship.statusInk.visible = ship.hull.visible && (ship.abandoned || ship.burning);
+        ship.statusInk.visible = ship.hull.visible && (ship.abandoned || (ship.burning && quality.fireGlow));
       });
     }
 
+    safeLayer("fleet groups", drawFleetGroups);
     const drawnShips = [...ships.values()].filter(
       (ship) => ship.hull.visible && ship.hull.parent === fleetLayer,
     );
@@ -6529,6 +6734,7 @@ async function start(): Promise<void> {
     // Wind streaks blow towards the direction the wind is going to.
     safeLayer("wind", () => {
     windLayer.clear();
+    if (!quality.wind) return;
     const angle = ((windFrom + 180) * Math.PI) / 180;
     const dx = Math.sin(angle);
     const dy = -Math.cos(angle);
@@ -6573,6 +6779,12 @@ async function start(): Promise<void> {
       if (size === "small" || size === "medium" || size === "large") setUiSize(size);
     });
   }
+  for (const button of document.querySelectorAll<HTMLButtonElement>("[data-quality]")) {
+    button.addEventListener("click", () => {
+      setQualityPreference(parseQualityPreference(button.dataset.quality));
+    });
+  }
+  applyQuality(qualityLevelForPreference(qualityPreference, 0));
 
   drawGrain();
   if (identity.warning) showNotice(identity.warning);

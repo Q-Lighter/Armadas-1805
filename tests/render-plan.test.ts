@@ -167,7 +167,8 @@ test("the live block graphics budget keeps only the nearest blocks", () => {
 // this check reads the real client source for that one attachment and pairs it
 // with real state positions, camera zooms and marker sizes.
 const clientSource = readFileSync("client/main.ts", "utf8");
-const SHIP_LAYER_ATTACHED = /fleetLayer\.addChild\(\s*hull,\s*ring,\s*flag/.test(clientSource);
+const SHIP_LAYER_ATTACHED = /fleetLayer\.addChild\(\s*hull,\s*ring,\s*flag/.test(clientSource) ||
+  /for \(const child of shipDisplayChildren\(ship\)\)[\s\S]{0,80}fleetLayer\.addChild\(child\)/.test(clientSource);
 
 interface DrawMarker {
   id: string;

@@ -11,6 +11,7 @@
   <body class="game">
     <div id="game-root"></div>
     <p class="client-error paper" id="client-error" role="alert" hidden></p>
+    <p class="quality-note paper" id="quality-note" hidden>Reduced effects for speed</p>
 
     <header class="hud hud-top paper">
       <div class="money" id="money-panel" title="Pieces of eight">
@@ -314,6 +315,12 @@
         <button class="btn size-option" type="button" data-size="small" aria-pressed="false">S</button>
         <button class="btn size-option" type="button" data-size="medium" aria-pressed="true">M</button>
         <button class="btn size-option" type="button" data-size="large" aria-pressed="false">L</button>
+      </div>
+      <div class="size-picker quality-picker" role="group" aria-label="Quality">
+        <span class="size-label">Quality</span>
+        <button class="btn size-option quality-option" type="button" data-quality="auto" aria-pressed="true">Auto</button>
+        <button class="btn size-option quality-option" type="button" data-quality="high" aria-pressed="false">High</button>
+        <button class="btn size-option quality-option" type="button" data-quality="low" aria-pressed="false">Low</button>
       </div>
       <details class="debug-info" id="debug-info" hidden>
         <summary>Debug info</summary>

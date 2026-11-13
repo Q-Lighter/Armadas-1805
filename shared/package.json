@@ -221,6 +221,22 @@
     "./battle-orders": {
       "types": "./dist/battleOrders.d.ts",
       "default": "./dist/battleOrders.js"
+    },
+    "./quality": {
+      "types": "./dist/quality.d.ts",
+      "default": "./dist/quality.js"
+    },
+    "./fleet-markers": {
+      "types": "./dist/fleetMarkers.d.ts",
+      "default": "./dist/fleetMarkers.js"
+    },
+    "./effect-budget": {
+      "types": "./dist/effectBudget.d.ts",
+      "default": "./dist/effectBudget.js"
+    },
+    "./dom-throttle": {
+      "types": "./dist/domThrottle.d.ts",
+      "default": "./dist/domThrottle.js"
     }
   },
   "files": [

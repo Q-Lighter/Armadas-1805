@@ -424,6 +424,22 @@ h2 {
   font-weight: 600;
 }
 
+/* Quality governor note. Small, out of the way, and never clickable. */
+.quality-note {
+  position: fixed;
+  z-index: 3;
+  left: max(0.5rem, env(safe-area-inset-left));
+  top: calc(max(0.5rem, env(safe-area-inset-top)) + 3.6rem);
+  margin: 0;
+  padding: 0.2rem 0.45rem;
+  font-size: calc(0.72rem * var(--ui-scale));
+  color: var(--ink-faded);
+  pointer-events: none;
+}
+.quality-note[hidden] { display: none; }
+.quality-picker { margin-top: 0.5rem; }
+.quality-picker .size-option { min-width: calc(3.2rem * var(--ui-scale)); }
+
 /* A short server message, on paper, fading after a few seconds. */
 .chart-notice {
   position: fixed;

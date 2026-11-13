@@ -43,6 +43,16 @@ export const settings = {
     tapHoldRingPx: 24,
     /** Stroke width of the hold-to-sail progress ring. */
     tapHoldRingWidthPx: 3,
+    /** Draft: live combat effects kept before the oldest is dropped. */
+    maxLiveEffects: 150,
+    /** Draft: same-fleet ships closer than this on screen share one marker. */
+    fleetGroupPx: 14,
+    /** Draft: selected-ship panel refresh rate. */
+    shipPanelHz: 2,
+    /** Draft: Fleet card and battle-log refresh rate. */
+    panelHz: 4,
+    /** Draft: resolution multiplier when the governor reaches its last step. */
+    lowResolutionScale: 0.7,
   },
 
   /** The chart: the flat map frame and how it is turned into tiles. */

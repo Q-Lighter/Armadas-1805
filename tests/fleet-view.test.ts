@@ -107,11 +107,11 @@ test("Fleet rows show state, crew percentage and the red crew warning", () => {
 
 test("shipyard cards follow the port size and show every table fact", () => {
   const small = shipyardCards("test", "small", "British");
-  assert.deepEqual(small.map((card) => card.classId), ["escort", "raider"]);
+  assert.deepEqual(small.map((card) => card.classId), ["escort", "raider", "fireShip"]);
   assert.equal(small.find((card) => card.classId === "raider")?.price, 1_000);
 
   const medium = shipyardCards("test", "mid", "French");
-  assert.deepEqual(medium.map((card) => card.classId), ["frigate", "escort", "raider", "trade"]);
+  assert.deepEqual(medium.map((card) => card.classId), ["frigate", "escort", "raider", "trade", "fireShip"]);
   const frigate = medium.find((card) => card.classId === "frigate")!;
   assert.equal(frigate.crew, 330);
   assert.equal(frigate.guns, "40 (0H / 28M / 12L)");
@@ -121,7 +121,7 @@ test("shipyard cards follow the port size and show every table fact", () => {
   const large = shipyardCards("dev", "large", "Dutch");
   assert.deepEqual(
     large.map((card) => card.classId),
-    ["line", "frigate", "escort", "raider", "trade"],
+    ["line", "frigate", "escort", "raider", "trade", "fireShip"],
   );
 });
 

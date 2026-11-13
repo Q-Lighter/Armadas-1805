@@ -220,6 +220,53 @@ Read this file at the start of every prompt, then follow it for the whole sessio
   small 3,000, medium 8,000, large 20,000 pieces, plus 25% per tier. With no
   defeater the ports become unowned and keep their tier.
 
+## Fire ships and towing
+
+- The fire ship is one cheap type, the same for every navy, not one of the 24
+  catalogue ships. AGREED: 500 pieces of eight, one game day to deliver, named
+  once, counted against the 30-ship limit. Cruise 4 knots, top 6, hull 400,
+  sight 15 km, draught 2.5 m, no cargo, no guns and no ammunition. Its full
+  crew is 10% of that navy's raider crew, rounded up, and at least 3; the 10%
+  minimum-crew rule still applies, so it arrives with no crew. Draft: its turn
+  rate is 60% of a raider's. It is a SMALL ship for damage, never an armed ship
+  for port capture, and can be boarded, captured, claimed and abandoned.
+- Research hook: `fireShipsUnlocked()` is true only in test and dev rooms for
+  now. Normal rooms show "Needs research" in the buy list. It is sold at ports
+  that sell small ships, never at NPC ports, and sails in a fleet; in Convoy it
+  sits in the protected middle with the trade ships.
+- Ignite now: the crew escape (no loss, no prisoners, crew set to zero). The
+  ship keeps its heading, its speed falls to zero over 20 seconds, then it
+  drifts with the wind. It burns at strength 100 and nobody fights that fire
+  until the hull is gone. Normal fire spread applies: about 100 m, chance per
+  second 0.01 x strength / 100, x2.5 downwind and x0.3 upwind, including the
+  owner's own ships.
+- Ignite on contact: the fire ship steers for a chosen enemy ship and ignites
+  within 100 m (Draft). It also ignites at once below 30% hull (Draft). After
+  150 seconds (Draft), or if the target is faster, it holds position and says
+  "Cannot reach: target is faster". A sunk or lost target ends the order. Ports
+  cannot be targets and fire never damages ports or docked ships.
+- Ignition is the only order that consumes the ship. Sunk before ignition, it
+  just sinks. A towed fire ship refuses ignition with "Cast off first".
+- Towing (31 October rules; the first and third were Proposed): a frigate,
+  line ship or flagship may tow ONE fire ship within 300 m. The pair travels at
+  the tower's achievable speed minus 2 knots, never below zero. The fire ship
+  follows 120 m behind on the tower's path, accepts only Cast off, and leaves
+  its formation slot (the existing detached state; Rejoin is available).
+- Cast off works from either ship. Auto cast off (Proposed) happens when either
+  ship fires or is fired at, an armed enemy within 3 km is engaging or being
+  engaged, or the tower is boarded, sinks or is abandoned. The notice is
+  "Tow cast off: battle nearby".
+- Lights (minimal Draft for 3G): every ship has lights on by default and Lights
+  on/off orders. Daylight is 06:00-18:00. At night an enemy with lights off is
+  seen only within 5 km of one of your ships; lights on uses the normal sight.
+  Lights never affect capture ranges. Real night sight and weather are Phase 6.
+- Balance simulation (Proposed, not agreed): 100 seeded real-loop runs at night,
+  lights off, one fire ship 4 km from five frigates hove to 60-100 m apart.
+  Target was about 85% ignition against Fight only if attacked and 15-25%
+  against Engage anything. The measured result is in the 3G-b build log; the
+  existing hove-to gunnery timing means both stances reached 100%, so the target
+  was not met without unrelated combat changes.
+
 ## Elimination and winning
 
 - Every player has exactly one flagship. In a normal room it is the navy's

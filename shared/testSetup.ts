@@ -90,6 +90,7 @@ const FORWARDED_TEST_PARAMS = [
   "hunger",
   "enemy",
   "enemynavy",
+  "fireship",
   "dummy",
   "fleet",
   "name",

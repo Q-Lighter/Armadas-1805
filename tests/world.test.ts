@@ -69,7 +69,8 @@ test("the state for one player is compact and public", () => {
   assert.ok(Array.isArray(state.chart.cells));
 
   // Two ships plus the first chart cells stay small.
-  assert.ok(bytes < 2_500, `state was ${bytes} bytes`);
+  // 3G adds six private fire-ship/tow/lights flags to each own ship snapshot.
+  assert.ok(bytes < 2_700, `state was ${bytes} bytes`);
 });
 
 test("orders are checked before they reach a ship", () => {

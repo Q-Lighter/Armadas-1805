@@ -52,6 +52,14 @@ import {
   removeTestDummies,
   refillPlayerShips,
   spawnTestEnemies,
+  spawnTestFireShips,
+  spawnTestAnchoredFleet,
+  setTestTimeOfDay,
+  orderFireShipIgnite,
+  orderTowFireShip,
+  cancelFireShipContact,
+  castOffTow,
+  setShipLights,
   rejoinPlayerShip,
   requestChartResume,
   resupplyShip,
@@ -146,6 +154,7 @@ export class GameRoom {
     let dummy: DummyBehaviour = "fights";
     let abandonedSpec: string | null = null;
     let enemyCrewPercent: number | null = null;
+    let fireShipCount = 0;
     let displayName: string | null = null;
     let teamJoin = false;
     if (kind !== "normal") {
@@ -246,6 +255,13 @@ export class GameRoom {
           return new Response("Abandoned must look like frigate:1,line:1.", { status: 400 });
         }
         abandonedSpec = rawAbandoned;
+      }
+      const rawFireShips = url.searchParams.get("fireship");
+      if (rawFireShips !== null) {
+        if (!/^\d{1,2}$/.test(rawFireShips) || Number(rawFireShips) > settings.testing.maxEnemySpawn) {
+          return new Response("Fire ships must be a whole number from 0 to 20.", { status: 400 });
+        }
+        fireShipCount = Number(rawFireShips);
       }
       const rawEnemyCrew = url.searchParams.get("enemycrew");
       if (rawEnemyCrew !== null) {
@@ -348,6 +364,9 @@ export class GameRoom {
     }
     if (enemyCrewPercent !== null && kind !== "normal") {
       setTestEnemyCrew(this.world, enemyCrewPercent);
+    }
+    if (fireShipCount > 0 && kind !== "normal") {
+      spawnTestFireShips(this.world, playerId, fireShipCount);
     }
     // A refresh, a new tab or a reconnect starts with an empty client chart.
     // Replay the stored record and all block geometry before normal changes.
@@ -562,6 +581,8 @@ export class GameRoom {
       slot?: unknown;
       ids?: unknown;
       enabled?: unknown;
+      on?: unknown;
+      hour?: unknown;
       mode?: unknown;
       target?: unknown;
       deg?: unknown;
@@ -765,6 +786,22 @@ export class GameRoom {
       if (typeof order.count === "number") setTestEnemyCrew(this.world, order.count);
     } else if (order.t === "setFire" && this.world.kind !== "normal") {
       setTestFire(this.world, playerId, order.ship);
+    } else if (order.t === "igniteFireShip") {
+      orderFireShipIgnite(this.world, playerId, order.ship, order.mode,
+        typeof order.target === "string" ? order.target : undefined);
+    } else if (order.t === "cancelIgnite") {
+      cancelFireShipContact(this.world, playerId, order.ship);
+    } else if (order.t === "towShip") {
+      orderTowFireShip(this.world, playerId, order.ship, order.target);
+    } else if (order.t === "castOff") {
+      castOffTow(this.world, playerId, order.ship);
+    } else if (order.t === "lights") {
+      setShipLights(this.world, playerId, order.ship, order.on);
+    } else if (order.t === "testAnchoredFleet" && this.world.kind !== "normal") {
+      const stance = order.stance === "engage" ? "engage" : "fightIfAttacked";
+      spawnTestAnchoredFleet(this.world, playerId, stance);
+    } else if (order.t === "testTimeOfDay" && this.world.kind !== "normal") {
+      if (typeof order.hour === "number") setTestTimeOfDay(this.world, order.hour);
     }
 
     if (typeof order.id === "string" && order.id.length <= 80) {

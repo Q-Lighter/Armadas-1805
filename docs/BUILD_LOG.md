@@ -2884,3 +2884,47 @@ planner's clearance waypoints without adding a sideways zigzag.
 - `npm test`: passed (446 tests).
 - `npm run build`: passed.
 - No browser is available in this workspace, so the chart was not viewed.
+
+## 3G-b: fire ships, towing and lights
+
+- Added the fire ship as a seventh type in the ship table, generated once per
+  navy from the raider row. It is not one of the 24 catalogue entries. The
+  AGREED 500-piece price, one-day delivery, 4/6 knots, 400 hull, 15 km sight and
+  2.5 m draught are in `shared/data/ships.ts` and `shared/settings.ts`; sight is
+  stored in settings because sight is not yet a per-ship field. Its smaller
+  crew, 60% raider turn rate, ignition range, 150-second give-up, tow reach and
+  5 km night range are Draft settings. The research hook returns true only in
+  test and dev rooms, and normal buy lists show "Needs research".
+- Implemented Ignite now, Ignite on contact, Tow, Cast off and Lights on/off
+  in `shared/world.ts`, with server orders and `&fireship=N`. Contact steering
+  reuses the same predicted approach path as boarding; ignition consumes the
+  ship and leaves a burning hulk that drifts after 20 seconds. Towing follows
+  120 m behind, costs the tower 2 knots, breaks automatically in battle, and a
+  towed fire ship refuses ignition. Lights use the existing visibility path:
+  at night a lights-off enemy is visible only inside 5 km. Other players receive
+  only the normal navy and class snapshot, never exact fire-ship data.
+- Test helpers: anchored five-frigate fleet with stance choice and a time-of-day
+  control, available only in test and dev rooms.
+
+### Balance simulation
+
+`node scripts/balance-fire-ship.mjs`, 100 seeded real-loop runs per stance,
+night, lights off, one fire ship starting 4 km from five frigates hove to
+60-100 m apart:
+
+- Fight only if attacked: fire ship ignited 100%, at least one frigate caught
+  fire in 78% of runs, mean 0.83 frigates alight.
+- Engage anything: fire ship ignited 100%, at least one frigate caught fire in
+  78% of runs, mean 0.78 frigates alight.
+
+The proposed 85% and 15-25% targets were not met. The cause is existing hove-to
+gunnery timing: frigates close to 250 m before training a broadside, so a
+4-knot fire ship reaches its 100 m ignition range first. Changing the global
+engage or pivot range would alter every battle, so it was reverted rather than
+quietly tuning unrelated combat.
+
+### Checks
+
+- `npm test`: passed.
+- `npm run build`: passed.
+- No browser is available, so the simulation is the only balance evidence.

@@ -13,6 +13,7 @@ import {
   type ShipSize,
 } from "./data/ships.js";
 import type { RoomKind } from "./fog.js";
+import { fireShipsUnlocked } from "./fireShip.js";
 import {
   canPortSellShip,
   crewHireCost,
@@ -185,6 +186,8 @@ export interface ShipyardCard {
   closestAngleDeg: number;
   turn90GameMinutes: number;
   draughtM: number;
+  /** The Fire ships research hook is closed outside test and dev rooms. */
+  locked: boolean;
 }
 
 function deliveryText(kind: RoomKind, classId: ShipClassId): string {
@@ -219,6 +222,7 @@ export function shipyardCards(
       closestAngleDeg: type.closestAngleDeg,
       turn90GameMinutes: type.turn90GameMinutes,
       draughtM: type.draughtM,
+      locked: classId === "fireShip" && !fireShipsUnlocked(kind),
     });
   }
   return cards;

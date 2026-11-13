@@ -5,6 +5,7 @@
 // Prices, delivery times and crew rules live in shared/settings.ts.
 
 import type { NavyId } from "../navies.js";
+import { settings } from "../settings.js";
 
 export type ShipClassId =
   | "flagship"
@@ -12,7 +13,8 @@ export type ShipClassId =
   | "frigate"
   | "escort"
   | "raider"
-  | "trade";
+  | "trade"
+  | "fireShip";
 
 export type ShipSize = "small" | "mid" | "large";
 
@@ -47,6 +49,7 @@ export const SHIP_CLASS_IDS: readonly ShipClassId[] = [
   "escort",
   "raider",
   "trade",
+  "fireShip",
 ];
 
 export const BUYABLE_SHIP_CLASS_IDS = [
@@ -55,6 +58,7 @@ export const BUYABLE_SHIP_CLASS_IDS = [
   "escort",
   "raider",
   "trade",
+  "fireShip",
 ] as const;
 
 export type BuyableShipClassId = (typeof BUYABLE_SHIP_CLASS_IDS)[number];
@@ -67,6 +71,7 @@ export const SHIP_SIZE_BY_CLASS: Record<ShipClassId, ShipSize> = {
   escort: "small",
   raider: "small",
   trade: "mid",
+  fireShip: "small",
 };
 
 /**
@@ -254,6 +259,34 @@ function buildShipMap(): Record<NavyId, Record<ShipClassId, ShipType>> {
     out[navy] = {} as Record<ShipClassId, ShipType>;
   }
   for (const ship of ALL_SHIP_TYPES) out[ship.navy][ship.classId] = ship;
+  // AGREED: one cheap fire ship, the same sailing numbers for every navy.
+  // Its full crew is 10% of that navy's raider crew, rounded up, at least 3.
+  for (const navy of navies) {
+    const raider = out[navy].raider;
+    out[navy].fireShip = {
+      navy,
+      classId: "fireShip",
+      name: "Fire ship",
+      guns: 0,
+      crew: Math.max(
+        settings.ships.fireShips.minCrew,
+        Math.ceil(raider.crew * settings.ships.fireShips.crewShareOfRaider),
+      ),
+      cruiseKnots: 4,
+      topKnots: 6,
+      cargoTonnes: 0,
+      storesDays: 20,
+      heavyGuns: 0,
+      mediumGuns: 0,
+      lightGuns: 0,
+      broadsideLb: 0,
+      reloadGameMinutes: 0,
+      hull: 400,
+      closestAngleDeg: raider.closestAngleDeg,
+      turn90GameMinutes: raider.turn90GameMinutes / settings.ships.fireShips.turnRateShareOfRaider,
+      draughtM: settings.ships.fireShips.draughtM,
+    };
+  }
   return out;
 }
 

@@ -166,6 +166,14 @@
       "types": "./dist/portView.d.ts",
       "default": "./dist/portView.js"
     },
+    "./fire-ship-ui": {
+      "types": "./dist/fireShipUi.d.ts",
+      "default": "./dist/fireShipUi.js"
+    },
+    "./fire-ship": {
+      "types": "./dist/fireShip.d.ts",
+      "default": "./dist/fireShip.js"
+    },
     "./fleet-view": {
       "types": "./dist/fleetView.d.ts",
       "default": "./dist/fleetView.js"

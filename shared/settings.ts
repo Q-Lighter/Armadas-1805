@@ -107,6 +107,8 @@ export const settings = {
       trade: 3_000,
       frigate: 6_000,
       line: 14_000,
+      /** AGREED: a fire ship costs 500 pieces of eight. */
+      fireShip: 500,
     },
     /** Game days from purchase to delivery, by ship size. */
     deliveryGameDays: {
@@ -132,6 +134,37 @@ export const settings = {
     },
     /** The longest permanent ship name the server accepts. */
     maxNameLength: 40,
+
+    /** Fire ships, towing and lights. Every number here is Draft unless marked. */
+    fireShips: {
+      /** AGREED: 10% of that navy's raider crew, rounded up. */
+      crewShareOfRaider: 0.1,
+      /** The smallest fire-ship complement, whatever the share rounds to. */
+      minCrew: 3,
+      /** Draft: turn rate as a share of a raider's, so 60% and clumsy. */
+      turnRateShareOfRaider: 0.6,
+      /** AGREED: 15 km sight is stored here until sight is per-ship. */
+      sightKm: 15,
+      /** AGREED: 2.5 m draught. */
+      draughtM: 2.5,
+      /** Draft: contact ignition distance and the badly-shot-up hull share. */
+      igniteRangeM: 100,
+      hullIgniteShare: 0.3,
+      /** Draft: give up an unreachable contact attack after this long. */
+      giveUpSeconds: 150,
+      /** Draft: the burning hulk falls from its speed to zero over this time. */
+      speedFallRealSeconds: 20,
+      /** Draft: an ignited fire ship burns at this strength, never fought. */
+      burnStrength: 100,
+      /** Draft: tow cable reach, following distance and speed cost. */
+      towRangeM: 300,
+      towDistanceM: 120,
+      towSpeedPenaltyKnots: 2,
+      /** Draft: an armed enemy inside this range breaks the tow. */
+      autoCastOffEnemyRangeKm: 3,
+      /** Draft: lights-off ships are seen only this close at night. */
+      nightLightsOffSpotRangeKm: 5,
+    },
 
     /** Ship stores and the cost of sailing them. Draft values. */
     stores: {
@@ -298,6 +331,7 @@ export const settings = {
       escort: { bow: 2, stern: 2 },
       raider: { bow: 2, stern: 2 },
       trade: { bow: 0, stern: 0 },
+      fireShip: { bow: 0, stern: 0 },
     },
     /** Draft size groups for the light- and heavy-gun damage rules. */
     smallClasses: ["raider", "escort", "fireShip"],

@@ -1,4 +1,4 @@
-// Part A: the 24-ship catalogue and the pure buying and crew rules.
+// Part A: the catalogue (24 ships plus the fire ship) and the pure rules.
 
 import assert from "node:assert/strict";
 import { test } from "node:test";
@@ -55,12 +55,13 @@ test("the role sizes and prices are the draft rules", () => {
   assert.equal(SHIP_SIZE_BY_CLASS.line, "large");
   assert.equal(SHIP_SIZE_BY_CLASS.flagship, "large");
 
-  assert.deepEqual(BUYABLE_SHIP_CLASS_IDS, ["line", "frigate", "escort", "raider", "trade"]);
+  assert.deepEqual(BUYABLE_SHIP_CLASS_IDS, ["line", "frigate", "escort", "raider", "trade", "fireShip"]);
   assert.equal(shipPrice("raider"), 1_000);
   assert.equal(shipPrice("escort"), 2_500);
   assert.equal(shipPrice("trade"), 3_000);
   assert.equal(shipPrice("frigate"), 6_000);
   assert.equal(shipPrice("line"), 14_000);
+  assert.equal(shipPrice("fireShip"), 500);
   assert.equal(shipPrice("flagship"), null);
 });
 

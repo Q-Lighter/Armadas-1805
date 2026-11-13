@@ -94,7 +94,18 @@ import { recordJourneys, simplifyTrail, startJourney, stopJourney, stopAllJourne
 import type { JourneyState } from "./journey.js";
 import type { DebugStats } from "./loadMetrics.js";
 import { SpatialGrid } from "./spatialGrid.js";
-import { gameClockAt } from "./time.js";
+import { gameClockAt, GAME_HOUR_MS } from "./time.js";
+import {
+  contactAttackGivenUp,
+  contactIgnitionInRange,
+  fireShipsUnlocked,
+  hullTooLowToWait,
+  igniteRefusal,
+  isTowerClass,
+  towRefusal,
+  towSpeedKnots,
+  withinNightLightsOffRange,
+} from "./fireShip.js";
 import {
   captureRangeKm,
   captureStatus,
@@ -224,7 +235,7 @@ import {
   type ShipStores,
   type TransferDirection,
 } from "./trade.js";
-import { DEFAULT_STANCE } from "./stances.js";
+import { DEFAULT_STANCE, type Stance } from "./stances.js";
 
 const DEG = Math.PI / 180;
 const RAD = 180 / Math.PI;
@@ -582,6 +593,13 @@ export interface OwnShipSnapshot {
   abandoned?: boolean;
   burning?: boolean;
   fireStrength?: number;
+  /** 3G fire ship, tow and lights detail. Own ships only. */
+  fireShipIgnited?: boolean;
+  fireShipMode?: "now" | "contact";
+  fireShipTargetId?: string | null;
+  towedBy?: string | null;
+  towingId?: string | null;
+  lightsOn?: boolean;
   prisoners?: number;
   capturedCrew?: number;
   capturedChoiceSeconds?: number;
@@ -2721,6 +2739,80 @@ export function spawnTestEnemyFleet(
   return made;
 }
 
+/** Test/dev only: extra fully crewed fire ships near my start. */
+export function spawnTestFireShips(world: World, playerId: string, count: number): number {
+  if (world.kind === "normal" || !Number.isInteger(count) || count < 1) return 0;
+  const leader = shipsForOwner(world, playerId)[0];
+  if (!leader) return 0;
+  const capped = Math.min(count, settings.testing.maxEnemySpawn);
+  for (let index = 0; index < capped; index += 1) {
+    const angle = Math.PI / 2 + index * 0.06;
+    const point = enemySpawnPoint(leader, 1, angle);
+    const ship = createShip(
+      `fireship-${world.nextShipId++}`,
+      "fireShip",
+      point.x,
+      point.y,
+      leader.headingRad,
+      leader.navy,
+      `Fire ship ${index + 1}`,
+    );
+    ship.crew = ship.fullCrew;
+    ship.damage.crew = ship.crew;
+    ship.stores = fullStores(shipTypeFor(leader.navy, "fireShip"));
+    ship.lightsOff = false;
+    world.fleets.get(playerId)?.push(ship);
+  }
+  pushNotice(world, playerId, `Spawned ${capped} fire ship${capped === 1 ? "" : "s"}.`);
+  return capped;
+}
+
+/** Test/dev only: five frigates hove to in a tight line, with a stance. */
+export function spawnTestAnchoredFleet(
+  world: World,
+  playerId: string,
+  stance: Stance,
+): number {
+  if (world.kind === "normal") return 0;
+  const leader = shipsForOwner(world, playerId)[0];
+  if (!leader) return 0;
+  const enemyNavy = NAVY_IDS.find((navy) => navy !== leader.navy) ?? "French";
+  const fleet = world.botFleets.get("TEST-ENEMY") ?? [];
+  const centre = enemySpawnPoint(leader, 4, Math.PI / 2);
+  for (let index = 0; index < 5; index += 1) {
+    const offset = (index - 2) * 0.08;
+    const ship = createShip(
+      `enemy-${world.nextShipId++}`,
+      "frigate",
+      centre.x + offset,
+      centre.y,
+      0,
+      enemyNavy,
+      `Anchored frigate ${index + 1}`,
+    );
+    ship.crew = ship.fullCrew;
+    ship.damage.crew = ship.crew;
+    ship.stores = fullStores(shipTypeFor(enemyNavy, "frigate"));
+    ship.hoveTo = true;
+    ship.speedKnots = 0;
+    ship.stance = stance;
+    ship.order = null;
+    fleet.push(ship);
+  }
+  world.botFleets.set("TEST-ENEMY", fleet);
+  pushNotice(world, playerId, "Spawned 5 anchored frigates, 4 km east.");
+  return 5;
+}
+
+/** Test/dev only: move the room clock to the next occurrence of an hour. */
+export function setTestTimeOfDay(world: World, hour: number): boolean {
+  if (world.kind === "normal" || !Number.isInteger(hour) || hour < 0 || hour > 23) return false;
+  const clock = gameClockAt(world.gameMs);
+  const delta = (hour - clock.hour + 24) % 24;
+  world.gameMs += delta * GAME_HOUR_MS;
+  return true;
+}
+
 /** Test tools: add another group even if the URL helper already ran. */
 export function spawnTestEnemies(
   world: World,
@@ -3720,6 +3812,15 @@ function removeSunkShips(world: World, sunkIds: Set<string>): void {
           reason: world.explodedShips.has(ship.id) ? "blewUp" : "sunk",
         });
       }
+      if (ship.classId === "fireShip" && ship.fireShip?.ignited !== true) {
+        pushNoticeOnce(world, ownerId, ship.id, "sunkBeforeIgnition",
+          "Fire ship sunk before ignition");
+      }
+      if (ship.towedShipId || ship.towerShipId) {
+        const tower = ship.towedShipId ? ship : shipEntry(world, ship.towerShipId ?? "")?.ship;
+        const tow = ship.towerShipId ? ship : shipEntry(world, ship.towedShipId ?? "")?.ship;
+        clearTow(tower, tow);
+      }
       if (world.players.has(ownerId)) pushNotice(world, ownerId, `Ship sunk: ${ship.name}.`);
       if (!world.sinkingShips.some((entry) => entry.ship.id === ship.id)) {
         const nowMs = combatRealSeconds(world) * 1000;
@@ -4417,6 +4518,10 @@ export function buyShip(
   }
   if (port.npc) {
     pushNotice(world, playerId, "This port does not sell ships.");
+    return null;
+  }
+  if (classId === "fireShip" && !fireShipsUnlocked(world.kind)) {
+    pushNotice(world, playerId, "Needs research");
     return null;
   }
   if (!portUsableForBuying(world, port, playerId)) {
@@ -5271,6 +5376,318 @@ function chooseCoastEscapeHeading(ship: Ship, windFromDeg: number): number | nul
   return bestHeading;
 }
 
+/** Remove a tow link and let the fire ship hold its present position. */
+function clearTow(tower: Ship | undefined, tow: Ship | undefined): void {
+  if (tower) {
+    tower.towedShipId = null;
+    tower.stationSpeedLimit = undefined;
+  }
+  if (tow) {
+    tow.towerShipId = null;
+    tow.order = null;
+    tow.route = null;
+    tow.speedKnots = 0;
+    tow.towed = false;
+  }
+}
+
+/** Cut a tow from either end and send the one shared notice. */
+export function castOffTow(world: World, playerId: string, shipId: unknown): boolean {
+  if (typeof shipId !== "string") return false;
+  const entry = shipEntry(world, shipId);
+  if (!entry || entry.ownerId !== playerId) return false;
+  const ship = entry.ship;
+  const tower = ship.towedShipId ? ship : undefined;
+  const tow = ship.towerShipId
+    ? shipEntry(world, ship.towerShipId)?.ship
+    : tower?.towedShipId
+      ? shipEntry(world, tower.towedShipId)?.ship
+      : undefined;
+  if (!tower && !tow) return false;
+  clearTow(tower, tow);
+  pushNoticeOnce(world, playerId, ship.id, "castOff", "Tow cast off");
+  return true;
+}
+
+/** The auto cast-off conditions. */
+function battleNearby(world: World, tower: Ship, tow: Ship): boolean {
+  const nowMs = combatRealSeconds(world) * 1000;
+  const recent = (ship: Ship): boolean =>
+    ship.lastCombatRealMs !== null && nowMs - ship.lastCombatRealMs < 5_000;
+  if (recent(tower) || recent(tow) || tower.fire?.burning || tow.fire?.burning) return true;
+  if (world.boardingFights.has(tower.id) || world.boardingFights.has(tow.id)) return true;
+  if (tower.abandoned || tow.abandoned || tower.damage.hull <= 0 || tow.damage.hull <= 0) return true;
+  for (const entry of allShips(world)) {
+    const other = entry.ship;
+    if (other.id === tower.id || other.id === tow.id) continue;
+    if (other.navy === tower.navy || other.abandoned || other.surrendered) continue;
+    if (shipSpecFor(other).guns <= 0) continue;
+    if (Math.hypot(other.x - tower.x, other.y - tower.y) >
+        settings.ships.fireShips.autoCastOffEnemyRangeKm) continue;
+    const engaged = world.engagements.has(other.id) ||
+      [...world.engagements.values()].some((entry) =>
+        entry.shipId === other.id || entry.targetShipId === other.id);
+    if (recent(other) || engaged) return true;
+  }
+  return false;
+}
+
+/** Keep towed fire ships 120 m behind their tower, at tower speed less 2 knots. */
+function updateTows(world: World): void {
+  for (const [ownerId, fleet] of world.fleets) {
+    for (const tower of fleet) {
+      if (!tower.towedShipId) continue;
+      const towEntry = shipEntry(world, tower.towedShipId);
+      const tow = towEntry?.ship;
+      if (!tow || tow.towerShipId !== tower.id) {
+        tower.towedShipId = null;
+        continue;
+      }
+      if (battleNearby(world, tower, tow)) {
+        clearTow(tower, tow);
+        pushNoticeOnce(world, ownerId, tower.id, "autoCastOff", "Tow cast off: battle nearby");
+        continue;
+      }
+      const distance = settings.ships.fireShips.towDistanceM / 1_000;
+      const spec = shipSpecFor(tower);
+      const performance = shipPerformance(spec, tower.damage, world.windFromDeg);
+      const achievable = speedForHeading(spec, tower.headingRad, world.windFromDeg) *
+        performance.speedFactor;
+      const pairSpeed = towSpeedKnots(achievable);
+      tow.x = tower.x - Math.sin(tower.headingRad) * distance;
+      tow.y = tower.y + Math.cos(tower.headingRad) * distance;
+      tow.headingRad = tower.headingRad;
+      tow.speedKnots = pairSpeed;
+      tow.order = null;
+      tow.route = null;
+      tow.formationStation = false;
+      tow.detached = true;
+      tower.stationSpeedLimit = pairSpeed;
+      tower.speedKnots = Math.min(tower.speedKnots, pairSpeed);
+    }
+  }
+}
+
+function towerForTow(world: World, tow: Ship): void {
+  if (!tow.towerShipId) return;
+  const tower = shipEntry(world, tow.towerShipId)?.ship;
+  if (tower?.towedShipId === tow.id) tower.towedShipId = null;
+  tow.towerShipId = null;
+  tow.towed = false;
+}
+
+/** Mark one fire ship alight and let its crew escape. */
+function igniteFireShip(
+  world: World,
+  ownerId: string,
+  ship: Ship,
+  mode: "now" | "contact",
+  targetId: string | null,
+): void {
+  if (ship.fireShip?.ignited) return;
+  if (ship.towerShipId) return;
+  ship.crew = 0;
+  ship.damage.crew = 0;
+  syncDamageCrew(ship);
+  ship.fire = { burning: true, strength: settings.ships.fireShips.burnStrength };
+  ship.fireShip = {
+    ignited: true,
+    mode,
+    targetShipId: targetId,
+    elapsedRealSeconds: 0,
+    speedAtIgnition: ship.speedKnots,
+  };
+  ship.fireStartedByOwnerId = ownerId;
+  ship.fireStartedByNavy = ship.navy;
+  ship.order = null;
+  ship.route = null;
+  ship.hoveTo = false;
+  ship.formationStation = false;
+  clearBoarding(world, ship);
+  world.engagements.delete(ship.id);
+  towerForTow(world, ship);
+  pushNoticeOnce(world, ownerId, ship.id, "ignited", "Fire ship ignited");
+  pushBattleLog(world, ownerId, `${ship.name} was set alight.`);
+  pushCombatEvent(world, { kind: "fireStarted", x: ship.x, y: ship.y, shipId: ship.id });
+}
+
+/** Start Ignite now or Ignite on contact. The server and tests share this. */
+export function orderFireShipIgnite(
+  world: World,
+  playerId: string,
+  shipId: unknown,
+  mode: unknown,
+  targetId?: unknown,
+): boolean {
+  if (typeof shipId !== "string") return false;
+  const ship = shipsForOwner(world, playerId).find((candidate) => candidate.id === shipId);
+  if (!ship) return false;
+  const chosenMode = mode === "contact" ? "contact" : "now";
+  const target = typeof targetId === "string" ? shipEntry(world, targetId)?.ship : undefined;
+  const refusal = igniteRefusal({
+    isFireShip: ship.classId === "fireShip",
+    ignited: ship.fireShip?.ignited === true,
+    towed: Boolean(ship.towerShipId),
+    mode: chosenMode,
+    targetIsPort: typeof targetId === "string" && world.ports.has(targetId),
+    targetIsEnemyShip: Boolean(target && target.navy !== ship.navy && !target.deliveryPortId),
+  });
+  if (refusal) {
+    if (refusal === "towed") pushNotice(world, playerId, "Cast off first");
+    else if (refusal === "target is a port") pushNotice(world, playerId, "Fire ships cannot attack ports");
+    return false;
+  }
+  if (chosenMode === "contact") {
+    if (!targetId || !target) return false;
+    ship.fireShip = {
+      ignited: false,
+      mode: "contact",
+      targetShipId: target.id,
+      elapsedRealSeconds: 0,
+    };
+    ship.order = { type: "sailTo", x: target.x, y: target.y };
+    ship.route = null;
+    pushNotice(world, playerId, `Fire ship: attack ${target.name}`);
+  } else {
+    igniteFireShip(world, playerId, ship, "now", null);
+  }
+  return true;
+}
+
+/** Cancel an unlit contact attack and hold position. */
+export function cancelFireShipContact(
+  world: World,
+  playerId: string,
+  shipId: unknown,
+): boolean {
+  if (typeof shipId !== "string") return false;
+  const ship = shipsForOwner(world, playerId).find((candidate) => candidate.id === shipId);
+  if (!ship?.fireShip || ship.fireShip.ignited || ship.fireShip.mode !== "contact") return false;
+  ship.fireShip.mode = "now";
+  ship.fireShip.targetShipId = null;
+  holdPosition(ship);
+  return true;
+}
+
+/** Tower a fire ship within 300 m. One tower, one tow. */
+export function orderTowFireShip(
+  world: World,
+  playerId: string,
+  towerId: unknown,
+  towId: unknown,
+): boolean {
+  if (typeof towerId !== "string" || typeof towId !== "string") return false;
+  const fleet = shipsForOwner(world, playerId);
+  const tower = fleet.find((ship) => ship.id === towerId);
+  const tow = fleet.find((ship) => ship.id === towId);
+  if (!tower || !tow) return false;
+  const distanceM = Math.hypot(tower.x - tow.x, tower.y - tow.y) * 1_000;
+  const refusal = towRefusal({
+    towerClass: tower.classId,
+    towClass: tow.classId,
+    towIgnited: tow.fireShip?.ignited === true,
+    distanceM,
+    towerBusy: Boolean(tower.towedShipId),
+  });
+  if (refusal) {
+    pushNotice(world, playerId, refusal);
+    return false;
+  }
+  tower.towedShipId = tow.id;
+  tow.towerShipId = tower.id;
+  tow.towed = true;
+  tow.detached = true;
+  tow.order = null;
+  tow.route = null;
+  tow.formationStation = false;
+  pushNotice(world, playerId, `Towing ${tow.name}`);
+  return true;
+}
+
+/** The lights flag never affects capture; it only changes night spotting. */
+export function setShipLights(
+  world: World,
+  playerId: string,
+  shipId: unknown,
+  on: unknown,
+): boolean {
+  if (typeof shipId !== "string") return false;
+  const ship = shipsForOwner(world, playerId).find((candidate) => candidate.id === shipId);
+  if (!ship) return false;
+  ship.lightsOff = on !== true;
+  return true;
+}
+
+/** A burning fire ship decays its speed over 20 real seconds, then drifts. */
+function stepIgnitedFireShip(
+  world: World,
+  ownerId: string,
+  ship: Ship,
+  dtGameSeconds: number,
+  windFromDeg: number,
+): void {
+  const state = ship.fireShip;
+  if (!state) return;
+  const realSeconds = dtGameSeconds / settings.time.sailingTimeScale;
+  state.elapsedRealSeconds += realSeconds;
+  const fall = settings.ships.fireShips.speedFallRealSeconds;
+  if (state.elapsedRealSeconds < fall) {
+    const fromX = ship.x;
+    const fromY = ship.y;
+    const start = state.speedAtIgnition ?? ship.speedKnots;
+    ship.speedKnots = Math.max(0, start * (1 - state.elapsedRealSeconds / fall));
+    const travelKm = ship.speedKnots * 1.852 * (dtGameSeconds / 3_600);
+    ship.x += Math.sin(ship.headingRad) * travelKm;
+    ship.y -= Math.cos(ship.headingRad) * travelKm;
+    resolveMovement(world, ownerId, ship, fromX, fromY);
+    return;
+  }
+  ship.speedKnots = 0;
+  ship.order = null;
+  ship.route = null;
+  stepShip(ship, dtGameSeconds, windFromDeg);
+}
+
+/** Contact steering; ignition at 100 m, low hull, or the 150 s give-up. */
+function stepContactFireShip(
+  world: World,
+  ownerId: string,
+  ship: Ship,
+  dtGameSeconds: number,
+): boolean {
+  const state = ship.fireShip;
+  if (!state || state.ignited || state.mode !== "contact") return false;
+  state.elapsedRealSeconds += dtGameSeconds / settings.time.sailingTimeScale;
+  const targetEntry = state.targetShipId ? shipEntry(world, state.targetShipId) : null;
+  const target = targetEntry?.ship;
+  const lost = !target || target.deliveryPortId || target.damage.hull <= 0 ||
+    Math.hypot(target.x - ship.x, target.y - ship.y) > settings.ships.fireShips.sightKm;
+  if (lost) {
+    holdPosition(ship);
+    state.mode = "now";
+    state.targetShipId = null;
+    return true;
+  }
+  const distanceM = Math.hypot(target.x - ship.x, target.y - ship.y) * 1_000;
+  if (hullTooLowToWait(ship.damage.hull, shipSpecFor(ship).hull) ||
+      contactIgnitionInRange(distanceM)) {
+    igniteFireShip(world, ownerId, ship, "contact", target.id);
+    return true;
+  }
+  if (target.speedKnots > shipSpecFor(ship).topKnots + 0.5 ||
+      contactAttackGivenUp(state.elapsedRealSeconds)) {
+    state.mode = "now";
+    state.gaveUp = true;
+    state.targetShipId = null;
+    holdPosition(ship);
+    pushNoticeOnce(world, ownerId, ship.id, "cannotReach", "Cannot reach: target is faster");
+    return true;
+  }
+  ship.order = { type: "sailTo", x: target.x, y: target.y };
+  ship.route = null;
+  return false;
+}
+
 /** Update every owner's discovered ground from all of that owner's ships. */
 function updateFog(world: World): void {
   for (const [ownerId, chart] of world.charts) {
@@ -5307,6 +5724,22 @@ function stepOwnerShip(
     ship.order = null;
     return;
   }
+
+  // A towed fire ship accepts no order except Cast off.
+  if (ship.towerShipId) {
+    ship.speedKnots = 0;
+    ship.order = null;
+    ship.route = null;
+    ship.formationStation = false;
+    return;
+  }
+
+  if (ship.fireShip?.ignited) {
+    stepIgnitedFireShip(world, ownerId, ship, dtGameSeconds, windFromDeg);
+    return;
+  }
+
+  if (stepContactFireShip(world, ownerId, ship, dtGameSeconds)) return;
 
   if (ship.route) {
     // The helm follows a pure-pursuit point, not the next waypoint vertex.
@@ -5413,13 +5846,16 @@ function stepOwnerShip(
         // The general 4 km arrival radius would treat a 3 km boarding target
         // as already reached. Use a point just inside grapple range instead.
         ? Math.max(0.006, settings.combat.boardingRangeM / 1000 * 0.1)
+        : ship.fireShip?.mode === "contact"
+        ? Math.max(0.006, settings.ships.fireShips.igniteRangeM / 1000 * 0.5)
         : world.engagements.has(ship.id)
           ? 0.02
           : ship.formationStation ? settings.fleets.stationArrivalRadiusKm : undefined,
     ship.formationStation || ship.runState || ship.boardingShipId || world.engagements.has(ship.id)
       ? 0
       : settings.sailing.finalApproachKm,
-    Boolean(ship.boardingShipId || world.engagements.has(ship.id)),
+    Boolean(ship.boardingShipId || world.engagements.has(ship.id) ||
+      ship.fireShip?.mode === "contact"),
   );
   resolveMovement(world, ownerId, ship, fromX, fromY);
 
@@ -7008,6 +7444,7 @@ export function stepWorld(
       stepOwnerShip(world, ownerId, ship, dtGameSeconds, windFromDeg);
     }
   }
+  updateTows(world);
 
   const separationMovedShips = separateShips(world, dtGameSeconds);
   updateFleetCommands(world);
@@ -7398,8 +7835,19 @@ export function visibleStateFor(
   const activeOwn = own.filter((ship) => !ship.deliveryPortId);
   const ownGrid = new SpatialGrid<Ship>(settings.fog.sightRangeKm);
   for (const ship of activeOwn) ownGrid.insert(ship);
-  const isVisible = (ship: Ship): boolean =>
-    ownGrid.query(ship.x, ship.y, settings.fog.sightRangeKm).length > 0;
+  const clock = gameClockAt(world.gameMs);
+  const nearestOwnKm = (ship: Ship): number => {
+    let best = Number.POSITIVE_INFINITY;
+    for (const ownShip of activeOwn) {
+      best = Math.min(best, Math.hypot(ownShip.x - ship.x, ownShip.y - ship.y));
+    }
+    return best;
+  };
+  const isVisible = (ship: Ship): boolean => {
+    if (ownGrid.query(ship.x, ship.y, settings.fog.sightRangeKm).length === 0) return false;
+    if (clock.isDay || ship.lightsOff !== true || ship.fire?.burning) return true;
+    return withinNightLightsOffRange(false, true, nearestOwnKm(ship));
+  };
 
   const chart = world.charts.get(playerId) ?? createChart(world.kind);
   world.charts.set(playerId, chart);
@@ -7706,6 +8154,12 @@ export function visibleStateFor(
       abandoned: ship.abandoned === true,
       burning: ship.fire?.burning === true,
       fireStrength: ship.fire?.burning ? Number((ship.fire.strength ?? 0).toFixed(1)) : 0,
+      fireShipIgnited: ship.fireShip?.ignited === true,
+      fireShipMode: ship.fireShip?.mode,
+      fireShipTargetId: ship.fireShip?.targetShipId ?? null,
+      towedBy: ship.towerShipId ?? null,
+      towingId: ship.towedShipId ?? null,
+      lightsOn: ship.lightsOff !== true,
       prisoners: Math.max(0, Math.floor(ship.prisoners ?? 0)),
       capturedCrew: Math.max(0, Math.floor(ship.capturedCrew ?? 0)),
       capturedChoiceSeconds: ship.capturedChoiceDeadlineRealMs

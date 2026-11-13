@@ -224,7 +224,7 @@ function convoySlots(
   const escorts: number[] = [];
   members.forEach((ship, index) => {
     if (index === 0) return;
-    (ship.classId === "trade" ? traders : escorts).push(index);
+    (ship.classId === "trade" || ship.classId === "fireShip" ? traders : escorts).push(index);
   });
   const columns = traders.length >= 5 ? 3 : 2;
   const rows = Math.ceil(traders.length / columns);

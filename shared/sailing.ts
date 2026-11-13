@@ -149,6 +149,25 @@ export interface Ship {
   abandoned?: boolean;
   /** 3D: fire state; a burning ship is visible to anyone who sees it. */
   fire?: { burning: boolean; strength: number };
+  /** 3G: fire-ship ignition state. Only ignition consumes the ship. */
+  fireShip?: {
+    ignited: boolean;
+    mode: "now" | "contact";
+    targetShipId?: string | null;
+    /** Real seconds since the order or ignition, for the 150 s give-up. */
+    elapsedRealSeconds: number;
+    /** Speed when ignition began, for the 20 s fall to zero. */
+    speedAtIgnition?: number;
+    gaveUp?: boolean;
+  };
+  /** 3G: the fire ship this tower is towing, if any. */
+  towedShipId?: string | null;
+  /** 3G: the tower towing this fire ship, if any. */
+  towerShipId?: string | null;
+  /** 3G: true while this fire ship is in tow; it only accepts Cast off. */
+  towed?: boolean;
+  /** 3G: lights are on unless this is true. */
+  lightsOff?: boolean;
   /** 3D: captured crew awaiting Join/Kill/prisoners, and their deadline. */
   capturedCrew?: number;
   capturedChoiceDeadlineRealMs?: number | null;

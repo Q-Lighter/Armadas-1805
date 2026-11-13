@@ -58,6 +58,7 @@ const TABLE: Record<NavyId, Record<ShipClassId, [number, number, number, number,
     frigate: [0, 28, 10, 230, 2, 5200],
     escort: [0, 8, 10, 90, 1.5, 1800],
     raider: [0, 0, 10, 30, 1, 800],
+    fireShip: [0, 0, 0, 0, 0, 400],
     trade: [0, 0, 12, 40, 3, 3000],
   },
   French: {
@@ -66,6 +67,7 @@ const TABLE: Record<NavyId, Record<ShipClassId, [number, number, number, number,
     frigate: [0, 28, 12, 230, 2, 4600],
     escort: [0, 4, 12, 60, 1.5, 1600],
     raider: [0, 0, 14, 40, 1, 900],
+    fireShip: [0, 0, 0, 0, 0, 400],
     trade: [0, 0, 8, 20, 3, 2400],
   },
   Spanish: {
@@ -74,6 +76,7 @@ const TABLE: Record<NavyId, Record<ShipClassId, [number, number, number, number,
     frigate: [0, 26, 14, 220, 2, 5400],
     escort: [0, 2, 14, 60, 1.5, 1700],
     raider: [0, 4, 20, 90, 1, 1200],
+    fireShip: [0, 0, 0, 0, 0, 400],
     trade: [0, 0, 24, 70, 2.5, 3600],
   },
   Dutch: {
@@ -82,12 +85,13 @@ const TABLE: Record<NavyId, Record<ShipClassId, [number, number, number, number,
     frigate: [0, 26, 10, 210, 2, 4400],
     escort: [0, 0, 16, 50, 1.5, 1600],
     raider: [0, 0, 8, 24, 1, 700],
+    fireShip: [0, 0, 0, 0, 0, 400],
     trade: [0, 0, 8, 20, 3.5, 3200],
   },
 };
 
 test("all 24 ships match the supplied combat table", () => {
-  for (const type of ALL_SHIP_TYPES) {
+  for (const type of ALL_SHIP_TYPES.filter((entry) => entry.classId !== "fireShip")) {
     const [h, m, l, broadside, reload, hull] = TABLE[type.navy][type.classId];
     assert.deepEqual(
       [type.heavyGuns, type.mediumGuns, type.lightGuns, type.broadsideLb,

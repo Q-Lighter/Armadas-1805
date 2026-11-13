@@ -2743,3 +2743,17 @@ planner's clearance waypoints without adding a sideways zigzag.
 - `npm test`: passed (413 tests including the journey, cap, privacy, reconnect
   and chart-filter tests).
 - `npm run build`: passed.
+
+
+## 3E-sail-d: flagship marker setting
+
+- The map pennant from 3E-c is now off by default. Menu has a remembered
+  "Show flagship pennant on the map" toggle. When on it is drawn at 60% size
+  and only over the player's own flagship.
+- The "Flagship" tags in the ship panel, Fleet panel and selection list are
+  unchanged, so the flagship is still identifiable with the map marker off.
+
+### Checks
+
+- `npm test`: passed (414 tests, including the opt-in/default marker test).
+- `npm run build`: passed.

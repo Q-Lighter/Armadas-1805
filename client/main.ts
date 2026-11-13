@@ -64,6 +64,7 @@ import { cameraScale, screenToWorld, worldToScreen } from "@naval/shared/camera"
 import { buildDiscoveredOutline, type OutlineRing } from "@naval/shared/discovered-outline";
 import { catmullRomPath, dotsAlongPath } from "@naval/shared/route-ink";
 import { trailIdsForMode, type ChartTrailMode } from "@naval/shared/journey";
+import { flagshipPennantVisible } from "@naval/shared/flagship-marker";
 import { readTapToSail, resolveTap, writeTapToSail } from "@naval/shared/tap-to-sail";
 import { fogDebugLine, type FogDebugInfo } from "@naval/shared/fog-view";
 import { GRAPHICS_RESET_NOTICE, GraphicsRecovery } from "@naval/shared/graphics-safety";
@@ -249,6 +250,16 @@ function reportClientError(error: unknown, where: string): void {
   if (box) {
     box.textContent = `Something went wrong: ${message} (${where})`;
     box.hidden = false;
+  }
+}
+
+const FLAGSHIP_PENNANT_KEY = "armadas.flagshipPennant";
+
+function readSavedFlagshipPennant(): boolean {
+  try {
+    return localStorage.getItem(FLAGSHIP_PENNANT_KEY) === "1";
+  } catch {
+    return settings.flagshipMarker.pennantDefaultVisible;
   }
 }
 
@@ -856,6 +867,7 @@ async function start(): Promise<void> {
   const knownPortsEmpty = element<HTMLElement>("known-ports-empty");
   const knownPortsClose = element<HTMLButtonElement>("known-ports-close");
   const bordersButton = element<HTMLButtonElement>("borders-btn");
+  const flagshipPennantButton = element<HTMLButtonElement>("flagship-pennant-btn");
   const menuButton = element<HTMLButtonElement>("menu-btn");
   const menuPanel = element<HTMLElement>("menu-panel");
   const menuClose = element<HTMLButtonElement>("menu-close");
@@ -1123,6 +1135,7 @@ async function start(): Promise<void> {
   };
 
   let mode: ViewMode = "ship";
+  let showFlagshipPennant = readSavedFlagshipPennant();
   let chartTrailMode: ChartTrailMode = settings.journey.defaultChartTrail;
   const trailPoints = new Map<string, Array<[number, number]>>();
   let lostMarks: Array<[number, number]> = [];
@@ -6444,6 +6457,16 @@ async function start(): Promise<void> {
     bordersButton.setAttribute("aria-pressed", String(bordersVisible));
     drawBorders();
   });
+  flagshipPennantButton.setAttribute("aria-pressed", String(showFlagshipPennant));
+  flagshipPennantButton.addEventListener("click", () => {
+    showFlagshipPennant = !showFlagshipPennant;
+    flagshipPennantButton.setAttribute("aria-pressed", String(showFlagshipPennant));
+    try {
+      localStorage.setItem(FLAGSHIP_PENNANT_KEY, showFlagshipPennant ? "1" : "0");
+    } catch {
+      // Remembering the choice is optional.
+    }
+  });
 
   function drawSuspects(): void {
     suspectSegments = 0;
@@ -6922,8 +6945,12 @@ async function start(): Promise<void> {
         ship.flag.visible = whiteFlagVisible(ship.hull.visible, ship.surrendered);
         ship.flagshipInk.position.set(screen.x, screen.y);
         ship.flagshipInk.rotation = ship.heading;
-        ship.flagshipInk.scale.set(flagScale);
-        ship.flagshipInk.visible = ship.own && ship.isFlagship && ship.hull.visible;
+        ship.flagshipInk.scale.set(flagScale * settings.flagshipMarker.pennantScale);
+        ship.flagshipInk.visible = flagshipPennantVisible(
+          ship.own,
+          ship.isFlagship,
+          showFlagshipPennant,
+        ) && ship.hull.visible;
         ship.runInk.position.set(screen.x, screen.y);
         ship.runInk.rotation = ship.heading;
         ship.runInk.visible = ship.running && ship.hull.visible;

@@ -512,6 +512,11 @@ export const settings = {
   },
 
   /** Automatic route planning around discovered land. Draft values. */
+  flagshipMarker: {
+    /** The 3E-c pennant is hidden on the map until the player opts in. */
+    pennantDefaultVisible: false as boolean,
+    pennantScale: 0.6,
+  },
   journey: {
     /** A trail point every this many km, or after this many game seconds. */
     trailPointKm: 1,

@@ -94,6 +94,8 @@ export interface Ship {
   detached: boolean;
   /** Station keeping may not exceed this speed, in knots. */
   stationSpeedLimit?: number;
+  /** A follower steering for its formation slot, not a normal destination. */
+  formationStation?: boolean;
   /** The planned route behind the current order, or null. */
   route: ShipRoute | null;
   /** The tack the ship will use the next time it has to beat upwind. */
@@ -220,7 +222,7 @@ export function chooseTackSide(
   windFromDeg: number,
   knownLand: (x: number, y: number) => boolean,
   clearanceKm: number = settings.route.clearanceKm,
-): TackSide {
+): TackSide | undefined {
   const bearing = Math.atan2(target.x - ship.x, -(target.y - ship.y));
   if (angleOffWindDeg(bearing, windFromDeg) >= spec.closestAngleDeg - 1e-9) {
     return ship.tackSide;
@@ -246,7 +248,9 @@ export function chooseTackSide(
   };
   const left = freeDistance(1);
   const right = freeDistance(-1);
-  if (left === right) return ship.tackSide;
+  // Open water: let upwindHeadingRad tack normally. Forcing the current side
+  // here made a follower on the wrong tack sail away from its station forever.
+  if (left === right) return left < limit ? ship.tackSide : undefined;
   return left > right ? 1 : -1;
 }
 

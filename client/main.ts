@@ -50,6 +50,7 @@ import {
   stanceOptionIds,
 } from "@naval/shared/fleet-ui";
 import { headingTarget } from "@naval/shared/fleet-orders";
+import { formationSlots } from "@naval/shared/fleets";
 import { orderedChartBlocks } from "@naval/shared/chart-draw";
 import { chartTextureSize, planChartDetail } from "@naval/shared/chart-detail";
 import {
@@ -396,6 +397,22 @@ function parseFleet(raw: unknown): FleetSnapshot | null {
     });
   }
   if (members.length === 0) return null;
+  const rawStation = source.station && typeof source.station === "object"
+    ? source.station as Record<string, unknown>
+    : {};
+  const out: Array<{ id: string; reason: string }> = [];
+  if (Array.isArray(rawStation.out)) {
+    for (const entry of rawStation.out.slice(0, settings.fleets.maxShipsPerFleet)) {
+      if (!entry || typeof entry !== "object") continue;
+      const row = entry as Record<string, unknown>;
+      if (typeof row.id === "string" && typeof row.reason === "string") {
+        out.push({ id: row.id, reason: row.reason.slice(0, 40) });
+      }
+    }
+  }
+  const stationTotal = Math.max(members.length, finiteNumber(rawStation.total) ?? members.length);
+  const stationIn = Math.max(0, Math.min(stationTotal, finiteNumber(rawStation.inStation) ??
+    members.filter((member) => member.state === "leader" || member.state === "inStation").length));
   return {
     id: source.id,
     name: source.name.slice(0, 80),
@@ -403,6 +420,7 @@ function parseFleet(raw: unknown): FleetSnapshot | null {
     formation: (typeof source.formation === "string" ? source.formation : "lineAhead") as FleetSnapshot["formation"],
     stance: (typeof source.stance === "string" ? source.stance : "fightIfAttacked") as FleetSnapshot["stance"],
     members,
+    station: { inStation: stationIn, total: stationTotal, out },
   };
 }
 
@@ -1005,6 +1023,8 @@ async function start(): Promise<void> {
 
   const fleetLayer = new Container();
   const fleetGroupLayer = new Container();
+  const fleetFormationInk = new Graphics();
+  fleetGroupLayer.addChild(fleetFormationInk);
   const combatFxInk = new Graphics();
   const combatRangeInk = new Graphics();
   const lastSeenLayer = new Container();
@@ -2216,6 +2236,7 @@ async function start(): Promise<void> {
   }
   const fleetGroupPool: FleetGroupView[] = [];
   const fleetGroupActive: FleetGroupView[] = [];
+  let formationPreview: { fleetId: string; formation: FleetSnapshot["formation"]; until: number } | null = null;
 
   function makeFleetGroupView(): FleetGroupView {
     const container = new Container();
@@ -2230,8 +2251,99 @@ async function start(): Promise<void> {
     return { container, ink, label };
   }
 
+  function convexHull(points: Array<{ x: number; y: number }>): Array<{ x: number; y: number }> {
+    if (points.length <= 2) return points;
+    const sorted = [...points].sort((a, b) => a.x - b.x || a.y - b.y);
+    const cross = (o: { x: number; y: number }, a: { x: number; y: number }, b: { x: number; y: number }): number =>
+      (a.x - o.x) * (b.y - o.y) - (a.y - o.y) * (b.x - o.x);
+    const lower: Array<{ x: number; y: number }> = [];
+    for (const point of sorted) {
+      while (lower.length >= 2 && cross(lower[lower.length - 2]!, lower[lower.length - 1]!, point) <= 0) lower.pop();
+      lower.push(point);
+    }
+    const upper: Array<{ x: number; y: number }> = [];
+    for (let index = sorted.length - 1; index >= 0; index -= 1) {
+      const point = sorted[index]!;
+      while (upper.length >= 2 && cross(upper[upper.length - 2]!, upper[upper.length - 1]!, point) <= 0) upper.pop();
+      upper.push(point);
+    }
+    lower.pop();
+    upper.pop();
+    return [...lower, ...upper];
+  }
+
+  /**
+   * At far zoom a 185 m station gap is only a few pixels. Link the fleet in
+   * formation order and draw its outline so the shape reads without ten tiny
+   * overlapping hulls and rings.
+   */
+  function drawFormationLinks(now: number): void {
+    const gapPx = settings.fleets.defaultGapM / 1000 * scale();
+    const linksVisible = gapPx < settings.client.fleetGroupPx;
+    for (const fleet of linksVisible ? playerFleets : []) {
+      const ordered = [fleet.leaderId, ...fleet.members.map((member) => member.id).filter((id) => id !== fleet.leaderId)]
+        .map((id) => ships.get(id))
+        .filter((ship): ship is ShipView => Boolean(ship && ship.own));
+      if (ordered.length < 2) continue;
+      const points = ordered.map((ship) => toScreen(ship.x, ship.y));
+      let tooWide = false;
+      for (let index = 1; index < points.length; index += 1) {
+        if (Math.hypot(points[index]!.x - points[index - 1]!.x, points[index]!.y - points[index - 1]!.y) >= settings.client.fleetGroupPx) {
+          tooWide = true;
+          break;
+        }
+      }
+      if (tooWide) continue;
+      // Thin dotted link in formation (member) order.
+      for (let index = 1; index < points.length; index += 1) {
+        const a = points[index - 1]!;
+        const b = points[index]!;
+        const length = Math.hypot(b.x - a.x, b.y - a.y);
+        const steps = Math.max(1, Math.floor(length / 5));
+        fleetFormationInk.moveTo(a.x, a.y).lineTo(b.x, b.y).stroke({ width: 0.7, color: INK_COLOR, alpha: 0.22 });
+        for (let dot = 1; dot < steps; dot += 2) {
+          const t = dot / steps;
+          fleetFormationInk.circle(a.x + (b.x - a.x) * t, a.y + (b.y - a.y) * t, 0.8)
+            .fill({ color: INK_COLOR, alpha: 0.42 });
+        }
+      }
+      const hull = convexHull(points);
+      if (hull.length >= 3) {
+        fleetFormationInk.moveTo(hull[0]!.x, hull[0]!.y);
+        for (const point of hull.slice(1)) fleetFormationInk.lineTo(point.x, point.y);
+        fleetFormationInk.closePath().stroke({ width: 1, color: INK_COLOR, alpha: 0.28 });
+      }
+    }
+    if (formationPreview && now < formationPreview.until) {
+      const fleet = playerFleets.find((candidate) => candidate.id === formationPreview!.fleetId);
+      const leader = fleet ? ships.get(fleet.leaderId) : undefined;
+      if (fleet && leader) {
+        const members = fleet.members.map((member) => {
+          const ship = ships.get(member.id);
+          return { id: member.id, classId: (ship?.classId ?? "frigate") as OwnShipSnapshot["classId"], speedKnots: 0 };
+        });
+        const slots = formationSlots({
+          formation: formationPreview.formation,
+          members,
+          headingRad: leader.heading,
+        });
+        for (const slot of slots.slice(1)) {
+          const point = toScreen(leader.x + slot.x, leader.y + slot.y);
+          const alpha = 0.28 + 0.32 * Math.max(0, (formationPreview.until - now) / 3_000);
+          fleetFormationInk.circle(point.x, point.y, 4)
+            .fill({ color: PAPER_COLOR, alpha: alpha * 0.6 })
+            .stroke({ width: 1, color: INK_COLOR, alpha });
+        }
+      }
+    } else if (formationPreview && now >= formationPreview.until) {
+      formationPreview = null;
+    }
+  }
+
   /** At far zoom one fleet marker stands in for a cluster of its ships. */
   function drawFleetGroups(): void {
+    fleetFormationInk.clear();
+    drawFormationLinks(performance.now());
     const fleetByShip = new Map<string, string>();
     for (const row of fleetShips) {
       if (row.fleetId) fleetByShip.set(row.id, row.fleetId);
@@ -2715,6 +2827,11 @@ async function start(): Promise<void> {
       }
       formation.addEventListener("change", () => {
         sendCommand({ t: "fleetUpdate", fleet: fleet.id, formation: formation.value });
+        formationPreview = {
+          fleetId: fleet.id,
+          formation: formation.value as FleetSnapshot["formation"],
+          until: performance.now() + 3_000,
+        };
       });
       formationLabel.append(formation);
       const stanceLabelEl = document.createElement("label");
@@ -2733,6 +2850,19 @@ async function start(): Promise<void> {
       });
       stanceLabelEl.append(stance);
       selects.append(formationLabel, stanceLabelEl);
+
+      const stationLine = document.createElement("p");
+      stationLine.className = "fleet-station";
+      stationLine.textContent = `In station ${fleet.station.inStation} of ${fleet.station.total}`;
+      const stationReasons = document.createElement("ul");
+      stationReasons.className = "fleet-station-reasons";
+      for (const row of fleet.station.out) {
+        const item = document.createElement("li");
+        const member = shipById(row.id);
+        item.textContent = `${member?.name ?? row.id}: ${row.reason}`;
+        stationReasons.append(item);
+      }
+      stationReasons.hidden = fleet.station.out.length === 0;
 
       const members = document.createElement("ul");
       members.className = "fleet-member-list";
@@ -2789,6 +2919,7 @@ async function start(): Promise<void> {
         button.addEventListener("click", run);
         actions.append(button);
       };
+      action("Select fleet", () => selectWholeFleet(fleet.id));
       action("Hold", () => sendFleetOrder(fleet.id, { type: "hold" }));
       action("Heading", () => openHeading(fleet.id));
       action("Patrol", () => beginPatrol(fleet.id, null));
@@ -2832,7 +2963,7 @@ async function start(): Promise<void> {
         if (selectedFleetId === fleet.id) selectedFleetId = null;
       });
 
-      card.append(head, selects, members, actions);
+      card.append(head, selects, stationLine, stationReasons, members, actions);
       fleetCards.append(card);
     }
   }

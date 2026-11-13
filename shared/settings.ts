@@ -206,6 +206,22 @@ export const settings = {
     stationSpeedShare: 0.15,
     /** How far ahead of its slot a follower steers, in metres. Draft: 120 m. */
     stationLookAheadM: 120,
+    /** A station order stops this close to its aim point. Draft: 80 m. */
+    stationArrivalRadiusKm: 0.08,
+    /** Leader pace while followers are out of station. Draft: 80%. */
+    formationPaceShare: 0.8,
+    /** Ships steer away inside this range. Draft: 80 m. */
+    separationAvoidM: 80,
+    /** Ships also slow down inside this range. Draft: 60 m. */
+    separationSlowM: 60,
+    /** Hard minimum hull spacing, enforced even for stopped ships. 40 m. */
+    separationMinM: 40,
+    /** A hard push leaves this much clearance above the minimum. Draft: 1 m. */
+    separationClearanceM: 1,
+    /** Heading nudge away from a close neighbour, per game second. Draft: 0.35 deg. */
+    separationTurnDegPerGameSecond: 0.35,
+    /** Speed cap when another ship is inside the slow range. Draft: 4 kn. */
+    separationSlowKnots: 4,
     /** A follower farther than this from its slot is out of station. Draft: 300 m. */
     outOfStationM: 300,
     /** A formation turns into line ahead this near the no-sail angle. Draft: 10 deg. */

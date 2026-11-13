@@ -2558,3 +2558,65 @@ add safety nets and visible test helpers.
 - No browser or headless Chromium is available, so the governor, grouping and
   pooled display list were not visually inspected; the build and pure tests
   were run.
+
+## Session 3E-perf-c: formations and ship separation
+
+**Date:** 2026-11-13
+**Branch:** main
+
+### What was built
+
+- A real-loop formation harness (real sailing, wind 315, 20 km with one 90
+  degree turn) covering line ahead, line abreast, wedge, convoy and free chase.
+  Before the fix every formed preset showed 1/10 in station, slot errors around
+  3.9 km and pairs as close as 32 m; they had bunched instead of forming.
+- Actual causes found and fixed: the fleet order was deleted as soon as the
+  leader reached its 4 km destination radius, leaving followers stopped short;
+  station orders inherited that 4 km arrival radius; `chooseTackSide` forced a
+  tack in open water so followers on the wrong tack sailed away instead of
+  tacking; the fleet pace used current speed (zero at the start), and every
+  follower was allowed 15% more than the fleet pace, so some overran their
+  slots. Formation slots were also matched to member order, not leader-first
+  order, so a flagship that was not first in the fleet list could give another
+  ship the leader's slot.
+- Formations now use leader-first slot order, an 80 m station arrival radius,
+  an assembly pace while followers are out of station, and an ahead/lateral
+  speed cap. A fleet order is not completed until all active members are in
+  station. The upwind line-ahead fallback and engaged line-ahead path remain.
+- Separation applies to every ship: steer away inside 80 m, slow to 4 kn inside
+  60 m, and hard-push to a 41 m floor. The spatial grid supplies neighbours and
+  only near pairs are corrected after the first push, so the floor is cheap.
+  Boarding approaches get a final floor check; live grapples keep their 45-60 m
+  spacing.
+- Fleet cards show "In station X of Y" with reasons (waiting for slower ship,
+  tacking, blocked by land, out of position, detached, docked, needs crew).
+  Double-tap and the new Select fleet action issue a fleet order and do not
+  detach members.
+- At far zoom (station gaps under 14 px) a thin dotted link follows formation
+  order and a light hull outlines the fleet. Choosing a formation shows faint
+  slot markers around the leader for 3 seconds.
+
+### Real-loop table after the fixes
+
+| formation | 30 s | 60 s | 120 s | largest error at 120 s | closest pair at 120 s |
+| --- | --- | --- | --- | --- | --- |
+| line ahead | 10/10 | 10/10 | 10/10 | 265 m | 71 m |
+| line abreast | 10/10 | 10/10 | 10/10 | 296 m | 59 m |
+| wedge | 9/10 | 9/10 | 10/10 | 288 m | 87 m |
+| convoy | 8/10 | 10/10 | 10/10 | 283 m | 114 m |
+| free chase | 10/10 | 10/10 | 10/10 | 0 m | 137 m |
+
+The 10 v 10 real battle kept a 40.0 m closest pair over 900 steps. Every preset
+reached at least 8/10 in station at 120 s; no pair came within 40 m at any step.
+
+### Checks
+
+- `npm test`: 396 passing, 0 failing.
+- `npm run build`: passed.
+- 10 v 10: 0.24 ms/world step, 605,063 full-state bytes/player/s, 54,009 delta
+  bytes/player/s, 10 messages/s.
+- 100 ships: 1.47 ms/world step, 488,860 full-state bytes/player/s and 33,224
+  delta bytes/player/s at 10 Hz (239,069 / 16,864 at 5 Hz), 10 messages/s.
+- No browser or headless Chromium is available, so the dotted formation link,
+  outline, slot markers and Fleet-card readout were checked structurally and by
+  build/tests, not visually.

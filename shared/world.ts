@@ -524,6 +524,14 @@ export interface FleetMemberSnapshot {
   state: FleetMemberState;
 }
 
+export interface FleetStationSnapshot {
+  /** The leader counts as in station when the fleet is formed. */
+  inStation: number;
+  total: number;
+  /** Members out of station, with a short player-facing reason. */
+  out: Array<{ id: string; reason: string }>;
+}
+
 export interface FleetSnapshot {
   id: string;
   name: string;
@@ -531,6 +539,7 @@ export interface FleetSnapshot {
   formation: FormationId;
   stance: FleetStance;
   members: FleetMemberSnapshot[];
+  station: FleetStationSnapshot;
 }
 
 interface FleetCommand {
@@ -1738,9 +1747,14 @@ function updateEngagements(world: World): void {
         const forwardX = Math.sin(leader.headingRad);
         const forwardY = -Math.cos(leader.headingRad);
         const gapKm = settings.fleets.defaultGapM / 1000;
-        const rank = Math.max(1, fleet.members.indexOf(ship.id));
+        // Formation order is leader first, then the remaining members in list
+        // order. This also works when the flagship was not first in the list.
+        const leaderIndex = fleet.members.indexOf(fleet.leaderId);
+        const memberIndex = fleet.members.indexOf(ship.id);
+        const rank = Math.max(1, memberIndex < leaderIndex ? memberIndex + 1 : memberIndex - leaderIndex);
         leaveHoveTo(ship);
         ship.stationSpeedLimit = leader.speedKnots;
+        ship.formationStation = true;
         ship.route = null;
         ship.order = {
           type: "sailTo",
@@ -1955,7 +1969,14 @@ function startNextFleetOrder(world: World, command: FleetCommand): void {
 function finishFleetOrder(world: World, command: FleetCommand, message: string | null = null): void {
   if (message) pushNotice(world, command.ownerId, message);
   const fleet = fleetFor(world, command.ownerId, command.fleetId);
-  if (fleet) clearFleetEngagements(world, fleet);
+  if (fleet) {
+    clearFleetEngagements(world, fleet);
+    for (const ship of shipsForOwner(world, command.ownerId)) {
+      if (!fleet.members.includes(ship.id)) continue;
+      ship.stationSpeedLimit = undefined;
+      ship.formationStation = false;
+    }
+  }
   startNextFleetOrder(world, command);
 }
 
@@ -2852,10 +2873,7 @@ function prepareFleetCommands(world: World): void {
       }
       continue;
     }
-    const activeMembers = fleet.members
-      .map((id) => own.find((ship) => ship.id === id))
-      .filter((ship): ship is Ship =>
-        Boolean(ship && !ship.detached && !ship.deliveryPortId && !ship.dockedPortId));
+    const activeMembers = orderedActiveFleet(world, command.ownerId, fleet);
     const leaderIndex = activeMembers.findIndex((ship) => ship.id === leader.id);
     if (leaderIndex < 0) continue;
     const formation = formationForLeg(
@@ -2874,7 +2892,23 @@ function prepareFleetCommands(world: World): void {
     // Use the fastest current member as the fleet pace. A stopped follower must
     // not cap the whole formation at zero; the slowest-member rule is applied
     // when the fleet is ordered, not to a ship still accelerating.
-    const fleetSpeed = Math.max(...activeMembers.map((ship) => ship.speedKnots));
+    const fleetSpeed = Math.max(...activeMembers.map((ship) => shipSpecFor(ship).cruiseKnots));
+    // Assemble first. A leader that runs away downwind while its followers are
+    // still beating up to station can never be caught, which is how a fleet
+    // arrived strung out over kilometres. Slow the leader to the pace of the
+    // followers that are still out of station until they have closed up.
+    let outOfStationSpeed = Infinity;
+    for (let index = 0; index < activeMembers.length; index += 1) {
+      const ship = activeMembers[index]!;
+      if (ship.id === leader.id) continue;
+      const slot = slots[index];
+      if (slot && isOutOfStation(ship, leader, slot)) {
+        outOfStationSpeed = Math.min(outOfStationSpeed, shipSpecFor(ship).cruiseKnots);
+      }
+    }
+    leader.stationSpeedLimit = Number.isFinite(outOfStationSpeed)
+      ? Math.max(0, outOfStationSpeed * settings.fleets.formationPaceShare)
+      : undefined;
     for (let index = 0; index < activeMembers.length; index += 1) {
       const ship = activeMembers[index]!;
       if (ship.id === leader.id) continue;
@@ -2884,7 +2918,21 @@ function prepareFleetCommands(world: World): void {
         x: leader.x + slot.aimX,
         y: leader.y + slot.aimY,
       };
-      ship.stationSpeedLimit = fleetSpeed * (1 + settings.fleets.stationSpeedShare);
+      // A follower ahead of its slot must not overrun it while the leader slows
+      // or stops; one behind may use a little extra speed to catch up.
+      const forwardX = Math.sin(leader.headingRad);
+      const forwardY = -Math.cos(leader.headingRad);
+      const offsetX = ship.x - (leader.x + slot.x);
+      const offsetY = ship.y - (leader.y + slot.y);
+      const aheadKm = offsetX * forwardX + offsetY * forwardY;
+      const lateralKm = Math.abs(offsetX * Math.cos(leader.headingRad) + offsetY * Math.sin(leader.headingRad));
+      // Only hold a ship back when it is truly ahead of the slot. A ship that
+      // is off to one side (line abreast, wedge) must keep steerage way even
+      // when the leader has stopped, or it can never reach the slot.
+      ship.stationSpeedLimit = aheadKm > 0 && lateralKm < 0.12
+        ? Math.max(0.4, leader.speedKnots * 1.02)
+        : fleetSpeed * (1 + settings.fleets.stationSpeedShare);
+      ship.formationStation = true;
       if (distanceKm(ship, aim) > settings.sailing.minOrderDistanceKm) {
         sailTo(ship, aim.x, aim.y);
       } else {
@@ -2967,6 +3015,25 @@ function updateFleetCommands(world: World): void {
     }
     if (order.type === "hold") continue;
     if (leader.arrived && !leader.order && !leader.route) {
+      // Do not delete the order while followers are still closing up. This is
+      // what used to leave a fleet strung out kilometres behind its leader.
+      const active = orderedActiveFleet(world, command.ownerId, fleet);
+      const formation = formationForLeg(
+        fleet.formation,
+        leader.headingRad,
+        settings.weather.windFromDeg,
+        shipSpecFor(leader).closestAngleDeg,
+      );
+      const slots = formationSlots({
+        formation,
+        members: active,
+        headingRad: leader.headingRad,
+        leaderPath: world.fleetPaths.get(fleet.id) ?? [{ x: leader.x, y: leader.y }],
+      });
+      const allInStation = active.every((ship, index) =>
+        index === 0 || !slots[index] || !isOutOfStation(ship, leader, slots[index]!),
+      );
+      if (!allInStation) continue;
       finishFleetOrder(world, command);
     }
   }
@@ -3065,6 +3132,37 @@ function allPlayerFleets(world: World): Array<{ ownerId: string; fleet: Fleet }>
   return found;
 }
 
+/** Active fleet ships in formation order: leader first, then the rest. */
+function orderedActiveFleet(world: World, playerId: string, fleet: Fleet): Ship[] {
+  const own = shipsForOwner(world, playerId);
+  const active = fleet.members
+    .map((id) => own.find((ship) => ship.id === id))
+    .filter((ship): ship is Ship =>
+      Boolean(ship && !ship.detached && !ship.deliveryPortId && !ship.dockedPortId),
+    );
+  const leader = active.find((ship) => ship.id === fleet.leaderId);
+  return leader ? [leader, ...active.filter((ship) => ship.id !== leader.id)] : active;
+}
+
+function fleetStationReason(
+  world: World,
+  ship: Ship | undefined,
+  leader: Ship,
+  fleet: Fleet,
+  command: FleetCommand | undefined,
+): string {
+  if (!ship) return "detached";
+  if (fleet.detached.includes(ship.id) || ship.detached) return "detached";
+  if (ship.dockedPortId) return "docked";
+  if (!canShipSail(ship)) return "needs crew";
+  if (ship.route?.partial) return "blocked by land";
+  if (command && ship.formationStation) {
+    if (Math.abs(shortestTurnDegrees(ship.headingRad, leader.headingRad)) > 25) return "tacking";
+    if (ship.speedKnots + 0.4 < Math.max(0.5, leader.speedKnots)) return "waiting for slower ship";
+  }
+  return "out of position";
+}
+
 function fleetSnapshotsFor(world: World, playerId: string): FleetSnapshot[] {
   syncPlayerFleets(world, playerId);
   const ships = new Map(shipsForOwner(world, playerId).map((ship) => [ship.id, ship]));
@@ -3072,12 +3170,9 @@ function fleetSnapshotsFor(world: World, playerId: string): FleetSnapshot[] {
   for (const fleet of fleetMapFor(world, playerId).values()) {
     const command = world.fleetCommands.get(fleet.id);
     const leader = ships.get(fleet.leaderId);
-    const active = fleet.members
-      .map((id) => ships.get(id))
-      .filter((ship): ship is Ship =>
-        Boolean(ship && !ship.detached && !ship.deliveryPortId && !ship.dockedPortId));
+    const active = orderedActiveFleet(world, playerId, fleet);
     let slots: ReturnType<typeof formationSlots> = [];
-    if (leader && active.length > 0 && command) {
+    if (leader && active.length > 0) {
       const formation = formationForLeg(
         fleet.formation,
         leader.headingRad,
@@ -3099,13 +3194,19 @@ function fleetSnapshotsFor(world: World, playerId: string): FleetSnapshot[] {
       else if (!ship) state = "detached";
       else if (ship.dockedPortId) state = "docked";
       else if (!canShipSail(ship)) state = "needsCrew";
-      else if (command && leader && ship && !ship.detached) {
+      else if (leader && ship && !ship.detached) {
         const index = active.findIndex((candidate) => candidate.id === id);
         const slot = slots[index];
         if (slot && isOutOfStation(ship, leader, slot)) state = "outOfStation";
       }
       return { id, state };
     });
+    const out = members
+      .filter((member) => member.state !== "leader" && member.state !== "inStation")
+      .map((member) => ({
+        id: member.id,
+        reason: fleetStationReason(world, ships.get(member.id), leader!, fleet, command),
+      }));
     result.push({
       id: fleet.id,
       name: fleet.name,
@@ -3113,6 +3214,11 @@ function fleetSnapshotsFor(world: World, playerId: string): FleetSnapshot[] {
       formation: fleet.formation,
       stance: fleet.stance,
       members,
+      station: {
+        inStation: members.length - out.length,
+        total: fleet.members.length,
+        out,
+      },
     });
   }
   return result;
@@ -4967,7 +5073,9 @@ function stepOwnerShip(
         // The general 4 km arrival radius would treat a 3 km boarding target
         // as already reached. Use a point just inside grapple range instead.
         ? Math.max(0.006, settings.combat.boardingRangeM / 1000 * 0.1)
-        : world.engagements.has(ship.id) ? 0.02 : undefined,
+        : world.engagements.has(ship.id)
+          ? 0.02
+          : ship.formationStation ? settings.fleets.stationArrivalRadiusKm : undefined,
   );
   resolveMovement(world, ownerId, ship, fromX, fromY);
 
@@ -6373,6 +6481,145 @@ function buildSpatialGrid(world: World): SpatialGrid<{ ownerId: string; ship: Sh
   return grid;
 }
 
+/**
+ * Keep hulls apart. Close ships are steered away and slowed; a hard positional
+ * push guarantees the 40 m minimum even when both ships are stopped or their
+ * helms are locked by boarding. Grappled pairs are left at their 45-60 m
+ * spacing so a boarding fight cannot be shoved apart by traffic.
+ */
+function separateShips(world: World, dtGameSeconds: number): boolean {
+  const grid = buildSpatialGrid(world);
+  world.spatial = grid;
+  const grappled = new Set<string>();
+  for (const fight of world.boardingFights.values()) {
+    grappled.add(fight.attackerId);
+    grappled.add(fight.defenderId);
+  }
+  const sinking = new Set(world.sinkingShips.map((entry) => entry.ship.id));
+  const entries = allShips(world).filter(({ ship }) =>
+    !ship.dockedPortId && !ship.deliveryPortId && !sinking.has(ship.id),
+  );
+  const pushes = new Map<string, { x: number; y: number }>();
+  const nearPairs: Array<[Ship, Ship]> = [];
+  const minKm = settings.fleets.separationMinM / 1000;
+  const avoidKm = settings.fleets.separationAvoidM / 1000;
+  const slowKm = settings.fleets.separationSlowM / 1000;
+  const maxTurn = settings.fleets.separationTurnDegPerGameSecond * Math.max(0, dtGameSeconds) * Math.PI / 180;
+  for (const { ship } of entries) {
+    const neighbours = grid.query(ship.x, ship.y, avoidKm + 1e-6);
+    for (const other of neighbours) {
+      const mate = other.ship;
+      if (mate.id <= ship.id) continue;
+      if (mate.dockedPortId || mate.deliveryPortId || sinking.has(mate.id)) continue;
+      const dx = mate.x - ship.x;
+      const dy = mate.y - ship.y;
+      const distance = Math.hypot(dx, dy);
+      if (distance >= avoidKm) continue;
+      if (grappled.has(ship.id) && grappled.has(mate.id)) continue;
+      nearPairs.push([ship, mate]);
+      if (distance < slowKm) {
+        const cap = settings.fleets.separationSlowKnots;
+        ship.speedKnots = Math.min(ship.speedKnots, cap);
+        mate.speedKnots = Math.min(mate.speedKnots, cap);
+      }
+      if (distance > 1e-6) {
+        const away = Math.atan2(-dx, dy);
+        const turn = shortestTurnDegrees(ship.headingRad, away) * Math.PI / 180;
+        ship.headingRad += Math.max(-maxTurn, Math.min(maxTurn, turn));
+        const awayMate = Math.atan2(dx, -dy);
+        const turnMate = shortestTurnDegrees(mate.headingRad, awayMate) * Math.PI / 180;
+        mate.headingRad += Math.max(-maxTurn, Math.min(maxTurn, turnMate));
+      }
+      if (distance < minKm) {
+        const need = (minKm + settings.fleets.separationClearanceM / 1000 - distance) / 2;
+        if (need > 0) {
+          const ux = distance > 1e-6 ? dx / distance : 0;
+          const uy = distance > 1e-6 ? dy / distance : 1;
+          const a = pushes.get(ship.id) ?? { x: 0, y: 0 };
+          const b = pushes.get(mate.id) ?? { x: 0, y: 0 };
+          a.x -= ux * need;
+          a.y -= uy * need;
+          b.x += ux * need;
+          b.y += uy * need;
+          pushes.set(ship.id, a);
+          pushes.set(mate.id, b);
+        }
+      }
+    }
+  }
+  for (const { ship } of entries) {
+    const push = pushes.get(ship.id);
+    if (!push) continue;
+    const x = ship.x + push.x;
+    const y = ship.y + push.y;
+    if (isInsideMapFrame(x, y) && !isLandAt(x, y)) {
+      ship.x = x;
+      ship.y = y;
+    }
+  }
+  if (pushes.size === 0) return false;
+  // Several close neighbours can cancel part of one another's push. Only the
+  // pairs that were already inside the floor can matter: pushes move hulls
+  // apart, never together. Correct those pairs directly instead of rebuilding
+  // the grid and rescanning the whole battle.
+  const floorKm = settings.fleets.separationMinM / 1000 +
+    settings.fleets.separationClearanceM / 1000;
+  for (let pass = 0; pass < 3; pass += 1) {
+    let moved = false;
+    for (const [ship, mate] of nearPairs) {
+      const dx = mate.x - ship.x;
+      const dy = mate.y - ship.y;
+      const distance = Math.hypot(dx, dy);
+      if (distance >= floorKm) continue;
+      const need = (floorKm - distance) / 2;
+      const ux = distance > 1e-6 ? dx / distance : 0;
+      const uy = distance > 1e-6 ? dy / distance : 1;
+      const ax = ship.x - ux * need;
+      const ay = ship.y - uy * need;
+      if (isInsideMapFrame(ax, ay) && !isLandAt(ax, ay)) {
+        ship.x = ax;
+        ship.y = ay;
+        moved = true;
+      }
+      const bx = mate.x + ux * need;
+      const by = mate.y + uy * need;
+      if (isInsideMapFrame(bx, by) && !isLandAt(bx, by)) {
+        mate.x = bx;
+        mate.y = by;
+        moved = true;
+      }
+    }
+    if (!moved) break;
+  }
+  return true;
+}
+
+/** Last-resort floor for a boarding approach, which runs after the main pass. */
+function enforceBoardingSpacing(world: World): void {
+  const floorKm = settings.fleets.separationMinM / 1000 +
+    settings.fleets.separationClearanceM / 1000;
+  const grappling = new Set<string>();
+  for (const fight of world.boardingFights.values()) {
+    grappling.add(fight.attackerId);
+    grappling.add(fight.defenderId);
+  }
+  for (const { ship } of allShips(world)) {
+    const target = ship.boardingShipId ? shipEntry(world, ship.boardingShipId)?.ship : undefined;
+    if (!target || grappling.has(ship.id) || ship.dockedPortId || ship.deliveryPortId) continue;
+    const dx = target.x - ship.x;
+    const dy = target.y - ship.y;
+    const distance = Math.hypot(dx, dy);
+    if (distance >= floorKm) continue;
+    const need = (floorKm - distance) / 2;
+    const ux = distance > 1e-6 ? dx / distance : 0;
+    const uy = distance > 1e-6 ? dy / distance : 1;
+    ship.x -= ux * need;
+    ship.y -= uy * need;
+    target.x += ux * need;
+    target.y += uy * need;
+  }
+}
+
 export function stepWorld(
   world: World,
   dtGameSeconds: number,
@@ -6382,6 +6629,7 @@ export function stepWorld(
   for (const playerId of world.fleets.keys()) {
     syncPlayerFleets(world, playerId);
   }
+  for (const { ship } of allShips(world)) ship.formationStation = false;
   prepareShipCommands(world);
   prepareFleetCommands(world);
   applyStances(world);
@@ -6403,12 +6651,16 @@ export function stepWorld(
     }
   }
 
+  const separationMovedShips = separateShips(world, dtGameSeconds);
   updateFleetCommands(world);
   updateShipCommands(world);
-  world.spatial = buildSpatialGrid(world);
+  if (separationMovedShips) world.spatial = buildSpatialGrid(world);
   resolveCombat(world);
   updateAutoBoarding(world);
   updateBoarding(world, combatRealSeconds(world), windFromDeg);
+  if (allShips(world).some(({ ship }) => ship.boardingShipId)) {
+    enforceBoardingSpacing(world);
+  }
   updateCapturedChoices(world, combatRealSeconds(world));
   updateRuns(world);
   updateFires(world, dtGameSeconds);

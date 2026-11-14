@@ -38,6 +38,7 @@ export type LayoutPanelId =
   | "trade"
   | "shipyard"
   | "hire"
+  | "research"
   | "knownPorts";
 
 export type LayoutModalId =
@@ -149,12 +150,14 @@ const INVENTORY: Array<{
   { id: "trade-panel", label: "Trade", group: "panel" },
   { id: "shipyard-panel", label: "Shipyard", group: "panel" },
   { id: "hire-panel", label: "Hire", group: "panel" },
+  { id: "research-panel", label: "Research", group: "panel" },
   { id: "dock", label: "Dock frame", group: "dock" },
   { id: "dock-tabs", label: "Dock tabs", group: "dock" },
   { id: "dock-tab-ship", label: "Dock Ship tab", group: "dock", interactive: true },
   { id: "dock-tab-fleet", label: "Dock Fleet tab", group: "dock", interactive: true },
   { id: "dock-tab-log", label: "Dock Log tab", group: "dock", interactive: true },
   { id: "dock-tab-ports", label: "Dock Ports tab", group: "dock", interactive: true },
+  { id: "dock-tab-research", label: "Dock Research tab", group: "dock", interactive: true },
   { id: "dock-collapse", label: "Dock collapse", group: "dock", interactive: true },
   { id: "menu-panel", label: "Menu", group: "sheet" },
   { id: "test-tools", label: "Developer", group: "sheet" },
@@ -289,13 +292,14 @@ function tabs(
   z: number,
   active: LayoutPanelId,
 ): void {
-  const tabWidth = width / 4;
   const entries: Array<[string, LayoutPanelId, string]> = [
     ["dock-tab-ship", "ship", "Ship"],
     ["dock-tab-fleet", "fleet", "Fleet"],
     ["dock-tab-log", "log", "Log"],
     ["dock-tab-ports", "ports", "Ports"],
+    ["dock-tab-research", "research", "Research"],
   ];
+  const tabWidth = width / entries.length;
   entries.forEach(([id, panel, label], index) => {
     list.push(makeElement(id, rect(x + index * tabWidth, y, tabWidth, height), z, {
       label,
@@ -389,6 +393,7 @@ function desktop(
       trade: "trade-panel",
       shipyard: "shipyard-panel",
       hire: "hire-panel",
+      research: "research-panel",
       knownPorts: "known-ports-panel",
     };
     const panelId = panel ? panelMap[panel] : undefined;
@@ -463,6 +468,7 @@ function panelElementId(panel: LayoutPanelId): string {
     trade: "trade-panel",
     shipyard: "shipyard-panel",
     hire: "hire-panel",
+    research: "research-panel",
     knownPorts: "known-ports-panel",
   };
   return map[panel];

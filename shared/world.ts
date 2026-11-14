@@ -1668,7 +1668,7 @@ export function researchUpgradeOrder(
   }
   world.research.set(navy, result.state);
   const upgrade = researchUpgrade(upgradeId);
-  pushNotice(world, playerId, `Researched ${upgrade?.name ?? upgradeId} L${level}.`);
+  pushNotice(world, playerId, `Unlocked ${upgrade?.name ?? upgradeId} L${level}.`);
   return true;
 }
 

@@ -130,6 +130,10 @@
       "types": "./dist/data/research.d.ts",
       "default": "./dist/data/research.js"
     },
+    "./research-view": {
+      "types": "./dist/researchView.d.ts",
+      "default": "./dist/researchView.js"
+    },
     "./fog-paint": {
       "types": "./dist/fogPaint.d.ts",
       "default": "./dist/fogPaint.js"

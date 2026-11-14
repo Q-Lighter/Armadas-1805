@@ -98,6 +98,7 @@
         <button class="btn dock-tab" id="dock-tab-fleet" type="button" role="tab" aria-selected="false">Fleet</button>
         <button class="btn dock-tab" id="dock-tab-log" type="button" role="tab" aria-selected="false">Log</button>
         <button class="btn dock-tab" id="dock-tab-ports" type="button" role="tab" aria-selected="false">Ports</button>
+        <button class="btn dock-tab" id="dock-tab-research" type="button" role="tab" aria-selected="false">Research</button>
       </div>
     </section>
     <button class="btn dock-collapse" id="dock-collapse" type="button" aria-label="Collapse dock" hidden>›</button>
@@ -268,6 +269,10 @@
       </button>
 
       <div class="ship-detail" id="ship-detail">
+        <div class="ship-subtabs" role="tablist" aria-label="Ship sections">
+          <button class="btn ship-subtab" id="ship-tab-overview" type="button" role="tab" aria-selected="true">Overview</button>
+          <button class="btn ship-subtab" id="ship-tab-upgrades" type="button" role="tab" aria-selected="false">Upgrades</button>
+        </div>
         <p class="ship-type" id="ship-type">–</p>
         <dl class="readout">
           <dt>Crew</dt>
@@ -318,6 +323,13 @@
         <button class="btn ship-damage" id="ship-damage" type="button">
           Damage
         </button>
+
+        <section class="ship-upgrades" id="ship-upgrades" aria-label="Ship upgrades" hidden>
+          <h3>Upgrades</h3>
+          <p class="ship-upgrades-summary" id="ship-upgrades-summary">No ship selected.</p>
+          <div class="ship-upgrade-list" id="ship-upgrade-list"></div>
+          <button class="btn btn-seal" id="ship-upgrade-btn" type="button" disabled>Upgrade ship</button>
+        </section>
 
         <div class="wind-row">
           <svg class="wind-arrow" viewBox="0 0 24 24" aria-hidden="true">
@@ -428,6 +440,7 @@
       <p class="menu-room">Room <strong id="room-code">test</strong></p>
       <p class="status" id="status" data-state="loading">Connecting…</p>
       <div class="menu-actions">
+        <button class="btn" id="research-btn" type="button">Research</button>
         <button class="btn" id="known-ports-btn" type="button" hidden>Known ports</button>
         <button class="btn" id="borders-btn" type="button" aria-pressed="false" hidden>Show borders</button>
         <button class="btn" id="flagship-pennant-btn" type="button" aria-pressed="false">Show flagship pennant on the map</button>
@@ -801,6 +814,7 @@
         <button class="btn" id="fleet-save-group" type="button">Save group</button>
         <button class="btn" id="fleet-select-all" type="button">Select all</button>
         <button class="btn" id="fleet-undock" type="button">Undock selected</button>
+        <button class="btn" id="fleet-upgrade-all" type="button">Upgrade all docked ships</button>
         <button class="btn" id="fleet-clear" type="button">Clear</button>
       </div>
       <p class="fleet-selected-count" id="fleet-selected-count">0 selected</p>
@@ -809,6 +823,29 @@
       <h3 class="fleet-section-title">Ships not in a fleet</h3>
       <ul class="fleet-list" id="fleet-list"></ul>
       <p class="fleet-empty" id="fleet-empty" hidden>No ships yet.</p>
+    </section>
+
+    <!-- Shared navy research, opened from Menu or the desktop dock Research tab. -->
+    <section
+      class="research-panel paper"
+      id="research-panel"
+      role="dialog"
+      aria-labelledby="research-title"
+      hidden
+    >
+      <div class="panel-head">
+        <div>
+          <p class="kicker" id="research-navy">Navy research</p>
+          <h2 id="research-title">Research</h2>
+        </div>
+        <button class="btn panel-close" id="research-close" type="button">Close</button>
+      </div>
+      <p class="research-pool">
+        <strong id="research-points">0</strong> points ·
+        <strong id="research-units">0</strong> units shared by the navy
+      </p>
+      <p class="research-owned" id="research-owned">0 of 0 levels researched</p>
+      <div class="research-branches" id="research-branches"></div>
     </section>
 
     <!-- Shipyard cards and the permanent-name step. -->

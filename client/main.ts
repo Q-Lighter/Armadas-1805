@@ -77,6 +77,7 @@ import {
   type ScreenLayoutPlan,
 } from "@naval/shared/screen-layout";
 import { buildBlockCommands, findChartSuspects } from "@naval/shared/chart-paint";
+import { researchScreenView, shipUpgradeRows } from "@naval/shared/research-view";
 import { isLandAt } from "@naval/shared/land";
 import { cameraScale, screenToWorld, worldToScreen } from "@naval/shared/camera";
 import { buildDiscoveredOutline, type OutlineRing } from "@naval/shared/discovered-outline";
@@ -544,6 +545,32 @@ function parseOwnShip(raw: unknown): OwnShipSnapshot | null {
     id,
     name,
     isFlagship: source.isFlagship === true,
+    research: (() => {
+      const raw = source.research;
+      if (!raw || typeof raw !== "object") return undefined;
+      const row = raw as Record<string, unknown>;
+      const fitted: Record<string, number> = {};
+      const unlocked: Record<string, number> = {};
+      for (const [key, value] of Object.entries(row.fitted ?? {})) {
+        if (Number.isFinite(value) && value >= 0) fitted[key] = Math.floor(value);
+      }
+      for (const [key, value] of Object.entries(row.unlocked ?? {})) {
+        if (Number.isFinite(value) && value >= 0) unlocked[key] = Math.floor(value);
+      }
+      const cost = finiteNumber(row.cost) ?? 0;
+      const gameDays = finiteNumber(row.gameDays) ?? 0;
+      return {
+        fitted,
+        unlocked,
+        dockUntilGameMs: Math.max(0, finiteNumber(row.dockUntilGameMs) ?? 0),
+        fitting: row.fitting === true,
+        missingLevels: Math.max(0, Math.floor(finiteNumber(row.missingLevels) ?? 0)),
+        cost: Math.max(0, Math.floor(cost)),
+        gameDays: Math.max(0, gameDays),
+        canFit: row.canFit === true,
+        reason: typeof row.reason === "string" ? row.reason : null,
+      };
+    })(),
     classId: classId as OwnShipSnapshot["classId"],
     navy,
     crew,
@@ -821,10 +848,17 @@ async function start(): Promise<void> {
   const multiCount = element<HTMLElement>("multi-count");
   const fleetSelectAll = element<HTMLButtonElement>("fleet-select-all");
   const fleetUndock = element<HTMLButtonElement>("fleet-undock");
+  const fleetUpgradeAll = element<HTMLButtonElement>("fleet-upgrade-all");
   const fleetClear = element<HTMLButtonElement>("fleet-clear");
   const fleetSelectedCount = element<HTMLElement>("fleet-selected-count");
   const shipUndock = element<HTMLButtonElement>("ship-undock");
   const shipDamage = element<HTMLButtonElement>("ship-damage");
+  const shipTabOverview = element<HTMLButtonElement>("ship-tab-overview");
+  const shipTabUpgrades = element<HTMLButtonElement>("ship-tab-upgrades");
+  const shipUpgradesOut = element<HTMLElement>("ship-upgrades");
+  const shipUpgradesSummary = element<HTMLElement>("ship-upgrades-summary");
+  const shipUpgradeList = element<HTMLElement>("ship-upgrade-list");
+  const shipUpgradeButton = element<HTMLButtonElement>("ship-upgrade-btn");
   const fireShipActionsOut = element<HTMLElement>("fire-ship-actions");
   const fireShipStatusOut = element<HTMLElement>("fire-ship-status");
   const fireShipButtonsOut = element<HTMLElement>("fire-ship-buttons");
@@ -1064,6 +1098,15 @@ async function start(): Promise<void> {
   const dockTabFleet = element<HTMLButtonElement>("dock-tab-fleet");
   const dockTabLog = element<HTMLButtonElement>("dock-tab-log");
   const dockTabPorts = element<HTMLButtonElement>("dock-tab-ports");
+  const dockTabResearch = element<HTMLButtonElement>("dock-tab-research");
+  const researchPanel = element<HTMLElement>("research-panel");
+  const researchNavyOut = element<HTMLElement>("research-navy");
+  const researchPointsOut = element<HTMLElement>("research-points");
+  const researchUnitsOut = element<HTMLElement>("research-units");
+  const researchOwnedOut = element<HTMLElement>("research-owned");
+  const researchBranchesOut = element<HTMLElement>("research-branches");
+  const researchButton = element<HTMLButtonElement>("research-btn");
+  const researchClose = element<HTMLButtonElement>("research-close");
   const dockCollapseButton = element<HTMLButtonElement>("dock-collapse");
   const bottomDock = element<HTMLElement>("bottom-dock");
   const ordersButton = element<HTMLButtonElement>("orders-btn");
@@ -1442,6 +1485,11 @@ async function start(): Promise<void> {
   let actionPortId: string | null = null;
   let money = 0;
   let playerNavy: NavyId = "British";
+  let latestResearch: NonNullable<StateMessage["research"]> | null = null;
+  let researchRenderKey = "";
+  let researchUnitsSeen = -1;
+  let lastResearchNoticeAt = 0;
+  const openResearchBranches = new Set<string>(["A"]);
   let selectedPortId: string | null = null;
   let attackedPortId: string | null = null;
   let shipyardPortId: string | null = null;
@@ -3964,7 +4012,7 @@ async function start(): Promise<void> {
     if (!shipyardPortId || !namingClassAllowed(classId)) return;
     const port = portData.get(shipyardPortId);
     if (!port) return;
-    const card = shipyardCards(roomKind, stockSize(port), playerNavy).find(
+    const card = shipyardCards(roomKind, stockSize(port), playerNavy, fireShipResearchUnlocked()).find(
       (candidate) => candidate.classId === classId,
     );
     if (!card || card.locked) return;
@@ -3982,9 +4030,173 @@ async function start(): Promise<void> {
   function namingClassAllowed(classId: BuyableShipClassId): boolean {
     if (!shipyardPortId) return false;
     const port = portData.get(shipyardPortId);
-    return !!port && shipyardCards(roomKind, stockSize(port), playerNavy).some(
+    return !!port && shipyardCards(roomKind, stockSize(port), playerNavy, fireShipResearchUnlocked()).some(
       (card) => card.classId === classId && !card.locked,
     );
+  }
+
+
+  function researchLevelMap(): ReadonlyMap<string, number> {
+    return new Map(Object.entries(latestResearch?.levels ?? {}));
+  }
+
+  function renderResearchPanel(force = false): void {
+    const view = researchScreenView({
+      navy: playerNavy,
+      points: latestResearch?.points ?? 0,
+      levels: researchLevelMap(),
+    });
+    const key = JSON.stringify({
+      navy: view.navy,
+      points: view.points,
+      levels: latestResearch?.levels ?? {},
+    });
+    if (!force && key === researchRenderKey) return;
+    researchRenderKey = key;
+    researchNavyOut.textContent = `${view.navy} navy · shared with teammates`;
+    researchPointsOut.textContent = String(Math.floor(view.points));
+    researchUnitsOut.textContent = String(view.units);
+    researchOwnedOut.textContent = `${view.ownedLevels} of ${view.totalLevels} levels researched`;
+    researchBranchesOut.replaceChildren();
+    if (!latestResearch) {
+      const empty = document.createElement("p");
+      empty.textContent = "Research arrives with the next fleet report.";
+      researchBranchesOut.append(empty);
+      return;
+    }
+    for (const branch of view.branches) {
+      const details = document.createElement("details");
+      details.className = "research-branch";
+      details.dataset.researchBranch = branch.id;
+      details.open = openResearchBranches.has(branch.id);
+      details.addEventListener("toggle", () => {
+        if (details.open) openResearchBranches.add(branch.id);
+        else openResearchBranches.delete(branch.id);
+      });
+      const summary = document.createElement("summary");
+      const owned = branch.rows.reduce((sum, row) => sum + row.level, 0);
+      const total = branch.rows.reduce((sum, row) => sum + row.levels, 0);
+      summary.textContent = `${branch.name} · ${owned}/${total}`;
+      details.append(summary);
+      for (const row of branch.rows) {
+        const item = document.createElement("article");
+        item.className = "research-row";
+        item.dataset.researchUpgrade = row.id;
+        const head = document.createElement("div");
+        head.className = "research-row-head";
+        const name = document.createElement("strong");
+        name.textContent = row.name;
+        const pips = document.createElement("span");
+        pips.className = "research-pips";
+        pips.setAttribute("aria-label", `${row.level} of ${row.levels} levels`);
+        row.pips.forEach((filled) => {
+          const pip = document.createElement("span");
+          pip.className = filled ? "filled" : "";
+          pip.textContent = filled ? "●" : "○";
+          pips.append(pip);
+        });
+        const state = document.createElement("span");
+        state.className = "research-state";
+        state.textContent = row.state;
+        head.append(name, pips, state);
+        const effect = document.createElement("p");
+        effect.className = "research-effect";
+        effect.textContent = row.effect;
+        item.append(head, effect);
+        if (row.hook) {
+          const hook = document.createElement("p");
+          hook.className = "research-hook";
+          hook.textContent = row.hook;
+          item.append(hook);
+        }
+        const buy = document.createElement("button");
+        buy.type = "button";
+        buy.className = "btn";
+        buy.dataset.researchBuy = row.id;
+        buy.textContent = row.buttonText;
+        buy.disabled = row.disabled;
+        buy.title = row.reason ?? "";
+        if (row.reason) {
+          const why = document.createElement("span");
+          why.className = "research-state";
+          why.textContent = row.reason;
+          item.append(why);
+        }
+        buy.addEventListener("click", () => {
+          if (row.nextLevel === null) return;
+          sendCommand({ t: "research", upgrade: row.id, level: row.nextLevel });
+        });
+        item.append(buy);
+        details.append(item);
+      }
+      researchBranchesOut.append(details);
+    }
+  }
+
+  function renderShipUpgrades(): void {
+    const row = selectedFleetShip();
+    shipUpgradeList.replaceChildren();
+    shipUpgradeButton.onclick = () => {
+      const id = selectedFleetShip()?.id;
+      if (id) sendCommand({ t: "fitShip", ship: id });
+    };
+    if (!row) {
+      shipUpgradesSummary.textContent = "No ship selected.";
+      shipUpgradeButton.disabled = true;
+      shipUpgradeButton.title = "Select a ship";
+      shipUpgradeButton.textContent = "Upgrade ship";
+      return;
+    }
+    const info = row.research;
+    const fitted = info?.fitted ?? {};
+    const unlocked = info?.unlocked ?? {};
+    const rows = shipUpgradeRows(playerNavy, fitted, unlocked);
+    for (const upgrade of rows) {
+      const item = document.createElement("div");
+      item.className = "ship-upgrade-row";
+      item.dataset.shipUpgrade = upgrade.id;
+      const name = document.createElement("strong");
+      name.textContent = upgrade.name;
+      const levels = document.createElement("span");
+      levels.className = "levels";
+      levels.textContent = `Fitted ${upgrade.fitted}/${upgrade.levels} · unlocked ${upgrade.unlocked}`;
+      const effect = document.createElement("span");
+      effect.className = "effect";
+      effect.textContent = upgrade.effect;
+      item.append(name, levels, effect);
+      shipUpgradeList.append(item);
+    }
+    const missing = info?.missingLevels ?? 0;
+    const docked = row.status === "docked";
+    const reason = info?.reason ??
+      (!docked ? "Not docked at your port" : missing <= 0 ? "All unlocked upgrades fitted" : null);
+    shipUpgradesSummary.textContent = missing > 0 && docked
+      ? `${missing} level${missing === 1 ? "" : "s"} to fit · ${formatMoney(info?.cost ?? 0)} pieces · ${info?.gameDays ?? 1} game day docked`
+      : `${rows.filter((upgrade) => upgrade.fitted > 0).length} of ${rows.length} ship upgrades fitted` +
+        (reason ? ` · ${reason}` : "");
+    shipUpgradeButton.disabled = !docked || missing <= 0 || info?.canFit !== true;
+    shipUpgradeButton.title = reason ?? "Fit every unlocked ship upgrade";
+    shipUpgradeButton.textContent = missing > 0 && docked && info?.canFit
+      ? `Upgrade ship · ${formatMoney(info.cost)} pieces · ${info.gameDays} game day`
+      : "Upgrade ship";
+  }
+
+  function updateFleetUpgradeAll(): void {
+    const docked = fleetShips.filter((ship) => ship.status === "docked");
+    fleetUpgradeAll.disabled = docked.length === 0;
+    fleetUpgradeAll.title = docked.length === 0
+      ? "No docked ships at your ports"
+      : "Fit every unlocked upgrade to all docked ships";
+  }
+
+  function setShipSubtab(upgrades: boolean): void {
+    shipUpgradesOut.hidden = !upgrades;
+    shipTabOverview.setAttribute("aria-selected", String(!upgrades));
+    shipTabUpgrades.setAttribute("aria-selected", String(upgrades));
+  }
+
+  function fireShipResearchUnlocked(): boolean {
+    return (latestResearch?.levels.fireShips ?? 0) >= 1;
   }
 
   function renderShipyard(): void {
@@ -3995,7 +4207,7 @@ async function start(): Promise<void> {
     }
 
     shipyardCardsOut.replaceChildren();
-    const cards = shipyardCards(roomKind, stockSize(port), playerNavy);
+    const cards = shipyardCards(roomKind, stockSize(port), playerNavy, fireShipResearchUnlocked());
     for (const card of cards) {
       const article = document.createElement("article");
       const title = document.createElement("h3");
@@ -4028,8 +4240,11 @@ async function start(): Promise<void> {
       buy.type = "button";
       buy.className = "btn";
       buy.dataset.yardBuy = "true";
-      buy.textContent = card.locked ? "Needs research" : "Buy";
+      buy.textContent = card.locked ? (card.lockedReason ?? "Needs research") : "Buy";
       buy.disabled = card.locked || fleetShips.length >= settings.ships.maxShipsPerPlayer;
+      buy.title = card.locked
+        ? (card.lockedReason ?? "Needs research")
+        : buy.disabled ? "Over ship limit" : `Buy ${card.name}`;
       if (!card.locked && buy.disabled) buy.textContent = "Over ship limit";
       buy.addEventListener("click", () => beginNaming(card.classId));
 
@@ -4644,8 +4859,10 @@ async function start(): Promise<void> {
     portBatteryOut.textContent = port.guns
       ? `Batteries ${port.guns.heavy}/${port.guns.medium}/${port.guns.light} (H/M/L)`
       : `Condition: ${port.condition ?? "unknown"} · batteries unknown`;
+    const researchTier = Math.max(0, Math.min(3, latestResearch?.levels.fortification ?? 0));
     portTierOut.textContent = `Fortifications: tier ${tier}` +
-      (tier === 0 ? " (none)" : tier === 1 ? " (wooden palisade)" : tier === 2 ? " (stone wall)" : " (star fortress)");
+      (tier === 0 ? " (none)" : tier === 1 ? " (wooden palisade)" : tier === 2 ? " (stone wall)" : " (star fortress)") +
+      ` · may build up to tier ${researchTier}`;
     const captureStatus = port.capture
       ? port.capture.seconds > 0
         ? ` · capturing ${formatCountdown(Math.max(0, port.capture.requiredSeconds - port.capture.seconds))} left`
@@ -4658,9 +4875,9 @@ async function start(): Promise<void> {
         ? " (reduced by night or weather)"
         : "") +
       captureStatus;
-    const canBuild = ownPort && tier < 3;
-    portBuildOut.hidden = !canBuild && !port.build;
-    portBuildButton.hidden = !canBuild;
+    const canBuild = ownPort && tier < Math.min(3, researchTier);
+    portBuildOut.hidden = !ownPort && !port.build;
+    portBuildButton.hidden = !ownPort;
     if (port.build) {
       const total = Math.max(1, port.build.endsGameMs - port.build.startedGameMs);
       const done = Math.max(0, Math.min(total, clockShownMs - port.build.startedGameMs));
@@ -4687,10 +4904,14 @@ async function start(): Promise<void> {
         ? (port.stock?.timber ?? 0) >= port.nextCost.timber &&
           (port.stock?.repairMaterials ?? 0) >= port.nextCost.repairMaterials
         : false;
-      portBuildButton.disabled = !enough || (roomKind === "normal" && !port.build);
-      portBuildButton.textContent = roomKind === "normal" && !port.build
-        ? "Needs research"
-        : `Build tier ${Math.min(3, tier + 1)}`;
+      const gateReason = tier >= researchTier
+        ? `Needs research: Fortification tier ${tier + 1}`
+        : null;
+      portBuildButton.disabled = !enough || gateReason !== null;
+      portBuildButton.title = gateReason ??
+        (enough ? `Build tier ${Math.min(3, tier + 1)}` : "Not enough timber or repair materials");
+      portBuildButton.textContent = gateReason ??
+        `Build tier ${Math.min(3, tier + 1)}`;
     }
     portAttackButton.hidden = ownPort;
     portAttackButton.disabled = port.npc;
@@ -5307,6 +5528,18 @@ async function start(): Promise<void> {
     shipWeighAnchor.textContent = row?.weighingAnchor ? "Weighing anchor…" : "Weigh anchor";
     renderFireShipActions();
     updateJourneyUi(row);
+    renderShipUpgrades();
+    updateFleetUpgradeAll();
+    if (!researchPanel.hidden) renderResearchPanel();
+    const researchUnits = latestResearch?.units ?? 0;
+    if (researchUnitsSeen >= 0 && researchUnits > researchUnitsSeen) {
+      const now = performance.now();
+      if (now - lastResearchNoticeAt >= 60_000) {
+        lastResearchNoticeAt = now;
+        showNotice("Research available");
+      }
+    }
+    researchUnitsSeen = researchUnits;
   }
 
   function updateJourneyUi(row: ReturnType<typeof selectedFleetShip>): void {
@@ -6744,6 +6977,24 @@ async function start(): Promise<void> {
         fleet.members.some((member) => member.id === selectedShipId),
       )?.id ?? null;
     }
+    if (state.research && typeof state.research === "object") {
+      const levels: Record<string, number> = {};
+      const capturePoints: Record<string, number> = {};
+      for (const [id, value] of Object.entries(state.research.levels ?? {})) {
+        if (Number.isFinite(value) && value >= 0) levels[id] = Math.floor(value);
+      }
+      for (const [id, value] of Object.entries(state.research.capturePoints ?? {})) {
+        if (Number.isFinite(value) && value >= 0) capturePoints[id] = Math.floor(value);
+      }
+      latestResearch = {
+        points: Math.max(0, finiteNumber(state.research.points) ?? 0),
+        units: Math.max(0, finiteNumber(state.research.units) ?? 0),
+        levels,
+        capturePoints,
+      };
+    } else if (state.full === true) {
+      latestResearch = null;
+    }
     hungerMultiplier = finiteNumber(state.h) ?? undefined;
     if (typeof state.sp === "string" && state.sp.length > 0) startPortName = state.sp;
     if (Number.isFinite(state.m)) money = Math.max(0, Math.floor(state.m));
@@ -7641,6 +7892,12 @@ async function start(): Promise<void> {
   });
 
   fleetUndock.addEventListener("click", sendUndock);
+  fleetUpgradeAll.addEventListener("click", () => sendCommand({ t: "fitAllShips" }));
+  shipTabOverview.addEventListener("click", () => setShipSubtab(false));
+  shipTabUpgrades.addEventListener("click", () => {
+    setShipSubtab(true);
+    renderShipUpgrades();
+  });
   shipUndock.addEventListener("click", sendUndock);
   shipDropAnchor.addEventListener("click", () => sendAnchor("dropAnchor"));
   shipWeighAnchor.addEventListener("click", () => sendAnchor("weighAnchor"));
@@ -7930,6 +8187,7 @@ async function start(): Promise<void> {
     if (!shipyardPanel.hidden) return "shipyard";
     if (!hirePanel.hidden) return "hire";
     if (!knownPortsPanel.hidden) return "knownPorts";
+    if (!researchPanel.hidden) return "research";
     if (!fleetPanel.hidden) return "fleet";
     if (!battleLog.hidden && !isPhoneLayout()) return "log";
     return activeDockPanel;
@@ -8098,6 +8356,7 @@ async function start(): Promise<void> {
     dockTabFleet.setAttribute("aria-selected", String(currentDockPanel() === "fleet"));
     dockTabLog.setAttribute("aria-selected", String(currentDockPanel() === "log"));
     dockTabPorts.setAttribute("aria-selected", String(currentDockPanel() === "ports" || currentDockPanel() === "knownPorts"));
+    dockTabResearch.setAttribute("aria-selected", String(currentDockPanel() === "research"));
 
     drawLayoutDebug(plan);
     layoutApplyFrame = 0;
@@ -8217,6 +8476,15 @@ async function start(): Promise<void> {
     scheduleScreenLayout();
   }
   dockMenuButton.addEventListener("click", showMenuPanel);
+  researchButton.addEventListener("click", () => {
+    closeMenuPanel();
+    showDockPanel("research");
+  });
+  researchClose.addEventListener("click", () => {
+    researchPanel.hidden = true;
+    activeDockPanel = "ship";
+    scheduleScreenLayout();
+  });
   ordersButton.addEventListener("click", () => {
     ordersOpen = !ordersOpen;
     ordersSheet.hidden = !ordersOpen;
@@ -8242,11 +8510,16 @@ async function start(): Promise<void> {
     closeHirePanel();
     knownPortsPanel.hidden = true;
     battleLog.hidden = true;
+    researchPanel.hidden = true;
     if (panel === "fleet") openFleetPanel();
     if (panel === "log") battleLog.hidden = false;
     if (panel === "ports" || panel === "knownPorts") {
       renderKnownPorts();
       knownPortsPanel.hidden = false;
+    }
+    if (panel === "research") {
+      renderResearchPanel(true);
+      researchPanel.hidden = false;
     }
     scheduleScreenLayout();
   }
@@ -8254,6 +8527,7 @@ async function start(): Promise<void> {
   dockTabFleet.addEventListener("click", () => showDockPanel("fleet"));
   dockTabLog.addEventListener("click", () => showDockPanel("log"));
   dockTabPorts.addEventListener("click", () => showDockPanel("ports"));
+  dockTabResearch.addEventListener("click", () => showDockPanel("research"));
   dockCollapseButton.addEventListener("click", () => {
     dockCollapsed = !dockCollapsed;
     scheduleScreenLayout();

@@ -188,6 +188,8 @@ export interface ShipyardCard {
   draughtM: number;
   /** The Fire ships research hook is closed outside test and dev rooms. */
   locked: boolean;
+  /** Why the card cannot be bought, shown on the disabled button. */
+  lockedReason?: string;
 }
 
 function deliveryText(kind: RoomKind, classId: ShipClassId): string {
@@ -202,6 +204,7 @@ export function shipyardCards(
   kind: RoomKind,
   portSize: ShipSize,
   navy: OwnShipSnapshot["navy"],
+  fireShipUnlocked?: boolean,
 ): ShipyardCard[] {
   const cards: ShipyardCard[] = [];
   for (const classId of BUYABLE_SHIP_CLASS_IDS) {
@@ -222,7 +225,12 @@ export function shipyardCards(
       closestAngleDeg: type.closestAngleDeg,
       turn90GameMinutes: type.turn90GameMinutes,
       draughtM: type.draughtM,
-      locked: classId === "fireShip" && !fireShipsUnlocked(kind),
+      locked: classId === "fireShip" &&
+        !(fireShipUnlocked ?? fireShipsUnlocked(kind)),
+      lockedReason: classId === "fireShip" &&
+        !(fireShipUnlocked ?? fireShipsUnlocked(kind))
+        ? "Needs research: Fire ships"
+        : undefined,
     });
   }
   return cards;

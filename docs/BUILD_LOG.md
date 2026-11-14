@@ -3478,3 +3478,55 @@ rules, and print the balance report and simulated first hour.
   inspected.
 - Weather, night sight, depth, income, healing, port log, alliances and route
   income remains HOOK-only, as required.
+
+## Session 3I-c: research and upgrade screens
+
+**Date:** 2026-11-14
+**Branch:** main
+
+### What was built
+
+- A shared, browser-free `researchView.ts` model: six collapsible branches
+  (A-E plus the navy's unique branch), level pips, next-level effect text,
+  cost in units and points, locked/available/owned state, disabled reason and
+  the HOOK line `Takes effect when [system] arrives`.
+- Research screen opened from Menu → Research and from a new desktop dock
+  Research tab. It shows the navy's shared points and units, owned levels and
+  a scrolling branch list instead of a graph. Every buy button stays visible;
+  unaffordable and fully researched rows are disabled with the reason printed
+  beside them.
+- Per-ship Upgrades tab: fitted versus unlocked level for every ship upgrade,
+  the next effect, the total fitting cost and one-game-day dock time, plus an
+  `Upgrade ship` button disabled with `Not docked at your port` or
+  `All unlocked upgrades fitted`.
+- Fleet panel `Upgrade all docked ships` button sends `fitAllShips`.
+- Notices: `Research available` (once per kind per minute), `Unlocked X L2`,
+  `Unlocked X L1 by capture`, `Ship upgraded` and capture-point progress come
+  from the existing server notice queue.
+- Buy list: fire ships show `Needs research: Fire ships` on the disabled
+  button until the navy has Fire ships L1. The port panel prints the
+  fortification tier the navy may build and disables the build button with
+  `Needs research: Fortification tier N` above that tier.
+- Layout: new `research-panel` and `dock-tab-research` inventory entries and
+  the five-tab dock; research, the menu and the ship upgrade list all scroll.
+  No foreign research is requested or rendered: the client only reads its own
+  navy's state.
+- `tests/research-ui-3i.test.ts`: 7 tests for all four navies' 31 rows and no
+  foreign unique, disabled reasons, HOOK text, fitted versus unlocked rows,
+  fire-ship lock text, clean layout with 44 px targets and scrolling at
+  360x740, 412x915, 740x360, 768x1024 and 1280x800, and the required markup.
+
+### Checks
+
+- `npm test`: **545/545 passing** run serially. The parallel `npm test` run
+  hit only the existing 100-ship world-step timing test under VM load
+  (35-39 ms against 16 ms); it passes alone and in the serial full run.
+- `npm run build`: passed (`Build OK -> dist/index.html`).
+- No browser is available. The screens were checked as render plans and
+  markup, not as pixels.
+
+### Broken or unfinished
+
+- Weather, night sight, depth, income, healing, port log, alliances, route
+  income and the other HOOK systems are still store-only, as required.
+- No screenshot or real click-through was possible in this environment.

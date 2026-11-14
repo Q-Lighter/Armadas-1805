@@ -63,10 +63,19 @@ import { formationSlots } from "@naval/shared/fleets";
 import { orderedChartBlocks } from "@naval/shared/chart-draw";
 import { chartTextureSize, planChartDetail } from "@naval/shared/chart-detail";
 import {
-  auditLayout,
-  layoutIssueSummary,
-  type LayoutAuditElement,
+  type LayoutIssue,
 } from "@naval/shared/layout-audit";
+import {
+  buildScreenLayout,
+  contextStripVisible,
+  layoutElement,
+  resolveLayoutMode,
+  type LayoutModalId,
+  type LayoutPanelId,
+  type LayoutPreference,
+  type LayoutState,
+  type ScreenLayoutPlan,
+} from "@naval/shared/screen-layout";
 import { buildBlockCommands, findChartSuspects } from "@naval/shared/chart-paint";
 import { isLandAt } from "@naval/shared/land";
 import { cameraScale, screenToWorld, worldToScreen } from "@naval/shared/camera";
@@ -859,6 +868,7 @@ async function start(): Promise<void> {
   const battleLogToggle = element<HTMLButtonElement>("battle-log-toggle");
   const battleLogList = element<HTMLOListElement>("battle-log-list");
   const battleLogCount = element<HTMLElement>("battle-log-count");
+  const battleLogClose = element<HTMLButtonElement>("battle-log-close");
   const battleBar = element<HTMLElement>("battle-bar");
   const battleBarTitle = element<HTMLElement>("battle-bar-title");
   const battleBarActions = element<HTMLElement>("battle-bar-actions");
@@ -1044,6 +1054,36 @@ async function start(): Promise<void> {
   const shipStripProvisions = element<HTMLElement>("ship-strip-provisions");
   const clockPanel = element<HTMLElement>("game-clock-panel");
   const clockOut = element<HTMLElement>("game-clock");
+  const windChip = element<HTMLElement>("wind-chip");
+  const windChipLabel = element<HTMLElement>("wind-chip-label");
+  const battleLogButton = element<HTMLButtonElement>("battle-log-btn");
+  const battleLogButtonCount = element<HTMLElement>("battle-log-btn-count");
+  const dockFrame = element<HTMLElement>("dock");
+  const dockTabs = element<HTMLElement>("dock-tabs");
+  const dockTabShip = element<HTMLButtonElement>("dock-tab-ship");
+  const dockTabFleet = element<HTMLButtonElement>("dock-tab-fleet");
+  const dockTabLog = element<HTMLButtonElement>("dock-tab-log");
+  const dockTabPorts = element<HTMLButtonElement>("dock-tab-ports");
+  const dockCollapseButton = element<HTMLButtonElement>("dock-collapse");
+  const bottomDock = element<HTMLElement>("bottom-dock");
+  const ordersButton = element<HTMLButtonElement>("orders-btn");
+  const dockMenuButton = element<HTMLButtonElement>("dock-menu-btn");
+  const ordersSheet = element<HTMLElement>("orders-sheet");
+  const queueButton = element<HTMLButtonElement>("queue-btn");
+  const noticeSecond = element<HTMLParagraphElement>("notice-2");
+  const enemyChip = element<HTMLElement>("enemy-chip");
+  const mapCompass = element<HTMLElement>("map-compass");
+  const scaleBar = element<HTMLElement>("scale-bar");
+  const scaleBarLabel = element<HTMLElement>("scale-bar-label");
+  const chartBack = element<HTMLButtonElement>("chart-back");
+  const compassRose = element<SVGSVGElement>("compass-rose");
+  const shipChipHullFill = element<HTMLElement>("ship-chip-hull-fill");
+  const layoutDebugLayer = element<HTMLElement>("layout-debug-layer");
+  const developerButton = element<HTMLButtonElement>("developer-btn");
+  const targetCard = element<HTMLElement>("target-card");
+  const targetCardTitle = element<HTMLElement>("target-card-title");
+  const targetCardDetail = element<HTMLElement>("target-card-detail");
+  const targetCardClose = element<HTMLButtonElement>("target-card-close");
   const roomOut = element<HTMLElement>("room-code");
   const notice = element<HTMLParagraphElement>("notice");
   const versionNotice = element<HTMLButtonElement>("version-notice");
@@ -1064,6 +1104,27 @@ async function start(): Promise<void> {
   const query = new URLSearchParams(location.search);
   const room = query.get("room") ?? "test";
   const layoutDebug = query.get("layoutdebug") === "1";
+  const layoutPreferenceKey = "armadas.layout";
+  const layoutStorage = browserStorage("localStorage");
+  function readLayoutPreference(): LayoutPreference {
+    try {
+      const stored = layoutStorage?.getItem(layoutPreferenceKey);
+      return stored === "phone" || stored === "desktop" ? stored : "auto";
+    } catch {
+      return "auto";
+    }
+  }
+  let layoutPreference = readLayoutPreference();
+  let activeDockPanel: LayoutPanelId = "ship";
+  let dockCollapsed = false;
+  let ordersOpen = false;
+  let lastLayoutApplyAt = 0;
+  let lastLayoutStateKey = "";
+  let layoutApplyFrame = 0;
+  const UNPLACED_LAYOUT_IDS = new Set([
+    "capture-strip", "escort-strip", "charting", "version-notice",
+    "client-error", "quality-note", "target-card", "layout-debug-layer",
+  ]);
   const chartDebug = query.get("chartdebug") === "1";
   let perfVisible = query.get("perf") === "1";
   let perfAutoOpened = false;
@@ -1594,6 +1655,14 @@ async function start(): Promise<void> {
     lastNoticeAt = now;
     window.clearTimeout(noticeTimer);
     window.clearTimeout(noticeHideTimer);
+    if (!notice.hidden && notice.textContent && notice.textContent !== text) {
+      noticeSecond.textContent = notice.textContent;
+      noticeSecond.hidden = false;
+    }
+    if (text === lastNoticeText && !notice.hidden) {
+      noticeSecond.textContent = text;
+      noticeSecond.hidden = false;
+    }
     notice.textContent = text;
     notice.hidden = false;
     notice.dataset.reload = options.reload ? "true" : "false";
@@ -1608,6 +1677,7 @@ async function start(): Promise<void> {
       notice.classList.remove("is-visible");
       noticeHideTimer = window.setTimeout(() => {
         notice.hidden = true;
+        noticeSecond.hidden = true;
       }, 300);
     }, 3_500);
   }
@@ -3184,6 +3254,7 @@ async function start(): Promise<void> {
     const row = fleetShips.find((ship) => ship.id === id);
     if (!row || row.status === "delivery") return false;
     selectedEnemyId = null;
+    if (activeDockPanel === "target") activeDockPanel = "ship";
     if (!multiSelect) selectedShipIds.clear();
     selectedShipId = id;
     target = null;
@@ -5215,6 +5286,12 @@ async function start(): Promise<void> {
     shipStripHeading.textContent = headingOut.textContent;
     shipStripCrew.textContent = viewRow?.crewText ?? "–";
     shipStripProvisions.textContent = viewRow?.provisionsText ?? "–";
+    const hullPoints = row?.damagePoints?.hull ?? 0;
+    const hullCapacity = row?.damageCapacities?.hull ?? 0;
+    const hullPercent = hullCapacity > 0
+      ? Math.max(0, Math.min(100, Math.round((hullPoints / hullCapacity) * 100)))
+      : 100;
+    shipChipHullFill.style.width = `${hullPercent}%`;
     shipUndock.hidden = row?.status !== "docked";
     shipDamage.disabled = !row || row.status === "delivery";
     const lightsOn = row?.lightsOn !== false;
@@ -5848,7 +5925,10 @@ async function start(): Promise<void> {
   }
 
   function renderBattleBar(): void {
-    if (selectedEnemyId && !ships.has(selectedEnemyId)) selectedEnemyId = null;
+    if (selectedEnemyId && !ships.has(selectedEnemyId)) {
+      selectedEnemyId = null;
+      if (activeDockPanel === "target") activeDockPanel = "ship";
+    }
     const enemy = selectedEnemyId ? ships.get(selectedEnemyId) : null;
     if (enemy) {
       const contact = npcContacts.get(enemy.id);
@@ -6158,6 +6238,7 @@ async function start(): Promise<void> {
     battleLogKey = key;
     battleLog.hidden = clean.length === 0;
     battleLogCount.textContent = String(clean.length);
+    battleLogButtonCount.textContent = String(clean.length);
     battleLogList.replaceChildren();
     for (const line of clean) {
       const item = document.createElement("li");
@@ -6651,7 +6732,10 @@ async function start(): Promise<void> {
         controlGroups[slot] = ids.filter((id): id is string => typeof id === "string");
       }
     }
-    if (selectedEnemyId && !ships.has(selectedEnemyId)) selectedEnemyId = null;
+    if (selectedEnemyId && !ships.has(selectedEnemyId)) {
+      selectedEnemyId = null;
+      if (activeDockPanel === "target") activeDockPanel = "ship";
+    }
     if (selectedFleetId && !playerFleets.some((fleet) => fleet.id === selectedFleetId)) {
       selectedFleetId = null;
     }
@@ -7187,7 +7271,11 @@ async function start(): Promise<void> {
     tapButton.title = tapToSail
       ? "A quick tap on the sea sends a move order"
       : "Press and hold the sea, or use Move, to send an order";
-    moveButton.hidden = tapToSail;
+    moveButton.hidden = false;
+    moveButton.disabled = tapToSail;
+    moveButton.title = tapToSail
+      ? "Tap On is active: choose Move first"
+      : "Arm one move order";
     moveButton.setAttribute("aria-pressed", String(moveArmed));
     moveButton.classList.toggle("is-armed", moveArmed);
   }
@@ -7292,6 +7380,7 @@ async function start(): Promise<void> {
     const foreign = anyShipAt(screenX, screenY);
     if (foreign && !foreign.own) {
       selectedEnemyId = foreign.id;
+      if (!isPhoneLayout()) activeDockPanel = "target";
       closePortPanel();
       closeTradePanel();
       closeFleetPanel();
@@ -7333,6 +7422,7 @@ async function start(): Promise<void> {
     }
 
     selectedEnemyId = null;
+    if (activeDockPanel === "target") activeDockPanel = "ship";
     const decision = resolveTap({ tapToSail, moveArmed, heldMs: 0 });
     moveArmed = decision.moveArmed;
     refreshTapUi();
@@ -7691,6 +7781,16 @@ async function start(): Promise<void> {
     const collapsed = battleLog.classList.toggle("is-collapsed");
     battleLogToggle.setAttribute("aria-expanded", String(!collapsed));
   });
+  battleLogClose.addEventListener("click", () => {
+    battleLog.hidden = true;
+    battleLogButton.setAttribute("aria-expanded", "false");
+    if (activeDockPanel === "log") activeDockPanel = "ship";
+    scheduleScreenLayout();
+  });
+  chartBack.addEventListener("click", () => {
+    setMode("ship");
+    scheduleScreenLayout();
+  });
   surrenderConfirmYes.addEventListener("click", () => {
     if (surrenderConfirmShipId) {
       sendShipBattle(surrenderConfirmShipId, "surrender");
@@ -7791,12 +7891,230 @@ async function start(): Promise<void> {
     suspectSegments = findChartSuspects(screenBlockList(), isLandAt).length;
   }
 
+  function isPhoneLayout(): boolean {
+    return resolveLayoutMode(window.innerWidth, window.innerHeight, layoutPreference) !== "desktop";
+  }
+
+  function visibleById(id: string): boolean {
+    const node = document.getElementById(id) as HTMLElement | null;
+    return node !== null && !node.hidden;
+  }
+
+  function currentModalId(): LayoutModalId | null {
+    const candidates: Array<[string, LayoutModalId]> = [
+      ["surrender-confirm", "surrender"],
+      ["board-sheet", "board"],
+      ["crew-sheet", "crew"],
+      ["captured-sheet", "captured"],
+      ["loot-sheet", "loot"],
+      ["privateer-sheet", "privateer"],
+      ["escort-sheet", "escort"],
+      ["surrender-sheet", "surrenderOffer"],
+      ["resign-sheet", "resign"],
+      ["victory-screen", "victory"],
+      ["eliminated-screen", "eliminated"],
+      ["order-menu", "orderMenu"],
+      ["heading-sheet", "heading"],
+      ["ship-action", "shipAction"],
+    ];
+    for (const [id, modal] of candidates) {
+      if (visibleById(id)) return modal;
+    }
+    return null;
+  }
+
+  function currentDockPanel(): LayoutPanelId {
+    if (!portPanel.hidden) return "port";
+    if (!damagePanel.hidden) return "damage";
+    if (!tradePanel.hidden) return "trade";
+    if (!shipyardPanel.hidden) return "shipyard";
+    if (!hirePanel.hidden) return "hire";
+    if (!knownPortsPanel.hidden) return "knownPorts";
+    if (!fleetPanel.hidden) return "fleet";
+    if (!battleLog.hidden && !isPhoneLayout()) return "log";
+    return activeDockPanel;
+  }
+
+  function currentLayoutState(): LayoutState {
+    const phone = isPhoneLayout();
+    const row = selectedFleetShip();
+    const enemy = selectedEnemyId ? ships.get(selectedEnemyId) : null;
+    const selectedPort = selectedPortId ? portData.get(selectedPortId) : null;
+    const ownPort = selectedPort?.owner === identity.id;
+    const enemyPort = Boolean(selectedPort && !ownPort);
+    const noticeCount = (notice.hidden ? 0 : 1) + (noticeSecond.hidden ? 0 : 1);
+    const enemyChipAt = enemy ? toScreen(enemy.x, enemy.y) : null;
+    return {
+      idle: !selectedShipId && !enemy,
+      ownShipSelected: Boolean(selectedShipId),
+      inCombat: row?.inCombat === true || fleetShips.some((ship) => ship.inCombat === true),
+      enemySelected: Boolean(enemy),
+      surrenderOffered: !surrenderSheet.hidden,
+      enemyPortSelected: enemyPort,
+      ownPortSelected: ownPort,
+      fireShipSelected: row?.classId === "fireShip",
+      towAvailable: row?.classId === "fireShip",
+      chartOpen: mode === "chart",
+      trailsOpen: !chartTrails.hidden,
+      menuOpen: !menuPanel.hidden,
+      developerOpen: !testTools.hidden,
+      ordersOpen,
+      shipSheetOpen: phone && !shipPanel.classList.contains("is-collapsed"),
+      battleLogOpen: phone && !battleLog.hidden,
+      dockCollapsed,
+      tapToSail,
+      dockPanel: currentDockPanel(),
+      noticeCount,
+      battleLogUnread: Number(battleLogButtonCount.textContent) || 0,
+      modal: currentModalId(),
+      enemyChip: enemyChipAt,
+    };
+  }
+
+  function setLayoutRect(node: HTMLElement, element: {
+    rect: { left: number; top: number; width: number; height: number };
+    z: number;
+    scrollable: boolean;
+  }): void {
+    node.style.setProperty("position", "fixed", "important");
+    node.style.setProperty("left", `${element.rect.left}px`, "important");
+    node.style.setProperty("top", `${element.rect.top}px`, "important");
+    node.style.setProperty("width", `${element.rect.width}px`, "important");
+    node.style.setProperty("height", `${element.rect.height}px`, "important");
+    node.style.setProperty("right", "auto", "important");
+    node.style.setProperty("bottom", "auto", "important");
+    node.style.setProperty("margin", "0", "important");
+    node.style.setProperty("max-width", "none", "important");
+    node.style.setProperty("max-height", "none", "important");
+    node.style.setProperty("transform", "none", "important");
+    node.style.setProperty("z-index", String(element.z), "important");
+    node.style.setProperty("overflow-y", element.scrollable ? "auto" : "visible", "important");
+    node.style.setProperty("overflow-x", "hidden", "important");
+    node.style.setProperty("overscroll-behavior", "contain", "important");
+  }
+
+  function drawLayoutDebug(plan: ScreenLayoutPlan): void {
+    if (!layoutDebug || roomKind === "normal") {
+      layoutDebugLayer.hidden = true;
+      layoutDebugLayer.replaceChildren();
+      return;
+    }
+    layoutDebugLayer.hidden = false;
+    layoutDebugLayer.replaceChildren();
+    for (const element of plan.elements) {
+      if (!element.visible || element.rect.width <= 0 || element.rect.height <= 0) continue;
+      const box = document.createElement("div");
+      box.className = "layout-debug-box";
+      box.dataset.group = element.group;
+      box.style.left = `${element.rect.left}px`;
+      box.style.top = `${element.rect.top}px`;
+      box.style.width = `${element.rect.width}px`;
+      box.style.height = `${element.rect.height}px`;
+      const label = document.createElement("span");
+      label.textContent = `${element.label} · ${element.id}`;
+      box.append(label);
+      layoutDebugLayer.append(box);
+    }
+  }
+
+  function addContextAction(label: string, action: () => void): void {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "btn";
+    button.dataset.contextExtra = "true";
+    button.textContent = label;
+    button.addEventListener("click", action);
+    battleBarActions.append(button);
+  }
+
+  function refreshContextActions(): void {
+    if (!contextStripVisible(currentLayoutState())) return;
+    for (const extra of battleBarActions.querySelectorAll<HTMLElement>("[data-context-extra]")) {
+      extra.remove();
+    }
+    if (selectedPortId && !portPanel.hidden && !portAttackButton.hidden) {
+      addContextAction("Attack port", () => portAttackButton.click());
+    }
+    const selected = selectedFleetShip();
+    if (selected?.classId === "fireShip") {
+      for (const button of fireShipButtonsOut.querySelectorAll<HTMLButtonElement>("button")) {
+        const text = button.textContent?.toLowerCase() ?? "";
+        if ((text.includes("ignite") || text.includes("tow")) && !button.hidden) {
+          addContextAction(button.textContent ?? "Fire ship", () => button.click());
+        }
+      }
+    }
+    if (selectedEnemyId && ![...battleBarActions.querySelectorAll("button")].some((button) => /board/i.test(button.textContent ?? ""))) {
+      addContextAction("Board", () => openBoardSheet(selectedEnemyId!));
+    }
+  }
+
+  function applyScreenLayout(): void {
+    const viewport = { width: window.innerWidth, height: window.innerHeight };
+    const state = currentLayoutState();
+    const plan = buildScreenLayout({ ...viewport, preference: layoutPreference, state });
+    const phone = plan.mode !== "desktop";
+
+    for (const element of plan.elements) {
+      if (UNPLACED_LAYOUT_IDS.has(element.id)) continue;
+      const node = document.getElementById(element.id) as HTMLElement | null;
+      if (!node) continue;
+      if (!element.visible || element.rect.width <= 0 || element.rect.height <= 0) {
+        node.hidden = true;
+        continue;
+      }
+      node.hidden = false;
+      setLayoutRect(node, element);
+      if (node instanceof HTMLButtonElement) {
+        node.disabled = element.disabled;
+        if (element.reason) node.title = element.reason;
+      }
+    }
+    queueButton.disabled = !selectedFleetId;
+    queueButton.title = selectedFleetId
+      ? "Queue fleet orders"
+      : "Select a fleet to queue orders";
+    developerButton.hidden = roomKind === "normal";
+
+    refreshContextActions();
+
+    // The compass is the one map overlay that used to live in the ship card.
+    if (compassRose.parentElement !== mapCompass) mapCompass.append(compassRose);
+    mapCompass.hidden = false;
+    scaleBar.hidden = false;
+    scaleBarLabel.textContent = `${Math.max(1, Math.round(view.kmAcross))} km`;
+    const selectedEnemy = selectedEnemyId ? ships.get(selectedEnemyId) : null;
+    enemyChip.textContent = selectedEnemy
+      ? `${selectedEnemy.navy} ${selectedEnemy.classId}`
+      : "";
+    targetCardTitle.textContent = selectedEnemy
+      ? `${selectedEnemy.navy} ${selectedEnemy.classId}`
+      : "No target";
+    targetCardDetail.textContent = selectedEnemy
+      ? (selectedEnemy.surrendered ? "Struck colours" : selectedEnemy.abandoned ? "Abandoned" : "Under way")
+      : "Select an enemy ship on the map.";
+
+    dockTabShip.setAttribute("aria-selected", String(currentDockPanel() === "ship"));
+    dockTabFleet.setAttribute("aria-selected", String(currentDockPanel() === "fleet"));
+    dockTabLog.setAttribute("aria-selected", String(currentDockPanel() === "log"));
+    dockTabPorts.setAttribute("aria-selected", String(currentDockPanel() === "ports" || currentDockPanel() === "knownPorts"));
+
+    drawLayoutDebug(plan);
+    layoutApplyFrame = 0;
+    lastLayoutApplyAt = performance.now();
+  }
+
+  function scheduleScreenLayout(): void {
+    if (layoutApplyFrame) return;
+    layoutApplyFrame = requestAnimationFrame(applyScreenLayout);
+  }
+
   function scheduleLayoutAudit(): void {
     if (layoutAuditFrame) cancelAnimationFrame(layoutAuditFrame);
     layoutAuditFrame = requestAnimationFrame(runLayoutAudit);
   }
 
-  /** TEMP-DEBUG: measure the rendered UI in test and dev rooms. */
+  /** TEMP-DEBUG: audit the exact plan applied to the live UI. */
   function runLayoutAudit(): void {
     layoutAuditFrame = 0;
     if (roomKind === "normal") {
@@ -7805,48 +8123,18 @@ async function start(): Promise<void> {
       return;
     }
 
-    const measures: LayoutAuditElement[] = [];
-    const add = (
-      node: Element,
-      group: string,
-      interactive: boolean,
-      index: number,
-    ): void => {
-      const element = node as HTMLElement;
-      const rect = element.getBoundingClientRect();
-      if (rect.width <= 0 || rect.height <= 0) return;
-      measures.push({
-        id: element.id || `${group}-${element.tagName.toLowerCase()}-${index}`,
-        group,
-        rect: {
-          left: rect.left,
-          top: rect.top,
-          right: rect.right,
-          bottom: rect.bottom,
-        },
-        interactive,
-        scrollWidth: element.scrollWidth,
-        clientWidth: element.clientWidth,
-        scrollHeight: element.scrollHeight,
-        clientHeight: element.clientHeight,
-      });
-    };
-
-    document.querySelectorAll("header.hud-top, .hud-ship, section[role='dialog']").forEach(
-      (node, index) => add(node, "surface", false, index),
-    );
-    document.querySelectorAll("button, input").forEach(
-      (node, index) => add(node, "control", true, index),
-    );
-
-    const issues = auditLayout(
-      measures,
-      { width: window.innerWidth, height: window.innerHeight },
-      44,
-    );
+    const plan = buildScreenLayout({
+      width: window.innerWidth,
+      height: window.innerHeight,
+      preference: layoutPreference,
+      state: currentLayoutState(),
+    });
+    const issues: LayoutIssue[] = plan.audit();
     layoutIssueCount = issues.length;
     layoutAudit.hidden = false;
-    layoutAuditSummary.textContent = layoutIssueSummary(issues);
+    layoutAuditSummary.textContent = issues.length === 0
+      ? "Layout audit: clean"
+      : `Layout audit: ${issues.length} issue${issues.length === 1 ? "" : "s"} (${[...new Set(issues.map((issue) => issue.kind))].join(", ")})`;
     layoutAuditList.replaceChildren();
     for (const issue of issues) {
       const item = document.createElement("li");
@@ -7915,11 +8203,77 @@ async function start(): Promise<void> {
     menuPanel.hidden = !menuPanel.hidden;
     menuButton.setAttribute("aria-expanded", String(!menuPanel.hidden));
     if (!menuPanel.hidden) closeTestTools();
+    scheduleScreenLayout();
   });
   menuClose.addEventListener("click", () => {
     menuPanel.hidden = true;
     menuButton.setAttribute("aria-expanded", "false");
+    scheduleScreenLayout();
   });
+  function showMenuPanel(): void {
+    menuPanel.hidden = false;
+    menuButton.setAttribute("aria-expanded", "true");
+    testTools.hidden = true;
+    scheduleScreenLayout();
+  }
+  dockMenuButton.addEventListener("click", showMenuPanel);
+  ordersButton.addEventListener("click", () => {
+    ordersOpen = !ordersOpen;
+    ordersSheet.hidden = !ordersOpen;
+    ordersButton.setAttribute("aria-expanded", String(ordersOpen));
+    scheduleScreenLayout();
+  });
+  queueButton.addEventListener("click", () => {
+    if (!selectedFleetId) {
+      showNotice("Select a fleet before queueing orders.");
+      return;
+    }
+    fleetQueue.click();
+    queueButton.classList.toggle("is-active", queueOrders);
+    queueButton.setAttribute("aria-pressed", String(queueOrders));
+  });
+  function showDockPanel(panel: LayoutPanelId): void {
+    activeDockPanel = panel;
+    closePortPanel();
+    closeFleetPanel();
+    closeDamagePanel();
+    closeTradePanel();
+    closeShipyardPanel();
+    closeHirePanel();
+    knownPortsPanel.hidden = true;
+    battleLog.hidden = true;
+    if (panel === "fleet") openFleetPanel();
+    if (panel === "log") battleLog.hidden = false;
+    if (panel === "ports" || panel === "knownPorts") {
+      renderKnownPorts();
+      knownPortsPanel.hidden = false;
+    }
+    scheduleScreenLayout();
+  }
+  dockTabShip.addEventListener("click", () => showDockPanel("ship"));
+  dockTabFleet.addEventListener("click", () => showDockPanel("fleet"));
+  dockTabLog.addEventListener("click", () => showDockPanel("log"));
+  dockTabPorts.addEventListener("click", () => showDockPanel("ports"));
+  dockCollapseButton.addEventListener("click", () => {
+    dockCollapsed = !dockCollapsed;
+    scheduleScreenLayout();
+  });
+  battleLogButton.addEventListener("click", () => {
+    battleLogButton.setAttribute("aria-expanded", String(battleLog.hidden));
+    if (isPhoneLayout()) {
+      battleLog.hidden = !battleLog.hidden;
+      scheduleScreenLayout();
+      return;
+    }
+    showDockPanel("log");
+  });
+  targetCardClose.addEventListener("click", () => {
+    selectedEnemyId = null;
+    activeDockPanel = "ship";
+    renderBattleBar();
+    scheduleScreenLayout();
+  });
+  developerButton.addEventListener("click", () => testToolsButton.click());
   resignButton.addEventListener("click", openResignSheet);
   resignCancel.addEventListener("click", closeResignSheet);
   resignConfirm.addEventListener("click", sendResign);
@@ -7940,6 +8294,7 @@ async function start(): Promise<void> {
 
   function closeTestTools(): void {
     testTools.hidden = true;
+    scheduleScreenLayout();
   }
 
   function refreshTestInvite(): void {
@@ -7964,6 +8319,7 @@ async function start(): Promise<void> {
     closeTestTools();
     testTools.hidden = false;
     refreshTestInvite();
+    scheduleScreenLayout();
   });
   testToolsClose.addEventListener("click", closeTestTools);
   perfToggle.addEventListener("click", () => setPerfVisible(!perfVisible));
@@ -8456,11 +8812,33 @@ async function start(): Promise<void> {
 
     safeLayer("chart ruler", updateRuler);
     safeLayer("borders", drawBorders);
+    if (now - lastLayoutApplyAt >= 150) {
+      scheduleScreenLayout();
+    }
     if (now - lastDebugLineAt >= 500) {
       lastDebugLineAt = now;
       updateDebugLine();
     }
   });
+
+  for (const button of document.querySelectorAll<HTMLButtonElement>("[data-layout]")) {
+    const preference = button.dataset.layout;
+    button.setAttribute("aria-pressed", String(preference === layoutPreference));
+    button.addEventListener("click", () => {
+      if (preference !== "auto" && preference !== "phone" && preference !== "desktop") return;
+      layoutPreference = preference;
+      try {
+        layoutStorage?.setItem(layoutPreferenceKey, preference);
+      } catch {
+        // Remembering the choice is optional.
+      }
+      for (const option of document.querySelectorAll<HTMLButtonElement>("[data-layout]")) {
+        option.setAttribute("aria-pressed", String(option.dataset.layout === layoutPreference));
+      }
+      dockCollapsed = false;
+      scheduleScreenLayout();
+    });
+  }
 
   for (const button of document.querySelectorAll<HTMLButtonElement>("[data-size]")) {
     button.addEventListener("click", () => {
@@ -8477,7 +8855,11 @@ async function start(): Promise<void> {
 
   drawGrain();
   if (identity.warning) showNotice(identity.warning);
-  window.addEventListener("resize", scheduleLayoutAudit);
+  window.addEventListener("resize", () => {
+    scheduleScreenLayout();
+    scheduleLayoutAudit();
+  });
+  scheduleScreenLayout();
   scheduleLayoutAudit();
   // A narrow read-only surface for the real-client jsdom harness. It exposes
   // only what the player already sees and never touches server state.

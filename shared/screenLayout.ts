@@ -49,6 +49,7 @@ export type LayoutModalId =
   | "escort"
   | "resign"
   | "surrender"
+  | "surrenderOffer"
   | "victory"
   | "eliminated"
   | "orderMenu"
@@ -77,6 +78,7 @@ export interface LayoutState {
   dockPanel?: LayoutPanelId;
   noticeCount?: number;
   battleLogUnread?: number;
+  tapToSail?: boolean;
   modal?: LayoutModalId | null;
   /** Screen-space anchor for the selected enemy's map chip. */
   enemyChip?: { x: number; y: number } | null;
@@ -316,7 +318,7 @@ function addToolbarControls(
   const ids = ["tap-btn", "move-btn", "multi-btn", "follow-btn", "queue-btn"];
   ids.forEach((id, index) => {
     const isMove = id === "move-btn";
-    const tapOn = state.idle !== true;
+    const tapOn = state.tapToSail ?? true;
     placeChild(elements, id, parent, x + index * step, y, 44, 44, z, {
       disabled: isMove ? tapOn : false,
       reason: isMove && tapOn ? "Tap On is active: choose Move first" : undefined,
@@ -337,7 +339,7 @@ function desktop(
   const mapArea = rect(0, topH, mapW, height - topH);
   const z = 10;
 
-  add(elements, "top-bar", rect(0, 0, width, topH), z);
+  add(elements, "top-bar", rect(0, 0, width, topH), 40);
   placeChild(elements, "money-panel", "top-bar", 10, 4, 96, 44, z + 1, { interactive: false });
   placeChild(elements, "game-clock-panel", "top-bar", 114, 4, 148, 44, z + 1, { interactive: false });
   placeChild(elements, "wind-chip", "top-bar", 270, 4, 104, 44, z + 1, { interactive: false });
@@ -356,7 +358,7 @@ function desktop(
   const contextVisible = state.inCombat === true || state.enemySelected === true ||
     state.surrenderOffered === true || state.fireShipSelected === true ||
     state.enemyPortSelected === true || state.ownPortSelected === true;
-  if (contextVisible) {
+  if (contextVisible && !state.menuOpen && !state.developerOpen && !state.modal) {
     const bar = rect((mapW - Math.min(600, mapW - 24)) / 2, toolbar.top - 60, Math.min(600, mapW - 24), 52);
     add(elements, "battle-bar", bar, z + 2);
   }
@@ -405,18 +407,18 @@ function desktop(
     const dev = rect(width - 420, topH + 8, 408, height - topH - 16);
     add(elements, "test-tools", dev, 50, { scrollable: true, contentHeight: dev.height + 520 });
   }
-  if (state.chartOpen) {
-    add(elements, "chart-trails", rect(12, topH + 8, 340, 44), 30);
+  if (state.chartOpen && !state.menuOpen && !state.developerOpen && !state.modal) {
+    add(elements, "chart-trails", rect(12, topH + 8, 340, 112), 30);
   }
 
   const noticeCount = clamp(state.noticeCount ?? 0, 0, 2);
-  if (noticeCount > 0) {
-    add(elements, "notice", rect(12, state.chartOpen ? topH + 60 : topH + 8, 320, 38), 31, { interactive: false });
+  if (noticeCount > 0 && !state.modal) {
+    add(elements, "notice", rect(12, state.chartOpen ? topH + 124 : topH + 8, 320, 38), 31, { interactive: false });
   }
-  if (noticeCount > 1) {
-    add(elements, "notice-2", rect(12, state.chartOpen ? topH + 104 : topH + 52, 320, 38), 31, { interactive: false });
+  if (noticeCount > 1 && !state.modal) {
+    add(elements, "notice-2", rect(12, state.chartOpen ? topH + 168 : topH + 52, 320, 38), 31, { interactive: false });
   }
-  if (state.enemyChip && state.enemySelected) {
+  if (state.enemyChip && state.enemySelected && !state.menuOpen && !state.developerOpen && !state.modal) {
     add(elements, "enemy-chip", rect(
       clamp(state.enemyChip.x + 16, 12, mapW - 150),
       clamp(state.enemyChip.y - 20, topH + 96, height - 120),
@@ -442,10 +444,28 @@ function modalElementId(modal: LayoutModalId): string {
   if (modal === "victory") return "victory-screen";
   if (modal === "eliminated") return "eliminated-screen";
   if (modal === "surrender") return "surrender-confirm";
+  if (modal === "surrenderOffer") return "surrender-sheet";
   if (modal === "orderMenu") return "order-menu";
   if (modal === "heading") return "heading-sheet";
   if (modal === "shipAction") return "ship-action";
   return `${modal}-sheet`;
+}
+
+function panelElementId(panel: LayoutPanelId): string {
+  const map: Record<LayoutPanelId, string> = {
+    ship: "ship-panel",
+    damage: "damage-panel",
+    target: "target-card",
+    fleet: "fleet-panel",
+    log: "battle-log",
+    ports: "known-ports-panel",
+    port: "port-panel",
+    trade: "trade-panel",
+    shipyard: "shipyard-panel",
+    hire: "hire-panel",
+    knownPorts: "known-ports-panel",
+  };
+  return map[panel];
 }
 
 function phonePortrait(
@@ -470,7 +490,7 @@ function phonePortrait(
     return { elements, mapArea };
   }
 
-  add(elements, "top-bar", rect(0, 0, width, topH), z);
+  add(elements, "top-bar", rect(0, 0, width, topH), 40);
   placeChild(elements, "money-panel", "top-bar", 8, 2, 76, 44, z + 1, { interactive: false });
   placeChild(elements, "game-clock-panel", "top-bar", 90, 2, 112, 44, z + 1, { interactive: false });
   placeChild(elements, "menu-btn", "top-bar", width - 52, 2, 44, 44, z + 1);
@@ -497,8 +517,10 @@ function phonePortrait(
   const contextVisible = state.inCombat === true || state.enemySelected === true ||
     state.surrenderOffered === true || state.fireShipSelected === true ||
     state.enemyPortSelected === true || state.ownPortSelected === true;
+  const phonePanel = state.dockPanel && state.dockPanel !== "ship" && state.dockPanel !== "ports" &&
+    state.dockPanel !== "knownPorts" && state.dockPanel !== "log" ? state.dockPanel : null;
   const contextShown = contextVisible && !state.ordersOpen && !state.battleLogOpen &&
-    !state.modal && !state.shipSheetOpen;
+    !state.modal && !state.shipSheetOpen && !phonePanel;
   if (contextShown) {
     add(elements, "battle-bar", rect(margin, height - dockH - contextH, width - margin * 2, contextH), 35);
   }
@@ -509,25 +531,32 @@ function phonePortrait(
     });
   }
 
-  if (state.chartOpen) {
-    add(elements, "chart-trails", rect(margin, topH + 62, width - margin * 2, 44), 25);
+  if (phonePanel && !state.modal && !state.battleLogOpen && !state.ordersOpen) {
+    const sheetH = Math.min(420, height * 0.5);
+    add(elements, panelElementId(phonePanel), rect(margin, height - dockH - sheetH, width - margin * 2, sheetH), 45, {
+      scrollable: true,
+      contentHeight: sheetH + 300,
+    });
   }
-  if (state.chartOpen && !state.modal && !state.battleLogOpen && !state.ordersOpen) {
-    add(elements, "known-ports-panel", rect(margin, topH + 114, width - margin * 2, 140), 20, {
+  if (state.chartOpen && !state.modal && !state.shipSheetOpen && !state.ordersOpen && !state.battleLogOpen && !phonePanel) {
+    add(elements, "chart-trails", rect(margin, topH + 62, width - margin * 2, 112), 25);
+  }
+  if (state.chartOpen && !state.modal && !state.battleLogOpen && !state.ordersOpen && !state.shipSheetOpen && !phonePanel) {
+    add(elements, "known-ports-panel", rect(margin, topH + 182, width - margin * 2, 140), 20, {
       scrollable: true,
       contentHeight: 260,
     });
   }
 
-  const noticeTop = state.chartOpen ? topH + 262 : topH + 62;
+  const noticeTop = state.chartOpen ? topH + 330 : topH + 62;
   const noticeCount = clamp(state.noticeCount ?? 0, 0, 2);
-  if (noticeCount > 0 && !state.battleLogOpen && !state.ordersOpen && !state.modal) {
+  if (noticeCount > 0 && !state.battleLogOpen && !state.ordersOpen && !state.modal && !state.shipSheetOpen && !phonePanel) {
     add(elements, "notice", rect(margin, noticeTop, width - margin * 2, 34), 32, { interactive: false });
   }
-  if (noticeCount > 1 && !state.battleLogOpen && !state.ordersOpen && !state.modal) {
+  if (noticeCount > 1 && !state.battleLogOpen && !state.ordersOpen && !state.modal && !state.shipSheetOpen && !phonePanel) {
     add(elements, "notice-2", rect(margin, noticeTop + 38, width - margin * 2, 34), 32, { interactive: false });
   }
-  if (state.enemyChip && state.enemySelected && !state.modal) {
+  if (state.enemyChip && state.enemySelected && !state.modal && !phonePanel) {
     add(elements, "enemy-chip", rect(
       clamp(state.enemyChip.x + 12, margin, width - 138 - margin),
       clamp(state.enemyChip.y - 18, noticeTop + (noticeCount > 0 ? 76 : 0), height - dockH - 100),
@@ -598,7 +627,7 @@ function phoneLandscape(
     return { elements, mapArea };
   }
 
-  add(elements, "top-bar", rect(0, 0, width, topH), z);
+  add(elements, "top-bar", rect(0, 0, width, topH), 40);
   placeChild(elements, "money-panel", "top-bar", 8, 0, 74, 44, z + 1, { interactive: false });
   placeChild(elements, "game-clock-panel", "top-bar", 88, 0, 112, 44, z + 1, { interactive: false });
   placeChild(elements, "wind-chip", "top-bar", 206, 0, 86, 44, z + 1, { interactive: false });
@@ -623,25 +652,34 @@ function phoneLandscape(
   const contextVisible = state.inCombat === true || state.enemySelected === true ||
     state.surrenderOffered === true || state.fireShipSelected === true ||
     state.enemyPortSelected === true || state.ownPortSelected === true;
-  if (contextVisible && !state.ordersOpen && !state.modal) {
+  const landscapePanel = state.dockPanel && state.dockPanel !== "ship" &&
+    state.dockPanel !== "ports" && state.dockPanel !== "knownPorts" && state.dockPanel !== "log"
+    ? state.dockPanel : null;
+  if (contextVisible && !state.ordersOpen && !state.modal && !landscapePanel) {
     add(elements, "battle-bar", rect(dockW, height - contextH, width - dockW, contextH), 35);
   }
 
   if (!state.modal && !state.ordersOpen) {
     add(elements, "ship-panel", rect(dockW + 8, topH + 6, 250, 44), 20);
   }
-  if (state.chartOpen) {
-    add(elements, "chart-trails", rect(dockW + 8, topH + 56, 330, 44), 25);
+  if (landscapePanel && !state.modal && !state.ordersOpen) {
+    add(elements, panelElementId(landscapePanel), rect(width / 2, topH + 8, width / 2 - 8, height - topH - 16), 45, {
+      scrollable: true,
+      contentHeight: 380,
+    });
+  }
+  if (state.chartOpen && !state.modal && !state.ordersOpen && !landscapePanel && !state.battleLogOpen) {
+    add(elements, "chart-trails", rect(dockW + 8, topH + 56, 330, 112), 25);
   }
   const noticeCount = clamp(state.noticeCount ?? 0, 0, 2);
-  const noticeTop = topH + (state.chartOpen ? 108 : 58);
-  if (noticeCount > 0 && !state.modal && !state.ordersOpen) {
+  const noticeTop = topH + (state.chartOpen ? 176 : 58);
+  if (noticeCount > 0 && !state.modal && !state.ordersOpen && !landscapePanel && !state.battleLogOpen) {
     add(elements, "notice", rect(dockW + 8, noticeTop, Math.min(300, width - dockW - 16), 32), 32, { interactive: false });
   }
-  if (noticeCount > 1 && !state.modal && !state.ordersOpen) {
+  if (noticeCount > 1 && !state.modal && !state.ordersOpen && !landscapePanel && !state.battleLogOpen) {
     add(elements, "notice-2", rect(dockW + 8, noticeTop + 36, Math.min(300, width - dockW - 16), 32), 32, { interactive: false });
   }
-  if (state.enemyChip && state.enemySelected && !state.modal) {
+  if (state.enemyChip && state.enemySelected && !state.modal && !landscapePanel) {
     add(elements, "enemy-chip", rect(
       clamp(state.enemyChip.x + 12, dockW + 8, width - 138),
       clamp(state.enemyChip.y - 18, noticeTop + (noticeCount > 0 ? 72 : 0), height - contextH - 44),

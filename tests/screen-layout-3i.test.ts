@@ -141,3 +141,22 @@ test("3I toolbar keeps unavailable controls visible with a reason", () => {
   assert.equal(move.disabled, true);
   assert.ok(move.reason && move.reason.length > 0);
 });
+
+test("3I combined screens stay clean when several surfaces are open", () => {
+  const combinations: LayoutState[] = [
+    { chartOpen: true, trailsOpen: true, noticeCount: 5 },
+    { chartOpen: true, menuOpen: true, noticeCount: 5 },
+    { chartOpen: true, modal: "loot", noticeCount: 5 },
+    { chartOpen: true, shipSheetOpen: true, noticeCount: 5 },
+    { chartOpen: true, ordersOpen: true, noticeCount: 5 },
+    { chartOpen: true, battleLogOpen: true, noticeCount: 5 },
+    { chartOpen: true, dockPanel: "port", noticeCount: 5 },
+    { menuOpen: true, noticeCount: 5, enemySelected: true, enemyChip: { x: 500, y: 400 } },
+  ];
+  for (const viewport of VIEWPORTS) {
+    for (const state of combinations) {
+      const plan = buildScreenLayout({ ...viewport, state });
+      assert.deepEqual(plan.audit(), [], `${viewport.width}x${viewport.height} ${JSON.stringify(state)}`);
+    }
+  }
+});

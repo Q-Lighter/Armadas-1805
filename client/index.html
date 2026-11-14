@@ -13,7 +13,7 @@
     <p class="client-error paper" id="client-error" role="alert" hidden></p>
     <p class="quality-note paper" id="quality-note" hidden>Reduced effects for speed</p>
 
-    <header class="hud hud-top paper">
+    <header class="hud hud-top paper" id="top-bar">
       <div class="money" id="money-panel" title="Pieces of eight">
         <svg class="coin-icon" viewBox="0 0 24 24" aria-hidden="true">
           <circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="1.6" />
@@ -44,6 +44,15 @@
         <span id="game-clock">Day 1, 08:00</span>
       </div>
 
+      <div class="wind-chip" id="wind-chip" aria-label="Wind">
+        <span class="wind-chip-label">Wind</span>
+        <span id="wind-chip-label">–</span>
+      </div>
+
+      <button class="btn top-action" id="battle-log-btn" type="button" aria-label="Battle log" aria-expanded="false">
+        Log <span class="fleet-count" id="battle-log-btn-count">0</span>
+      </button>
+
       <button class="btn top-action" id="fleet-btn" type="button">
         Fleet <span class="fleet-count" id="fleet-count">1</span>
       </button>
@@ -58,12 +67,12 @@
       </button>
     </header>
 
-    <nav class="hud action-bar paper" aria-label="Sailing actions">
+    <nav class="hud action-bar paper" id="action-bar" aria-label="Sailing actions">
       <button class="btn action-button" id="tap-btn" type="button" aria-pressed="true">
         <span class="action-icon tap-icon" aria-hidden="true">◉</span>
         <span class="action-label">Tap <span id="tap-mode-label">On</span></span>
       </button>
-      <button class="btn action-button" id="move-btn" type="button" aria-pressed="false" hidden>
+      <button class="btn action-button" id="move-btn" type="button" aria-pressed="false" disabled title="Tap On is active: choose Move first">
         <span class="action-icon" aria-hidden="true">✥</span>
         <span class="action-label">Move</span>
       </button>
@@ -75,12 +84,45 @@
         <span class="action-icon" aria-hidden="true">⌖</span>
         <span class="action-label">Follow</span>
       </button>
+      <button class="btn action-button" id="queue-btn" type="button" aria-pressed="false" disabled title="Select a fleet to queue orders">
+        <span class="action-icon" aria-hidden="true">☰</span>
+        <span class="action-label">Queue</span>
+      </button>
     </nav>
+
+    <!-- One dock frame. The existing panels are placed inside its body by the
+         pure screen-layout plan; the tabs switch which panel is visible. -->
+    <section class="layout-dock paper" id="dock" aria-label="Ship dock" hidden>
+      <div class="dock-tabs" id="dock-tabs" role="tablist" aria-label="Dock sections">
+        <button class="btn dock-tab" id="dock-tab-ship" type="button" role="tab" aria-selected="true">Ship</button>
+        <button class="btn dock-tab" id="dock-tab-fleet" type="button" role="tab" aria-selected="false">Fleet</button>
+        <button class="btn dock-tab" id="dock-tab-log" type="button" role="tab" aria-selected="false">Log</button>
+        <button class="btn dock-tab" id="dock-tab-ports" type="button" role="tab" aria-selected="false">Ports</button>
+      </div>
+    </section>
+    <button class="btn dock-collapse" id="dock-collapse" type="button" aria-label="Collapse dock" hidden>›</button>
+
+    <nav class="bottom-dock paper" id="bottom-dock" aria-label="Phone dock" hidden>
+      <button class="btn dock-button" id="orders-btn" type="button">Orders</button>
+      <button class="btn dock-button" id="dock-menu-btn" type="button">Menu</button>
+    </nav>
+
+    <section class="orders-sheet paper" id="orders-sheet" aria-label="Sailing orders" hidden>
+      <p class="kicker">Orders</p>
+    </section>
 
     <!-- Battle orders for the selected ship or fleet. Phones: a slim bar. -->
     <section class="battle-bar paper" id="battle-bar" hidden aria-label="Battle orders">
       <p class="battle-bar-title" id="battle-bar-title"></p>
       <div class="battle-bar-actions" id="battle-bar-actions"></div>
+    </section>
+
+    <section class="target-card paper" id="target-card" aria-label="Selected enemy" hidden>
+      <div class="panel-head">
+        <div><p class="kicker">Target</p><h2 id="target-card-title">–</h2></div>
+        <button class="btn panel-close" id="target-card-close" type="button">Close</button>
+      </div>
+      <p id="target-card-detail" class="surrender-offer-detail"></p>
     </section>
 
     <!-- 3D: Board odds, crew transfer and captured-crew choices. -->
@@ -219,6 +261,7 @@
             <span id="ship-strip-heading">–</span>
             <span id="ship-strip-crew">–</span>
             <span id="ship-strip-provisions">–</span>
+            <span class="ship-strip-hull" aria-label="Hull"><span id="ship-chip-hull-fill"></span></span>
           </span>
         </span>
         <span class="ship-chevron" aria-hidden="true">⌃</span>
@@ -286,6 +329,7 @@
 
           <svg
             class="compass"
+            id="compass-rose"
             viewBox="0 0 72 72"
             role="img"
             aria-label="Compass rose showing your heading"
@@ -370,6 +414,7 @@
         Battle log <span class="battle-log-count" id="battle-log-count">0</span>
       </button>
       <ol class="battle-log-list" id="battle-log-list"></ol>
+      <button class="btn panel-close battle-log-close" id="battle-log-close" type="button">Close</button>
     </section>
 
     <section class="menu-panel paper" id="menu-panel" role="dialog" aria-labelledby="menu-title" hidden>
@@ -390,6 +435,13 @@
         <button class="btn" id="test-tools-btn" type="button" hidden>Test tools</button>
         <button class="btn btn-seal" id="resign-btn" type="button">Resign</button>
       </div>
+      <div class="size-picker layout-picker" role="group" aria-label="Layout">
+        <span class="size-label">Layout</span>
+        <button class="btn size-option" type="button" data-layout="auto" aria-pressed="true">Auto</button>
+        <button class="btn size-option" type="button" data-layout="phone" aria-pressed="false">Phone</button>
+        <button class="btn size-option" type="button" data-layout="desktop" aria-pressed="false">Desktop</button>
+      </div>
+      <button class="btn" id="developer-btn" type="button" hidden>Developer</button>
       <div class="size-picker" role="group" aria-label="UI size">
         <span class="size-label">Text size</span>
         <button class="btn size-option" type="button" data-size="small" aria-pressed="false">S</button>
@@ -498,6 +550,8 @@
     </section>
 
     <p class="chart-notice" id="notice" role="status" aria-live="polite" hidden></p>
+    <p class="chart-notice" id="notice-2" role="status" aria-live="polite" hidden></p>
+    <p class="enemy-chip paper" id="enemy-chip" hidden></p>
     <p class="capture-strip" id="capture-strip" role="status" aria-live="polite" hidden></p>
     <section class="escort-strip paper" id="escort-strip" role="status" aria-live="polite" aria-label="Privateer contracts" hidden>
       <span id="escort-strip-text"></span>
@@ -846,6 +900,9 @@
       A new version is available: tap to reload
     </button>
 
+    <div class="map-compass" id="map-compass" aria-label="Compass"></div>
+    <div class="scale-bar" id="scale-bar"><span id="scale-bar-label">0 km</span></div>
+    <div class="layout-debug-layer" id="layout-debug-layer" hidden></div>
     <p class="hud charting" id="charting" hidden>Charting…</p>
     <div class="chart-trails paper" id="chart-trails" hidden aria-label="Chart trails">
       <span class="chart-trails-label">Trails</span>
@@ -855,6 +912,7 @@
         <button class="btn chart-trail-option" type="button" data-trail-mode="none" aria-pressed="false">None</button>
       </div>
       <button class="btn chart-trails-clear" id="chart-clear-trails" type="button">Clear all trails</button>
+      <button class="btn chart-back" id="chart-back" type="button">Back to ship</button>
     </div>
 
     <p class="hud hint">Tap to sail. Drag to pan. Pinch or scroll to zoom.</p>

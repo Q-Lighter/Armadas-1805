@@ -624,6 +624,8 @@ function parseOwnShip(raw: unknown): OwnShipSnapshot | null {
     boardingProgress: finiteNumber(source.boardingProgress) ?? undefined,
     boardingSecondsLeft: finiteNumber(source.boardingSecondsLeft) ?? undefined,
     stateLabel: typeof source.stateLabel === "string" ? source.stateLabel : undefined,
+    anchored: source.anchored === true,
+    weighingAnchor: source.weighingAnchor === true,
     debugCombat: typeof source.debugCombat === "string" ? source.debugCombat : undefined,
     repairEnabled: source.repairEnabled !== false,
     crewTooLow: source.crewTooLow === true,
@@ -801,6 +803,9 @@ async function start(): Promise<void> {
   const fireShipButtonsOut = element<HTMLElement>("fire-ship-buttons");
   const shipLightsOut = element<HTMLElement>("ship-lights");
   const shipLightsText = element<HTMLElement>("ship-lights-text");
+  const shipAnchorActions = element<HTMLElement>("ship-anchor-actions");
+  const shipDropAnchor = element<HTMLButtonElement>("ship-drop-anchor");
+  const shipWeighAnchor = element<HTMLButtonElement>("ship-weigh-anchor");
   const effectGalleryButton = element<HTMLButtonElement>("effect-gallery");
   const debugLogToggle = element<HTMLButtonElement>("debug-log-toggle");
   const debugLogLines = element<HTMLElement>("debug-log-lines");
@@ -3541,6 +3546,11 @@ async function start(): Promise<void> {
       closeOrderMenu();
       return;
     }
+    if (id === "dropAnchor" || id === "weighAnchor") {
+      closeOrderMenu();
+      sendAnchor(id);
+      return;
+    }
     if (kind === "enemy" && target?.kind === "ship" &&
       (id === "attackSink" || id === "attackCapture" || id === "board")) {
       closeOrderMenu();
@@ -4629,6 +4639,15 @@ async function start(): Promise<void> {
     }
   }
 
+  function sendAnchor(action: "dropAnchor" | "weighAnchor"): void {
+    const ids = groupShipIds();
+    if (ids.length === 0) {
+      showNotice("Select one of your ships first.");
+      return;
+    }
+    for (const id of ids) sendCommand({ t: action, ship: id });
+  }
+
   function renderKnownPorts(): void {
     knownPortsList.replaceChildren();
     const from = ownSnapshot ? { x: ownSnapshot[2], y: ownSnapshot[3] } : null;
@@ -5085,6 +5104,13 @@ async function start(): Promise<void> {
     shipLightsOut.dataset.on = String(lightsOn);
     shipLightsText.textContent = `Lights: ${lightsOn ? "On" : "Off"}`;
     shipLightsOut.hidden = !row;
+    const anchored = row?.anchored === true;
+    shipAnchorActions.hidden = !row || row.status === "delivery";
+    shipDropAnchor.hidden = anchored;
+    shipDropAnchor.disabled = !row || row.status !== "sailing";
+    shipWeighAnchor.hidden = !anchored;
+    shipWeighAnchor.disabled = !row || row.weighingAnchor === true;
+    shipWeighAnchor.textContent = row?.weighingAnchor ? "Weighing anchor…" : "Weigh anchor";
     renderFireShipActions();
     updateJourneyUi(row);
   }
@@ -7112,6 +7138,8 @@ async function start(): Promise<void> {
 
   fleetUndock.addEventListener("click", sendUndock);
   shipUndock.addEventListener("click", sendUndock);
+  shipDropAnchor.addEventListener("click", () => sendAnchor("dropAnchor"));
+  shipWeighAnchor.addEventListener("click", () => sendAnchor("weighAnchor"));
   shipDamage.addEventListener("click", () => openDamagePanel());
   fireTargetCancel.addEventListener("click", () => {
     resetFireActionMode();

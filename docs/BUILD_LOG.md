@@ -3103,3 +3103,79 @@ important state rather than optional polish.
 - No browser is available, so the gallery, flame look and ring were not viewed
   on screen. The draw plans, real client display tree and jsdom harness were
   checked instead.
+
+## Session 3H-b1: manoeuvres and steering
+
+**Date:** 2026-11-14
+**Branch:** main
+
+### What was asked
+
+Measure the old turning circles, make the helm depend on speed, and add
+automatic tack, wear, box-haul, in-irons recovery, port warp and shortening sail,
+plus working anchors.
+
+### What was built
+
+- `shared/manoeuvres.ts` is a pure decision/state module. It chooses a
+  manoeuvre, advances the phase, reports a helm heading, speed share or explicit
+  backed-sail/warp speed, and a UI label.
+- Big course changes now tack through the wind or wear round. A confined
+  lee-shore turn box-hauls, a stopped hull backs its sails, a missed stays falls
+  into irons, and warping is port water only.
+- `shared/sailing.ts` uses the historical 90-degree time divided by
+  `settings.manoeuvres.cruiseTurnRateMultiplier = 3`; the rudder loses bite below
+  steerage speed and at rest only the backed-sails pivot remains. Hampered or
+  slow hulls wear round.
+- Anchors: drop below 3 knots, hold position, swing slowly head to wind, refuse
+  sailing orders, and take 20 real seconds to weigh. Anchor buttons are in the
+  ship card and Orders menu; both targets are 44 px and the ship card scrolls.
+- Wind shifts invalidate active manoeuvre predictions. Lee-shore and narrow
+  channel context is detected on the server from discovered land. The helm uses
+  the same context as the ghost and tests.
+- Tow speeds are synchronised after formation and special orders, and a stopped
+  towed pair gets one knot of steerage way instead of a zero speed limit.
+- A short sea-point order now arrives at the mark instead of stopping at the old
+  4 km radius; close approach is 100 m and the look-ahead end stop no longer
+  overrides it. Final approach close to the destination uses the ordinary helm
+  so the ship does not fight an automatic manoeuvre on the last 500 m.
+
+### B1 measurement: turning circle at cruise
+
+Simulated from each class's `turn90GameMinutes`, calm steering, at cruise speed.
+"Old" divides the new rate by `cruiseTurnRateMultiplier` and therefore matches
+the previous model. Radius is in metres; the last column is the class's
+closest-to-wind angle.
+
+```text
+class      old lengths  new lengths  new radius m  closest-to-wind
+flagship         15.72         5.24           314              61
+line             15.01         5.00           275              59
+frigate          15.72         5.24           236              53
+escort           15.72         5.24           157              55
+raider           13.36         4.45           111              46
+trade            22.46         7.49           262              69
+fireShip         10.48         3.49            87              46
+```
+
+The frigate circle is 5.24 ship lengths, inside the asked 4-6 range. The
+one-second turns at 0 / 2 / 5 knots are 0.169 / 1.125 / 1.125 degrees, so way on
+is what makes the rudder bite.
+
+For the old-versus-new reversal check (north to south, wind 315), the old model
+turned 180 degrees in 467 game seconds at any starting speed and finished at
+1,729 s with 6.01 km net. The new model from rest goes through irons and a wear:
+turn 399 s, finish 1,776 s, 6.59 km track. Starting at 2 or 5 knots it wears:
+turn 191 s, finish 1,568 s, 6.46 km track. The new ship therefore takes longer
+from rest because it first has to gain way, while a ship already under way
+turns sooner.
+
+### Checks
+
+- `npm test`: **486/486 passing**.
+- `npm run build`: passed.
+- `npm run test:e2e`: passed with the real client and GameRoom.
+- Temporary diagnostic edits were removed before the final runs.
+- No browser is available in this workspace: no visual review, real touch
+  events, second physical device or real Cloudflare frame timing were measured.
+  The harness is jsdom with a Pixi stub, not rendered pixels.

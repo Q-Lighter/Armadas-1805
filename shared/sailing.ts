@@ -20,10 +20,20 @@ import { DEFAULT_STANCE, type Stance } from "./stances.js";
 import { DEFAULT_FIGHTING_STYLE, type FightingStyle } from "./fighting.js";
 import {
   createShipDamage,
+  damageCapacities,
+  damagePercents,
   shipPerformance,
   type ShipDamage,
   type ShipPerformance,
 } from "./combat.js";
+import {
+  advanceManoeuvre,
+  manoeuvreLabel,
+  shortenedSailSpeedShare,
+  steerageTurnFactor,
+  type ManoeuvreOutput,
+  type ManoeuvreState,
+} from "./manoeuvres.js";
 
 /** One knot is 1.852 km/h. A definition, not a tuning value. */
 export const KM_PER_HOUR_PER_KNOT = 1.852;
@@ -112,7 +122,20 @@ export interface Ship {
   /** Game seconds left in the fast tack turn. */
   tackManoeuvreSeconds?: number;
   /** Side of the corridor we are crossing after an edge tack. */
-  tackHoldSign?: 1 | -1;  /** A held escape heading while turning away from a nearby coast. */
+  tackHoldSign?: 1 | -1;
+  /** 3H: the automatic tack, wear, box-haul or recovery in progress. */
+  manoeuvre?: ManoeuvreState;
+  /** Game seconds before the helm may start another automatic manoeuvre. */
+  manoeuvreCooldownSeconds?: number;
+  /** Short sail near a coast or in narrow water. */
+  shortenedSail?: boolean;
+  /** 3H: anchored ships hold position and swing head to wind. */
+  anchored: boolean;
+  /** Real seconds left before the anchor is aweigh. */
+  weighAnchorRemainingRealSeconds?: number;
+  /** Automatic anchoring for an idle ship near a lee shore. */
+  autoAnchor?: boolean;
+  /** A held escape heading while turning away from a nearby coast. */
   coastEscapeHeadingRad?: number | null;
   /** True once the last order was completed. */
   arrived: boolean;
@@ -352,6 +375,10 @@ export function createShip(
     detached: false,
     route: null,
     tackSide: 1,
+    manoeuvreCooldownSeconds: 0,
+    shortenedSail: false,
+    anchored: false,
+    autoAnchor: true,
     arrived: false,
     dockedPortId: null,
     waitingPortId: null,
@@ -369,6 +396,35 @@ export function createShip(
   };
 }
 
+/** What the helm knows about the water around it for automatic manoeuvres. */
+export interface StepManoeuvreContext {
+  /** Within 1.5 km of a port anchorage. */
+  portWater?: boolean;
+  /** A narrow channel or another restricted space. */
+  confined?: boolean;
+  /** Land lies downwind, so a wear would run ashore. */
+  coastDownwind?: boolean;
+  /** Within 1.5 km of a coast: shorten sail. */
+  nearCoast?: boolean;
+  /** A channel under 2 km wide: shorten sail. */
+  narrowChannel?: boolean;
+  /** The hull is towing or being towed. */
+  towing?: boolean;
+  /** Close to the destination: finish with the ordinary helm, no new manoeuvre. */
+  disableManoeuvres?: boolean;
+  random?: () => number;
+}
+
+/** The label shown in the readout and ship card, if a manoeuvre is active. */
+export function manoeuvreStateLabel(ship: Ship): string | null {
+  if (ship.weighAnchorRemainingRealSeconds !== undefined) return "Weighing anchor";
+  if (ship.anchored) return "Anchored";
+  const active = manoeuvreLabel(ship.manoeuvre?.kind);
+  if (active) return active;
+  if (ship.shortenedSail) return "Shortening sail";
+  return null;
+}
+
 /** The sailing numbers for one ship, looked up by its navy and role. */
 export function shipSpecFor(ship: Pick<Ship, "classId" | "navy">): ShipSpec {
   const spec = shipTypeFor(ship.navy, ship.classId);
@@ -377,6 +433,10 @@ export function shipSpecFor(ship: Pick<Ship, "classId" | "navy">): ShipSpec {
   return {
     ...spec,
     closestAngleDeg: Math.max(10, spec.closestAngleDeg + settings.sailing.closestAngleAdjustDeg),
+    turn90GameMinutes: Math.max(
+      0.25,
+      spec.turn90GameMinutes / settings.manoeuvres.cruiseTurnRateMultiplier,
+    ),
   };
 }
 
@@ -593,6 +653,7 @@ export function stepShip(
   finalApproachKm: number = settings.sailing.finalApproachKm,
   legacyTack: boolean = false,
   precomputed?: { spec: ShipSpec; performance: ShipPerformance },
+  manoeuvreContext?: StepManoeuvreContext,
 ): void {
   if (!(dtGameSeconds > 0) || !Number.isFinite(dtGameSeconds)) return;
 
@@ -601,6 +662,7 @@ export function stepShip(
   const performance = precomputed?.performance ?? shipPerformance(spec, ship.damage, windFromDeg);
   ship.tackCooldownSeconds = Math.max(0, (ship.tackCooldownSeconds ?? 0) - dtGameSeconds);
   ship.tackManoeuvreSeconds = Math.max(0, (ship.tackManoeuvreSeconds ?? 0) - dtGameSeconds);
+  ship.manoeuvreCooldownSeconds = Math.max(0, (ship.manoeuvreCooldownSeconds ?? 0) - dtGameSeconds);
 
   if (performance.crewTooLow) {
     ship.speedKnots = 0;
@@ -643,7 +705,7 @@ export function stepShip(
   const bearingRad = Math.atan2(dx, -dy);
   const sailable = angleOffWindDeg(bearingRad, windFromDeg) >= spec.closestAngleDeg - 1e-9;
   const badlySteered = performance.wantsDownwind;
-  const wantedRad = forcedHeadingRad ??
+  const baseWantedRad = forcedHeadingRad ??
     (badlySteered
       ? performance.driftHeadingRad
       : sailable
@@ -652,15 +714,69 @@ export function stepShip(
           ? legacyUpwindHeadingRad(ship, spec, order, windFromDeg, preferredTackSide)
           : corridorHeadingRad(ship, spec, order, windFromDeg, preferredTackSide, finalApproachKm));
 
-  // Turn gradually towards the wanted heading, at the damaged turn rate.
-  // A tack is allowed a short, faster turn so the manoeuvre does not leave the
-  // ship pointing off its new course for minutes.
+  // 3H: let the helm choose a real square-rig manoeuvre for a big turn. The
+  // ghost and tests pass the same context, so route dots show the same arcs.
+  let manoeuvre: ManoeuvreOutput | null = null;
+  let wantedRad = baseWantedRad;
+  const shortenedShare = manoeuvreContext
+    ? shortenedSailSpeedShare(
+        Boolean(manoeuvreContext.nearCoast),
+        Boolean(manoeuvreContext.narrowChannel),
+      )
+    : 1;
+  ship.shortenedSail = shortenedShare < 1;
+  if (
+    manoeuvreContext &&
+    !forcedHeadingRad &&
+    !legacyTack &&
+    (!manoeuvreContext.disableManoeuvres || ship.manoeuvre) &&
+    (ship.manoeuvreCooldownSeconds ?? 0) <= 0
+  ) {
+    const capacities = damageCapacities(spec);
+    const percents = damagePercents(ship.damage, capacities);
+    manoeuvre = advanceManoeuvre({
+      state: ship.manoeuvre,
+      classId: ship.classId,
+      headingRad: ship.headingRad,
+      desiredHeadingRad: baseWantedRad,
+      speedKnots: ship.speedKnots,
+      windFromDeg,
+      dtGameSeconds,
+      sailsPercent: percents.sails,
+      mastsPercent: percents.masts,
+      rudderPercent: percents.rudder,
+      crewPercent: percents.crew,
+      closestAngleDeg: spec.closestAngleDeg,
+      portWater: Boolean(manoeuvreContext.portWater),
+      confined: Boolean(manoeuvreContext.confined),
+      towing: Boolean(manoeuvreContext.towing),
+      coastDownwind: Boolean(manoeuvreContext.coastDownwind),
+      random: manoeuvreContext.random ?? Math.random,
+    });
+    ship.manoeuvre = manoeuvre.state;
+    if (manoeuvre.finished) ship.manoeuvreCooldownSeconds = 30;
+    wantedRad = manoeuvre.headingRad;
+  }
+
+  // Turn gradually towards the wanted heading, at the damaged turn rate. The
+  // rudder loses bite below steerage speed; backing sails and warping are the
+  // only ways to turn without way on.
+  const backing = manoeuvre?.state?.kind === "irons" ||
+    manoeuvre?.state?.kind === "boxHaul" ||
+    manoeuvre?.state?.kind === "warp";
+  const steerage = settings.manoeuvres.steerageSpeedKnots;
+  const pivotShare = settings.combat.pivotRateAtRestShare *
+    Math.max(0, 1 - ship.speedKnots / Math.max(1e-9, steerage));
+  const steerShare = backing
+    ? Math.max(0.5, pivotShare)
+    : Math.max(steerageTurnFactor(ship.speedKnots), pivotShare);
   const maxTurnDeg = Math.max(
-    performance.turnRateDegPerSecond * dtGameSeconds,
+    performance.turnRateDegPerSecond * dtGameSeconds * steerShare,
     (ship.tackManoeuvreSeconds ?? 0) > 0
       ? settings.sailing.tackTurnDegPerGameSecond * dtGameSeconds
       : 0,
-  );  const turnDeg = Math.max(
+  );
+  const turnDeg = Math.max(
     -maxTurnDeg,
     Math.min(maxTurnDeg, shortestTurnDegrees(ship.headingRad, wantedRad)),
   );
@@ -675,12 +791,19 @@ export function stepShip(
       performance.speedFactor *
       cargoSpeedMultiplier(ship.stores, spec.cargoTonnes);
   }
+  if (manoeuvre?.speedKnots !== undefined) {
+    ship.speedKnots = manoeuvre.speedKnots;
+  } else if (manoeuvre) {
+    ship.speedKnots *= manoeuvre.speedShare;
+  }
+  ship.speedKnots *= shortenedShare;
   if (ship.boardingPowerKnots !== undefined) {
     ship.speedKnots = ship.boardingPowerKnots;
   } else if (ship.stationSpeedLimit !== undefined) {
     ship.speedKnots = Math.min(ship.speedKnots, ship.stationSpeedLimit);
   }
-  const travelKm = ship.speedKnots * KM_PER_HOUR_PER_KNOT * (dtGameSeconds / 3600);
+  const travelSign = manoeuvre?.travelSign ?? 1;
+  const travelKm = travelSign * ship.speedKnots * KM_PER_HOUR_PER_KNOT * (dtGameSeconds / 3600);
   ship.x += Math.sin(ship.headingRad) * travelKm;
   ship.y -= Math.cos(ship.headingRad) * travelKm;
 }

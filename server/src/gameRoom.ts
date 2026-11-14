@@ -48,6 +48,8 @@ import {
   createWorld,
   hireCrew,
   disbandPlayerFleet,
+  dropAnchor,
+  weighAnchor,
   removePlayer,
   removeTestDummies,
   refillPlayerShips,
@@ -565,6 +567,8 @@ export class GameRoom {
       case "towShip": return "Cannot tow that ship.";
       case "castOff": return "No tow to cast off.";
       case "lights": return "Cannot change that ship's lights.";
+      case "dropAnchor": return "Cannot drop anchor now.";
+      case "weighAnchor": return "Cannot weigh anchor now.";
       case "battleOrder": case "fleetBattleOrder": return "That battle order is not allowed.";
       case "fleetOrder": return "That fleet cannot take that order.";
       default: return "Order rejected.";
@@ -681,6 +685,10 @@ export class GameRoom {
       accepted = applyFleetOrder(this.world, playerId, order.fleet, order.order, order.queue === true);
     } else if (order.t === "shipOrder") {
       accepted = applyShipSpecialOrder(this.world, playerId, order.ship, order.order);
+    } else if (order.t === "dropAnchor") {
+      accepted = dropAnchor(this.world, playerId, order.ship);
+    } else if (order.t === "weighAnchor") {
+      accepted = weighAnchor(this.world, playerId, order.ship);
     } else if (order.t === "saveGroup") {
       accepted = savePlayerControlGroup(this.world, playerId, order.slot, order.ids);
     } else if (order.t === "sailToPort") {

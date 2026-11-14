@@ -1604,6 +1604,21 @@ h2 {
   margin-top: 0.45rem;
 }
 
+.ship-anchor-actions {
+  display: flex;
+  gap: 0.5rem;
+  margin: 0.45rem 0;
+}
+
+.ship-anchor-actions .btn {
+  flex: 1;
+  min-height: 44px;
+}
+
+.ship-anchor-actions .btn[hidden] {
+  display: none;
+}
+
 .ship-undock[hidden] {
   display: none;
 }

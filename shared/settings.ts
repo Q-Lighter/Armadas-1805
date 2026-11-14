@@ -231,6 +231,89 @@ export const settings = {
     },
   },
 
+  /** Draft: square-rig manoeuvres, steering with way and anchoring (3H). */
+  manoeuvres: {
+    /** Rough length from bowsprit to taffrail, used for turning geometry. */
+    shipLengthM: {
+      flagship: 60,
+      line: 55,
+      frigate: 45,
+      escort: 30,
+      raider: 25,
+      trade: 35,
+      fireShip: 25,
+    },
+    /** A reference 45 m frigate for sternway distances. */
+    referenceLengthM: 45,
+    /** Below this speed the rudder loses bite in proportion to speed. */
+    steerageSpeedKnots: 2,
+    /** Draft: multiplies the historical 90-degree turn time so a frigate at
+     *  cruise turns in about 5 ship lengths rather than 16. */
+    cruiseTurnRateMultiplier: 3,
+    /** A change larger than this is a manoeuvre, not an ordinary helm turn. */
+    largeTurnDeg: 110,
+    /** A tack needs at least this much way on. */
+    minTackSpeed: 3.5,
+    /** Speed share while the bow is in the wind during a tack. */
+    tackSpeedShare: 0.4,
+    /** Speed share while paying off after a tack. */
+    tackPayOffSpeedShare: 0.65,
+    /** Longest time to hold the bow into the wind before paying off. */
+    tackPhaseSeconds: 45,
+    /** Speed share through a wear's downwind loop. */
+    wearSpeedShare: 0.8,
+    /** Longest time for the downwind half of a wear. */
+    wearPhaseSeconds: 60,
+    /** Speed share while box-hauling. */
+    boxHaulSpeedShare: 0.5,
+    /** Longest time for the box-haul's backed-sail phase. */
+    boxHaulSeconds: 60,
+    /** Speed given by backing the sails for sternway. */
+    backingSailsKnots: 1,
+    /** Sternway gained while recovering from irons. */
+    ironsSternwayLengths: 1,
+    /** Recovery timer for in-irons backing and paying off. */
+    ironsRecoverySeconds: 60,
+    /** Speed share while paying off from irons. */
+    ironsPayOffSpeedShare: 0.4,
+    /** Warping speed in port waters, independent of the wind. */
+    warpSpeedKnots: 1,
+    /** Warping is allowed within this distance of a port anchorage. */
+    warpRangeKm: 1.5,
+    /** Within this distance of a coast the ship shortens sail. */
+    shortenSailCoastKm: 1.5,
+    /** A channel narrower than this is narrow water: shorten sail. */
+    narrowChannelWidthKm: 2,
+    /** How far downwind the helm looks for a lee shore. */
+    leeShoreProbeKm: 5,
+    /** Land inside this half-angle of downwind makes a lee shore. */
+    leeShoreHalfAngleDeg: 60,
+    /** Near a coast or in a narrow channel the ship keeps this speed share. */
+    shortenSailSpeedShare: 0.5,
+    /** Rig or rudder below this percent rules out a tack. */
+    manoeuvreRigPercent: 60,
+    /** Crew below this percent rules out a tack. */
+    manoeuvreCrewPercent: 30,
+    /** Draft chance a clean tack misses stays in a moderate wind. */
+    missedStaysBaseChance: 0.1,
+    /** Extra chance at zero sails, masts or rudder. */
+    missedStaysDamageShare: 0.25,
+    /** Wind above this strength adds to the miss-stays chance. */
+    missedStaysCalmKnots: 15,
+    /** Added miss-stays chance per knot above the calm value. */
+    missedStaysPerKnot: 0.01,
+    /** Never roll a miss-stays chance above this. */
+    missedStaysMaxChance: 0.6,
+    /** A phase counts as reached within this many degrees. */
+    phaseArrivalDeg: 6,
+    /** Anchors hold at or below this speed. */
+    anchorMaxSpeedKnots: 3,
+    /** Real seconds to weigh anchor and get under way. */
+    weighAnchorRealSeconds: 20,
+    /** An anchored hull swings toward the wind at this share of turn rate. */
+    anchorSwingRateShare: 0.2,
+  },
+
   /** Placeholder weather: one constant wind until the weather phase. */
   weather: {
     /** Direction the wind blows FROM, in compass degrees. Draft: north-west. */

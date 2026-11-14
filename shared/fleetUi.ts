@@ -84,6 +84,8 @@ export function orderMenuItems(kind: OrderMenuKind): OrderMenuItem[] {
     { id: "rendezvous", label: "Rendezvous here", primary: false },
     { id: "returnPort", label: "Return to nearest port", primary: false },
     { id: "hold", label: "Hold position", primary: false },
+    { id: "dropAnchor", label: "Drop anchor", primary: false },
+    { id: "weighAnchor", label: "Weigh anchor", primary: false },
     { id: "close", label: "Cancel", primary: false },
   ];
 }

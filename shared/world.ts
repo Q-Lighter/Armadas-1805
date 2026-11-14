@@ -11,6 +11,7 @@ import {
   chooseTackSide,
   createShip,
   holdPosition,
+  manoeuvreStateLabel,
   sailTo,
   shipSpecFor,
   shortestTurnDegrees,
@@ -608,6 +609,9 @@ export interface OwnShipSnapshot {
   boardingSecondsLeft?: number;
   /** Hove to / In irons / Drifting / Sailing, from the real movement state. */
   stateLabel?: string;
+  /** 3H anchoring: held, or the anchor is coming aweigh. */
+  anchored?: boolean;
+  weighingAnchor?: boolean;
   /** Test/dev only: order step and the first reason the guns are silent. */
   debugCombat?: string;
   /** 3E: this is the player's one flagship. Own ships only. */
@@ -3712,6 +3716,10 @@ export function applyOrder(
 
   const ship = shipForOrder(world, playerId, shipId);
   if (!ship || ship.deliveryPortId) return false;
+  if (ship.anchored) {
+    pushNotice(world, playerId, "Weigh anchor before sailing.");
+    return false;
+  }
   startJourney(world, playerId, ship);
   if (!fromFleet) {
     if (ship.runState) clearRun(ship);
@@ -3755,6 +3763,43 @@ export function applyOrder(
   return installRoute(world, playerId, ship, { x, y }, "point", null);
 }
 
+/** 3H: drop anchor at or below three knots. The hull then holds position. */
+export function dropAnchor(world: World, playerId: string, shipId: unknown): boolean {
+  if (typeof shipId !== "string") return false;
+  const ship = shipsForOwner(world, playerId).find((candidate) => candidate.id === shipId);
+  if (!ship || ship.anchored || ship.dockedPortId || ship.deliveryPortId) return false;
+  if (ship.towerShipId || ship.fireShip?.ignited || ship.damage.hull <= 0) return false;
+  if (ship.speedKnots > settings.manoeuvres.anchorMaxSpeedKnots) {
+    pushNotice(world, playerId, "Too fast to anchor: reduce sail below 3 knots.");
+    return false;
+  }
+  ship.anchored = true;
+  ship.weighAnchorRemainingRealSeconds = undefined;
+  ship.hoveTo = false;
+  ship.speedKnots = 0;
+  ship.order = null;
+  ship.route = null;
+  ship.helmTarget = undefined;
+  ship.manoeuvre = undefined;
+  ship.manoeuvreCooldownSeconds = 0;
+  ship.arrived = false;
+  pushNotice(world, playerId, `${ship.name}: anchor dropped.`);
+  return true;
+}
+
+/** 3H: weigh anchor. The ship cannot answer the helm for 20 real seconds. */
+export function weighAnchor(world: World, playerId: string, shipId: unknown): boolean {
+  if (typeof shipId !== "string") return false;
+  const ship = shipsForOwner(world, playerId).find((candidate) => candidate.id === shipId);
+  if (!ship || !ship.anchored || ship.weighAnchorRemainingRealSeconds !== undefined) return false;
+  ship.weighAnchorRemainingRealSeconds = settings.manoeuvres.weighAnchorRealSeconds;
+  ship.speedKnots = 0;
+  ship.order = null;
+  ship.route = null;
+  pushNotice(world, playerId, `${ship.name}: weighing anchor (20 s).`);
+  return true;
+}
+
 /** Remember one short message for a player. Older messages are dropped. */
 function pushNotice(world: World, playerId: string, text: string): void {
   const queue = world.notices.get(playerId) ?? [];
@@ -3762,7 +3807,9 @@ function pushNotice(world: World, playerId: string, text: string): void {
   // the queue with the same warning.
   if (queue[queue.length - 1] === text) return;
   queue.push(text);
-  while (queue.length > 3) queue.shift();
+  // Keep a few recent lines so a battle-start notice is not evicted by the
+  // damage and danger reports of the first seconds of the fight.
+  while (queue.length > 5) queue.shift();
   world.notices.set(playerId, queue);
 }
 
@@ -4195,6 +4242,8 @@ function dockAt(
   ship.order = null;
   ship.route = null;
   ship.speedKnots = 0;
+  ship.anchored = false;
+  ship.weighAnchorRemainingRealSeconds = undefined;
   ship.dockedPortId = port.id;
   ship.waitingPortId = null;
   ship.portOrderId = null;
@@ -4220,6 +4269,9 @@ function arriveAtPort(
   ship.dockedPortId = null;
   ship.waitingPortId = port.id;
   ship.waitingSinceGameMs = world.gameMs;
+  // Waiting for a docking place is the same held state as dropping anchor.
+  ship.anchored = true;
+  ship.speedKnots = 0;
   ship.arrived = true;
   if (world.players.has(ownerId)) pushNotice(world, ownerId, PORT_FULL_NOTICE);
 }
@@ -4450,6 +4502,8 @@ export function undock(world: World, playerId: string, shipId?: unknown): boolea
 
   ship.dockedPortId = null;
   ship.speedKnots = 0;
+  ship.anchored = false;
+  ship.weighAnchorRemainingRealSeconds = undefined;
   ship.order = null;
   ship.route = null;
   ship.portOrderId = null;
@@ -5325,6 +5379,61 @@ function resolveMovement(
   }
 }
 
+/** Land inside a wedge ahead of a bearing, using the map the player knows. */
+function landInSector(
+  x: number,
+  y: number,
+  bearingRad: number,
+  rangeKm: number,
+  halfAngleDeg: number,
+  knownLand: (x: number, y: number) => boolean,
+): boolean {
+  const half = halfAngleDeg * Math.PI / 180;
+  for (const share of [0.45, 0.75, 1]) {
+    const range = rangeKm * share;
+    for (const offset of [-half, 0, half]) {
+      const angle = bearingRad + offset;
+      if (knownLand(x + Math.sin(angle) * range, y - Math.cos(angle) * range)) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+/** The wind blows toward this coast, so a wear would run ashore. */
+function isCoastDownwind(
+  x: number,
+  y: number,
+  windFromDeg: number,
+  knownLand: (x: number, y: number) => boolean,
+): boolean {
+  const downwind = (windFromDeg + 180) * Math.PI / 180;
+  return landInSector(
+    x,
+    y,
+    downwind,
+    settings.manoeuvres.leeShoreProbeKm,
+    settings.manoeuvres.leeShoreHalfAngleDeg,
+    knownLand,
+  );
+}
+
+/** Land close on both beams: a channel narrower than the setting. */
+function isNarrowChannel(
+  x: number,
+  y: number,
+  headingRad: number,
+  knownLand: (x: number, y: number) => boolean,
+): boolean {
+  const halfWidth = settings.manoeuvres.narrowChannelWidthKm / 2;
+  const left = headingRad - Math.PI / 2;
+  const right = headingRad + Math.PI / 2;
+  const landLeft = knownLand(x + Math.sin(left) * halfWidth, y - Math.cos(left) * halfWidth);
+  const landRight = knownLand(x + Math.sin(right) * halfWidth, y - Math.cos(right) * halfWidth);
+  return landLeft && landRight;
+}
+
 /** True when land is within a short distance of a candidate point. */
 function isNearLand(x: number, y: number, radiusKm: number): boolean {
   for (let ray = 0; ray < settings.coast.offshoreProbeRays; ray += 1) {
@@ -5464,7 +5573,9 @@ function updateTows(world: World): void {
       const performance = shipPerformance(spec, tower.damage, world.windFromDeg);
       const achievable = speedForHeading(spec, tower.headingRad, world.windFromDeg) *
         performance.speedFactor;
-      const pairSpeed = towSpeedKnots(achievable);
+      // A pair in irons still needs steerage way: towSpeedKnots reports zero
+      // when the tower cannot carry sail, which would pin the pair stopped.
+      const pairSpeed = Math.max(1, towSpeedKnots(achievable));
       tow.x = tower.x - Math.sin(tower.headingRad) * distance;
       tow.y = tower.y + Math.cos(tower.headingRad) * distance;
       tow.headingRad = tower.headingRad;
@@ -5475,6 +5586,28 @@ function updateTows(world: World): void {
       tow.detached = true;
       tower.stationSpeedLimit = pairSpeed;
       tower.speedKnots = Math.min(tower.speedKnots, pairSpeed);
+    }
+  }
+}
+
+/** Keep a towed hull's speed word exactly equal to its tower's this tick. */
+function syncTowedSpeeds(world: World): void {
+  for (const [ownerId, fleet] of world.fleets) {
+    for (const tower of fleet) {
+      if (!tower.towedShipId) continue;
+      const tow = shipEntry(world, tower.towedShipId)?.ship;
+      if (!tow || tow.towerShipId !== tower.id) continue;
+      // The tower has already answered the helm this tick. The tow must use
+      // that same speed. A zero formation limit must not be written back as a
+      // permanent pair speed, or a stopped pair can never get way on again.
+      const limit = tower.stationSpeedLimit;
+      const pairSpeed = limit !== undefined && limit > 0
+        ? Math.min(tower.speedKnots, limit)
+        : tower.speedKnots;
+      tower.speedKnots = pairSpeed;
+      tow.speedKnots = pairSpeed;
+      if (pairSpeed > 0) tower.stationSpeedLimit = pairSpeed;
+      void ownerId;
     }
   }
 }
@@ -5761,6 +5894,35 @@ function stepOwnerShip(
 
   if (stepContactFireShip(world, ownerId, ship, dtGameSeconds)) return;
 
+  // 3H anchors: a held hull does not drift. It swings slowly head to wind,
+  // and weighing anchor is a 20 real-second job before the helm answers.
+  if (ship.weighAnchorRemainingRealSeconds !== undefined) {
+    const realSeconds = dtGameSeconds / settings.time.sailingTimeScale;
+    ship.weighAnchorRemainingRealSeconds = Math.max(
+      0,
+      ship.weighAnchorRemainingRealSeconds - realSeconds,
+    );
+    if (ship.weighAnchorRemainingRealSeconds <= 0) {
+      delete ship.weighAnchorRemainingRealSeconds;
+      ship.anchored = false;
+    }
+  }
+  if (ship.anchored) {
+    ship.speedKnots = 0;
+    ship.order = null;
+    ship.route = null;
+    const spec = shipSpecFor(ship);
+    const performance = shipPerformance(spec, ship.damage, windFromDeg);
+    const maxTurn = performance.turnRateDegPerSecond *
+      settings.manoeuvres.anchorSwingRateShare * dtGameSeconds;
+    const turn = Math.max(
+      -maxTurn,
+      Math.min(maxTurn, shortestTurnDegrees(ship.headingRad, windFromDeg * Math.PI / 180)),
+    );
+    ship.headingRad += turn * Math.PI / 180;
+    return;
+  }
+
   if (ship.route) {
     // The helm follows a pure-pursuit point, not the next waypoint vertex.
     // If the order vanished, either finish or take the next point.
@@ -5880,6 +6042,40 @@ function stepOwnerShip(
       : settings.sailing.finalApproachKm,
     Boolean(ship.boardingShipId || world.engagements.has(ship.id) ||
       ship.fireShip?.mode === "contact"),
+    undefined,
+    (() => {
+      // The helm uses the same discovered land as the planner and coast probes.
+      const knownLand = routeKnownLand(world, ownerId);
+      const nearCoast = isNearLand(
+        ship.x,
+        ship.y,
+        settings.manoeuvres.shortenSailCoastKm,
+      );
+      const narrowChannel = isNarrowChannel(
+        ship.x,
+        ship.y,
+        ship.headingRad,
+        knownLand,
+      );
+      return {
+        nearCoast,
+        narrowChannel,
+        confined: nearCoast || narrowChannel,
+        towing: Boolean(ship.towedShipId || ship.towerShipId),
+        disableManoeuvres: Boolean(
+          !ship.towedShipId && ship.order && distanceKm(ship, ship.order) < 0.5
+        ),
+        coastDownwind: isCoastDownwind(
+          ship.x,
+          ship.y,
+          windFromDeg,
+          knownLand,
+        ),
+        portWater: [...world.ports.values()].some((port) =>
+          Math.hypot(port.anchorage.x - ship.x, port.anchorage.y - ship.y) <=
+            settings.manoeuvres.warpRangeKm),
+      };
+    })(),
   );
   resolveMovement(world, ownerId, ship, fromX, fromY);
 
@@ -7491,6 +7687,9 @@ export function stepWorld(
   const separationMovedShips = separateShips(world, dtGameSeconds);
   updateFleetCommands(world);
   updateShipCommands(world);
+  // Formation and special orders can change the tower's limit after the tow
+  // pass. Make both hulls agree on the final pair speed for this tick.
+  syncTowedSpeeds(world);
   if (separationMovedShips) world.spatial = buildSpatialGrid(world);
   resolveCombat(world);
   updateAutoBoarding(world);
@@ -7562,9 +7761,17 @@ function refreshOnePrediction(world: World, playerId: string, ship: Ship, windFr
   const performanceData = shipPerformance(spec, ship.damage, windFromDeg);
   const speedFactor = speedForHeading(spec, ship.headingRad, windFromDeg);
   const turnRate = performanceData.turnRateDegPerSecond;
-  const cached = world.routePredictions.get(ship.id);
+  let cached = world.routePredictions.get(ship.id);
   const activeJob = cached?.job;
-  if (activeJob) {
+  const activeJobWindChanged = activeJob && cached &&
+    Math.abs(((windFromDeg - cached.windFromDeg + 540) % 360) - 180) >
+      settings.route.predictionWindChangeDeg;
+  if (activeJob && activeJobWindChanged) {
+    // A job computed for another wind would finish with stale dots. Drop it
+    // and start again from the current ship position and wind.
+    world.routePredictions.delete(ship.id);
+    cached = undefined;
+  } else if (activeJob && cached) {
     advancePredictionJob(activeJob, settings.route.predictionBudgetMs, 500);
     // The first line has no old path to show; draw the growing job instead.
     if (!activeJob.done && cached && cached.points.length <= 1) {
@@ -8086,7 +8293,7 @@ export function visibleStateFor(
       : engagement ? (combatDistanceM !== undefined && combatDistanceM > 450 ? "closing" : "in range")
       : ship.order ? "sailing"
       : "holding";
-    const stateLabel = sailingStateLabel({
+    const sailingLabel = sailingStateLabel({
       hoveTo: ship.hoveTo,
       hasOrder: Boolean(ship.order || engagement || ship.boardingShipId),
       speedKnots: ship.speedKnots,
@@ -8097,6 +8304,7 @@ export function visibleStateFor(
       hasSails: performance.effectiveSailPercent > 0,
       hasRudder: performance.rudderPercent > 0,
     });
+    const stateLabel = manoeuvreStateLabel(ship) ?? sailingLabel;
     const debugCombat = world.kind === "normal" ? undefined : firingReadout({
       order: ship.boardingShipId ? "board" : ship.battleOrder ?? null,
       phase,
@@ -8189,6 +8397,8 @@ export function visibleStateFor(
         ? Math.max(0, Math.ceil((world.boardingFights.get(ship.id)!.endsRealMs - nowRealMs) / 1000))
         : undefined,
       stateLabel,
+      anchored: ship.anchored,
+      weighingAnchor: ship.weighAnchorRemainingRealSeconds !== undefined,
       debugCombat,
       battleOrder: ship.battleOrder,
       surrendered: ship.surrendered === true,

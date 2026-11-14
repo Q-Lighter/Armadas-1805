@@ -12,6 +12,7 @@ import {
   angleOffWindDeg,
   createShip,
   sailTo,
+  shipSpecFor,
   shortestTurnDegrees,
   speedForHeading,
   stepShip,
@@ -59,24 +60,30 @@ test("a ship cannot sail inside its no-sail angle", () => {
 
 test("turning takes the time in the settings for every ship", () => {
   for (const classId of CLASSES) {
-    const spec = shipTypeFor("British", classId);
+    const raw = shipTypeFor("British", classId);
+    // 3H raises the underway turn rate so a frigate circles in 4-6 lengths.
+    const spec = shipSpecFor(createShip("turn-spec", classId, 0, 0, 0));
     const expectedRate = 90 / (spec.turn90GameMinutes * 60);
-
     assert.equal(turnRateDegPerSecond(spec), expectedRate);
+    assert.equal(spec.turn90GameMinutes, raw.turn90GameMinutes / settings.manoeuvres.cruiseTurnRateMultiplier);
 
-    // Start facing north and order due east, so the ship must turn 90 degrees.
-    const ship = createShip("turn-test", classId, 0, 0, 0);
-    sailTo(ship, 200, 0);
+    // Start on a broad reach, with way on, and order a 90 degree turn.
+    const startHeading = (WIND_FROM + 180) * RAD;
+    const targetHeading = (WIND_FROM + 270) * RAD;
+    const target = pointAt(WIND_FROM + 270, 200);
+    const ship = createShip("turn-test", classId, 0, 0, startHeading);
+    ship.speedKnots = spec.cruiseKnots;
+    sailTo(ship, target.x, target.y);
 
     let seconds = 0;
-    while (Math.abs(shortestTurnDegrees(ship.headingRad, 90 * RAD)) > 0.01 && seconds < 5000) {
+    while (Math.abs(shortestTurnDegrees(ship.headingRad, targetHeading)) > 0.2 && seconds < 5000) {
       stepShip(ship, 1);
       seconds += 1;
     }
 
     const expectedSeconds = spec.turn90GameMinutes * 60;
     assert.ok(
-      Math.abs(seconds - expectedSeconds) <= 2,
+      Math.abs(seconds - expectedSeconds) <= 3,
       `${classId}: 90 degree turn took ${seconds}s, expected about ${expectedSeconds}s`,
     );
   }

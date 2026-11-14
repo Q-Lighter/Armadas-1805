@@ -118,6 +118,10 @@
       "types": "./dist/layoutAudit.d.ts",
       "default": "./dist/layoutAudit.js"
     },
+    "./screen-layout": {
+      "types": "./dist/screenLayout.d.ts",
+      "default": "./dist/screenLayout.js"
+    },
     "./fog-paint": {
       "types": "./dist/fogPaint.d.ts",
       "default": "./dist/fogPaint.js"

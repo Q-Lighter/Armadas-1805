@@ -156,6 +156,8 @@ export const settings = {
       speedFallRealSeconds: 20,
       /** Draft: an ignited fire ship burns at this strength, never fought. */
       burnStrength: 100,
+      /** Draft: the hull is consumed over this long, so the hulk is visible. */
+      burnSeconds: 200,
       /** Draft: tow cable reach, following distance and speed cost. */
       towRangeM: 300,
       towDistanceM: 120,
@@ -211,6 +213,9 @@ export const settings = {
      *  wider than the tacking zigzag so an upwind ship always reaches it.
      *  Draft: 4 km. */
     arrivalRadiusKm: 4,
+    /** Short sea-point orders sail right up to the mark; long routes and ports keep 4 km. */
+    closeApproachKm: 0.1,
+    closeApproachOrderKm: 3,
 
     /** Half-width of the old fixed zigzag. Kept for coast probes and old
      *  saved routes; the tack corridor below is what a normal order uses. */

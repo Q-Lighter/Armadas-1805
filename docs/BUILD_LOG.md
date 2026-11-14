@@ -2955,3 +2955,45 @@ quietly tuning unrelated combat.
   shared card/layout plan and the five review viewports are covered by
   `tests/fire-ship-ui-3g.test.ts`; the target-mode cancel path is exercised by
   the same action model, not by a real pointer.
+
+## 3G-fix-a: order feedback, fire ship, tow and lights
+
+- Every client order now carries an id and the server answers it with `ack`
+  `{ ok, text }`. Rejections use the latest plain-English notice or a fallback
+  reason. The client shows a short notice and keeps the last 40 order results and
+  last 10 client errors behind Test tools -> Debug log (test and dev rooms).
+- Fire ships no longer vanish at ignition. The cause was abandonment: ignition
+  set the crew to zero, `updateAbandonment` moved the ship out of the owner fleet
+  into `abandonedShips`, and `visibleStateFor` never sends abandoned ships.
+  An ignited hulk now stays in the owner fleet until it sinks, and a 200-second
+  burn override makes it sink at the end of the burn.
+- The fire-ship card no longer hides actions when a condition is false. Ignite,
+  Tow and Cast off stay visible, disabled with their reason. A lights line and
+  lantern indicator are always shown.
+- Fixed the client fleet parser, which was dropping `fireShipIgnited`,
+  `fireShipMode`, `fireShipTargetId`, `towedBy`, `towingId` and `lightsOn`.
+  That omission made contact mode, towing and lights appear to do nothing even
+  when the server had accepted the order.
+- Short sea-point orders (3 km or less) now use a 100 m arrival radius. Before,
+  every point order used the 4 km port arrival radius, so tapping 0.5-1 km from
+  an enemy fleet immediately "arrived" and the ship never moved. Long routes,
+  formations and port arrivals keep the existing 4 km radius.
+- Contact ignition stops the fire ship at its target so the hulk can pass fire
+  instead of immediately drifting out of the 100 m spread range.
+- Added `tests/harness/e2e.mjs` and a Pixi recording stub. It runs the real
+  client bundle in jsdom, clicks real buttons, taps by world position through the
+  real map handler, and talks over an in-memory socket to the real GameRoom. It
+  covers Ignite now (state table, spread and sink), contact mode and cancel,
+  Tow/Cast off with 100-update persistence and disabled reasons, lights with a
+  second real client, alert-fleet sailing and Attack, and target-mode persistence
+  over 100 updates. Run with `npm run test:e2e`.
+
+### Checks
+
+- `npm test`: passed (465 tests).
+- `npm run build`: passed.
+- `npm run test:e2e`: passed.
+- No browser is available in this workspace, so nothing was visually inspected.
+  The harness cannot dispatch real `PointerEvent`s; taps go through the client's
+  real map-tap function instead. The second client shares one process and one
+  GameRoom, not a separate device.

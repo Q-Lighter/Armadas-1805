@@ -57,19 +57,31 @@ test("3G fire ship card offers ignite, contact, cancel, tow, cast off and lights
 
   const contact = fireShipCardActions(row({ fireShipMode: "contact", fireShipTargetId: "enemy" }));
   assert.deepEqual(contact.map((action) => action.id), [
-    "cancelContact", "lightsOff",
+    "igniteNow", "igniteContact", "cancelContact", "lightsOff",
   ]);
 
   const towed = fireShipCardActions(row({ towedBy: "tower" }));
-  assert.deepEqual(towed.map((action) => action.id), ["castOff", "lightsOff"]);
-  assert.equal(fireShipStatusText(row({ towedBy: "tower" })), "In tow · only Cast off is accepted");
+  assert.deepEqual(towed.map((action) => action.id), [
+    "igniteNow", "igniteContact", "castOff", "lightsOff",
+  ]);
+  assert.equal(towed[0]!.disabled, true);
+  assert.equal(towed[0]!.reason, "Cast off first");
+  assert.notEqual(towed[2]!.disabled, true);
+  assert.equal(fireShipStatusText(row({ towedBy: "tower" })),
+    "In tow · only Cast off is accepted · Lights: On");
 
   const tower = fireShipCardActions(row({ classId: "frigate", towingId: "fire" }));
-  assert.deepEqual(tower.map((action) => action.id), ["castOff", "lightsOff"]);
-  assert.equal(fireShipStatusText(row({ classId: "frigate", towingId: "fire" }), "Brand"), "Towing Brand");
+  assert.deepEqual(tower.map((action) => action.id), ["tow", "castOff", "lightsOff"]);
+  assert.equal(tower[0]!.disabled, true);
+  assert.equal(tower[0]!.reason, "Already towing a fire ship");
+  assert.equal(fireShipStatusText(row({ classId: "frigate", towingId: "fire" }), "Brand"),
+    "Towing Brand · Lights: On");
 
   const noTow = fireShipCardActions(row({ classId: "line" }), false);
-  assert.equal(noTow.some((action) => action.id === "tow"), false);
+  const noTowButton = noTow.find((action) => action.id === "tow");
+  assert.ok(noTowButton);
+  assert.equal(noTowButton.disabled, true);
+  assert.equal(noTowButton.reason, "No unlit fire ship within 300 m");
   const lightsOff = fireShipCardActions(row({ classId: "flagship", lightsOn: false }));
   assert.equal(lightsOff.some((action) => action.id === "lightsOn"), true);
 });
@@ -112,7 +124,7 @@ test("3G the action model has a cancel path in both target modes", () => {
   assert.equal(idle.some((action) => action.id === "igniteContact"), true);
   const active = fireShipCardActions(row({ fireShipMode: "contact", fireShipTargetId: "e" }));
   assert.equal(active.some((action) => action.id === "cancelContact"), true);
-  assert.equal(fireShipStatusText(row({ fireShipMode: "contact" })), "Contact attack · steering for the target");
+  assert.equal(fireShipStatusText(row({ fireShipMode: "contact" })), "Contact attack · steering for the target · Lights: On");
 });
 
 test("3G another player sees only navy and class for my fire ship", () => {

@@ -247,9 +247,13 @@ function errorText(error: unknown): string {
   return String(error);
 }
 
-/** Report a client failure to the readable banner and the console. */
+const clientErrorLog: Array<{ at: number; text: string }> = [];
+
+/** Report a client failure to the readable banner, console and debug log. */
 function reportClientError(error: unknown, where: string): void {
   const message = errorText(error);
+  clientErrorLog.push({ at: Date.now(), text: `${message} (${where})` });
+  if (clientErrorLog.length > 10) clientErrorLog.shift();
   const reporter = (window as ArmadasErrorWindow).reportArmadasError;
   if (reporter) {
     reporter(message, where);
@@ -600,6 +604,16 @@ function parseOwnShip(raw: unknown): OwnShipSnapshot | null {
     abandoned: source.abandoned === true,
     burning: source.burning === true,
     fireStrength: finiteNumber(source.fireStrength) ?? 0,
+    fireShipIgnited: source.fireShipIgnited === true,
+    fireShipMode: source.fireShipMode === "contact" || source.fireShipMode === "now"
+      ? source.fireShipMode
+      : undefined,
+    fireShipTargetId: typeof source.fireShipTargetId === "string"
+      ? source.fireShipTargetId
+      : null,
+    towedBy: typeof source.towedBy === "string" ? source.towedBy : null,
+    towingId: typeof source.towingId === "string" ? source.towingId : null,
+    lightsOn: source.lightsOn !== false,
     prisoners: finiteNumber(source.prisoners) ?? 0,
     capturedCrew: finiteNumber(source.capturedCrew) ?? 0,
     capturedChoiceSeconds: finiteNumber(source.capturedChoiceSeconds) ?? 0,
@@ -780,6 +794,10 @@ async function start(): Promise<void> {
   const fireShipActionsOut = element<HTMLElement>("fire-ship-actions");
   const fireShipStatusOut = element<HTMLElement>("fire-ship-status");
   const fireShipButtonsOut = element<HTMLElement>("fire-ship-buttons");
+  const shipLightsOut = element<HTMLElement>("ship-lights");
+  const shipLightsText = element<HTMLElement>("ship-lights-text");
+  const debugLogToggle = element<HTMLButtonElement>("debug-log-toggle");
+  const debugLogLines = element<HTMLElement>("debug-log-lines");
   const fireTargetBox = element<HTMLElement>("fire-ship-target");
   const fireTargetText = element<HTMLElement>("fire-target-text");
   const fireTargetConfirm = element<HTMLButtonElement>("fire-target-confirm");
@@ -1384,10 +1402,21 @@ async function start(): Promise<void> {
   let lastFrameAt = 0;
   const frameDurations: Array<{ at: number; ms: number }> = [];
   let lastStateReceivedAt = 0;
+  let latestTick = 0;
   let cachedState: StateMessage | null = null;
   let pendingStateMessages: StateMessage[] = [];
   let nextOrderId = 0;
   const pendingOrders = new Map<string, { at: number; label: string }>();
+  interface OrderDebugEntry {
+    at: number;
+    command: string;
+    ship: string;
+    target: string;
+    result: string;
+    reason: string;
+  }
+  const orderDebugLog: OrderDebugEntry[] = [];
+  let debugLogOpen = false;
   let pingAt = 0;
   let pingMs = 0;
   let lastPingSentAt = 0;
@@ -1467,10 +1496,16 @@ async function start(): Promise<void> {
     followButton.setAttribute("aria-pressed", String(on));
   }
 
+  let lastNoticeText = "";
+  let lastNoticeAt = 0;
   function showNotice(
     text: string,
     options: { persistent?: boolean; reload?: boolean } = {},
   ): void {
+    const now = performance.now();
+    if (text === lastNoticeText && now - lastNoticeAt < 1_000) return;
+    lastNoticeText = text;
+    lastNoticeAt = now;
     window.clearTimeout(noticeTimer);
     window.clearTimeout(noticeHideTimer);
     notice.textContent = text;
@@ -2772,7 +2807,18 @@ async function start(): Promise<void> {
   function sendCommand(message: Record<string, unknown>): boolean {
     if (socket?.readyState === WebSocket.OPEN) {
       const id = `cmd-${++nextOrderId}`;
-      pendingOrders.set(id, { at: performance.now(), label: String(message.t ?? "order") });
+      const label = String(message.t ?? "order");
+      pendingOrders.set(id, { at: performance.now(), label });
+      orderDebugLog.push({
+        at: Date.now(),
+        command: label,
+        ship: typeof message.ship === "string" ? message.ship : "",
+        target: typeof message.target === "string" ? message.target : "",
+        result: "sent",
+        reason: "",
+      });
+      while (orderDebugLog.length > 40) orderDebugLog.shift();
+      renderDebugLog();
       socket.send(JSON.stringify({ ...message, id }));
       updateOrderSendingStatus();
       return true;
@@ -2789,9 +2835,44 @@ async function start(): Promise<void> {
     }
   }
 
-  function acknowledgeOrder(id: string): void {
-    if (!pendingOrders.delete(id)) return;
+  function acknowledgeOrder(id: string, ok: unknown, text: unknown): void {
+    const pending = pendingOrders.get(id);
+    if (!pending) return;
+    pendingOrders.delete(id);
+    const accepted = ok !== false;
+    const reason = typeof text === "string" ? text : "";
+    const entry = [...orderDebugLog].reverse().find((row) =>
+      row.command === pending.label && row.result === "sent",
+    );
+    if (entry) {
+      entry.result = accepted ? "accepted" : "rejected";
+      entry.reason = reason;
+      entry.ship = entry.ship || "";
+      entry.target = entry.target || "";
+    }
+    if (!accepted) showNotice(reason || `${pending.label} was rejected.`);
+    renderDebugLog();
     updateOrderSendingStatus();
+  }
+
+  function renderDebugLog(): void {
+    if (!debugLogOpen) return;
+    const lines = orderDebugLog.map((entry) => {
+      const time = new Date(entry.at).toLocaleTimeString();
+      const where = [entry.ship, entry.target].filter(Boolean).join(" -> ");
+      return `${time}  ${entry.command}${where ? ` [${where}]` : ""}  ${entry.result}${entry.reason ? `: ${entry.reason}` : ""}`;
+    });
+    const errors = clientErrorLog.map((entry) =>
+      `${new Date(entry.at).toLocaleTimeString()}  CLIENT ERROR  ${entry.text}`,
+    );
+    debugLogLines.textContent = [
+      `Orders (last ${lines.length}, 40 max)`,
+      ...lines,
+      "",
+      `Client errors (last ${errors.length}, 10 max)`,
+      ...(errors.length > 0 ? errors : ["none"]),
+    ].join("\n");
+    debugLogLines.scrollTop = debugLogLines.scrollHeight;
   }
 
   function groupShipIds(): string[] {
@@ -4655,14 +4736,33 @@ async function start(): Promise<void> {
     fireShipStatusOut.textContent = status;
     fireShipStatusOut.hidden = status.length === 0;
 
-    fireShipButtonsOut.replaceChildren();
+    // Diff the existing buttons instead of replacing them on every snapshot.
+    // An open card and any focused button survive the 5 Hz/10 Hz updates.
+    const keep = new Set(actions.map((action) => action.id));
+    for (const button of [...fireShipButtonsOut.querySelectorAll<HTMLButtonElement>("button")]) {
+      if (!keep.has(button.dataset.fireAction as FireShipActionId)) button.remove();
+    }
     for (const action of actions) {
-      const button = document.createElement("button");
-      button.type = "button";
+      let button = fireShipButtonsOut.querySelector<HTMLButtonElement>(
+        `button[data-fire-action="${action.id}"]`,
+      );
+      if (!button) {
+        button = document.createElement("button");
+        button.type = "button";
+        button.dataset.fireAction = action.id;
+        button.addEventListener("click", () => runFireShipAction(action.id));
+      }
       button.className = `btn${action.confirm ? " btn-seal" : ""}`;
-      button.dataset.fireAction = action.id;
-      button.textContent = action.label;
-      button.addEventListener("click", () => runFireShipAction(action.id));
+      button.disabled = action.disabled === true;
+      button.title = action.reason ?? "";
+      button.replaceChildren();
+      button.append(action.label);
+      if (action.reason) {
+        const reason = document.createElement("span");
+        reason.className = "fire-action-reason";
+        reason.textContent = action.reason;
+        button.append(reason);
+      }
       fireShipButtonsOut.append(button);
     }
 
@@ -4797,6 +4897,10 @@ async function start(): Promise<void> {
     shipStripProvisions.textContent = viewRow?.provisionsText ?? "–";
     shipUndock.hidden = row?.status !== "docked";
     shipDamage.disabled = !row || row.status === "delivery";
+    const lightsOn = row?.lightsOn !== false;
+    shipLightsOut.dataset.on = String(lightsOn);
+    shipLightsText.textContent = `Lights: ${lightsOn ? "On" : "Off"}`;
+    shipLightsOut.hidden = !row;
     renderFireShipActions();
     updateJourneyUi(row);
   }
@@ -5741,8 +5845,8 @@ async function start(): Promise<void> {
       return;
     }
     if (type === "ack") {
-      const id = (message as { id?: unknown }).id;
-      if (typeof id === "string") acknowledgeOrder(id);
+      const reply = message as { id?: unknown; ok?: unknown; text?: unknown };
+      if (typeof reply.id === "string") acknowledgeOrder(reply.id, reply.ok, reply.text);
       return;
     }
     if (type !== "s") return;
@@ -5811,6 +5915,7 @@ async function start(): Promise<void> {
 
   function applyStateMessage(state: StateMessage): void {
     if (!Array.isArray(state.ships)) return;
+    if (typeof state.tick === "number") latestTick = state.tick;
     const receivedGameMs = Number(state.g);
     if (Number.isFinite(receivedGameMs)) {
       clockTargetMs = receivedGameMs;
@@ -6175,6 +6280,7 @@ async function start(): Promise<void> {
       }
 
       ship.classId = String(classId);
+      ship.hull.name = id;
       ship.navy = navy;
       ship.dockedPortId = dockedPortId;
       ship.waitingPortId = waitingPortId;
@@ -7179,6 +7285,13 @@ async function start(): Promise<void> {
   });
   testToolsClose.addEventListener("click", closeTestTools);
   perfToggle.addEventListener("click", () => setPerfVisible(!perfVisible));
+  debugLogToggle.addEventListener("click", () => {
+    debugLogOpen = !debugLogOpen;
+    debugLogLines.hidden = !debugLogOpen;
+    debugLogToggle.setAttribute("aria-expanded", String(debugLogOpen));
+    debugLogToggle.textContent = debugLogOpen ? "Hide debug log" : "Debug log";
+    renderDebugLog();
+  });
   testAnchoredFleet.addEventListener("click", () => {
     sendCommand({
       t: "testAnchoredFleet",
@@ -7670,6 +7783,63 @@ async function start(): Promise<void> {
   if (identity.warning) showNotice(identity.warning);
   window.addEventListener("resize", scheduleLayoutAudit);
   scheduleLayoutAudit();
+  // A narrow read-only surface for the real-client jsdom harness. It exposes
+  // only what the player already sees and never touches server state.
+  type ArmadaTestWindow = Window & {
+    __armadaTest?: {
+      screenForWorld: (x: number, y: number) => { x: number; y: number };
+      tapWorld: (x: number, y: number) => void;
+      tapScreen: (x: number, y: number) => void;
+      openOrders: (x: number, y: number) => void;
+      drawPlan: () => Array<Record<string, unknown>>;
+      selectedShipId: () => string;
+      fleet: () => Array<Record<string, unknown>>;
+      tick: () => number;
+    };
+  };
+  (window as ArmadaTestWindow).__armadaTest = {
+    screenForWorld: (x, y) => toScreen(x, y),
+    tapWorld: (x, y) => {
+      const screen = toScreen(x, y);
+      mapTapAction(screen.x, screen.y);
+    },
+    tapScreen: (x, y) => mapTapAction(x, y),
+    openOrders: (x, y) => {
+      const screen = toScreen(x, y);
+      openOrderMenu(screen.x, screen.y);
+    },
+    drawPlan: () => [...ships.values()].map((ship) => {
+      const screen = toScreen(ship.x, ship.y);
+      return {
+        id: ship.id,
+        classId: ship.classId,
+        x: ship.x,
+        y: ship.y,
+        screenX: screen.x,
+        screenY: screen.y,
+        heading: ship.heading,
+        visible: ship.hull.visible,
+        own: ship.own,
+        burning: ship.burning,
+        sinking: ship.sinking,
+        abandoned: ship.abandoned,
+        lantern: ship.lantern,
+        glowCommands: ((ship.statusInk as unknown as {
+          commands?: Array<{ kind: string }>;
+        }).commands ?? []).filter((command) =>
+          command.kind === "circle" || command.kind === "fill").length,
+      };
+    }),
+    selectedShipId: () => selectedShipId,
+    fleet: () => fleetShips.map((ship) => ({ ...ship })),
+    tick: () => latestTick,
+  };
+  window.addEventListener("error", (event) => {
+    reportClientError(event.error ?? event.message, "window error");
+  });
+  window.addEventListener("unhandledrejection", (event) => {
+    reportClientError(event.reason, "unhandled promise");
+  });
   connect();
   void checkForNewVersion();
   window.setInterval(

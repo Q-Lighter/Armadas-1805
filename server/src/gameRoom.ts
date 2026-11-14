@@ -545,6 +545,32 @@ export class GameRoom {
     }
   }
 
+  /** A plain-English fallback when a rejected order did not write its own. */
+  private orderReason(type: unknown): string {
+    switch (type) {
+      case "o": return "Cannot sail there.";
+      case "sailToPort": return "Cannot sail to that port.";
+      case "attackPort": return "Cannot attack that port.";
+      case "buildFortification": return "Cannot build there.";
+      case "buy": return "That ship cannot be bought here.";
+      case "hire": return "Cannot hire crew there.";
+      case "buyGoods": case "sellGoods": case "load": case "unload": return "That trade is not possible.";
+      case "resupply": return "Cannot resupply there.";
+      case "repair": case "portRepair": return "Cannot repair that ship.";
+      case "board": return "Cannot board that ship.";
+      case "claim": return "Cannot claim that ship.";
+      case "crewTransfer": return "Cannot move that crew.";
+      case "igniteFireShip": return "That ship cannot be set alight.";
+      case "cancelIgnite": return "No contact attack to cancel.";
+      case "towShip": return "Cannot tow that ship.";
+      case "castOff": return "No tow to cast off.";
+      case "lights": return "Cannot change that ship's lights.";
+      case "battleOrder": case "fleetBattleOrder": return "That battle order is not allowed.";
+      case "fleetOrder": return "That fleet cannot take that order.";
+      default: return "Order rejected.";
+    }
+  }
+
   /** Orders are untrusted: parse defensively and let the shared rules check. */
   private onMessage(playerId: string, data: unknown): void {
     if (typeof data !== "string" || data.length > 4_000) return;
@@ -621,46 +647,59 @@ export class GameRoom {
       return;
     }
 
-    if (this.world.gameOver && order.t !== "resetRoom") return;
-    if (this.world.playerRecords.get(playerId)?.eliminated && order.t !== "resetRoom") return;
+    const beforeNotice = this.world.notices.get(playerId)?.at(-1);
+    let accepted = true;
+    let reason: string | null = null;
+    const reject = (text: string): void => {
+      accepted = false;
+      reason = text;
+      this.world.notices.set(playerId, [...(this.world.notices.get(playerId) ?? []), text]);
+    };
 
-    if (order.t === "o") {
-      applyOrder(this.world, playerId, order.x, order.y, order.ship);
+    if (this.world.gameOver && order.t !== "resetRoom") {
+      reject("The game is over.");
+    } else if (this.world.playerRecords.get(playerId)?.eliminated && order.t !== "resetRoom") {
+      reject("You are eliminated and can only reset the room.");
+    } else if (order.t === "o") {
+      accepted = applyOrder(this.world, playerId, order.x, order.y, order.ship);
     } else if (order.t === "createFleet") {
-      createPlayerFleet(this.world, playerId, order.ships, order.name);
+      accepted = createPlayerFleet(this.world, playerId, order.ships, order.name) !== null;
     } else if (order.t === "fleetUpdate") {
-      updatePlayerFleet(this.world, playerId, order.fleet, {
+      accepted = updatePlayerFleet(this.world, playerId, order.fleet, {
         name: order.name,
         formation: order.formation,
         stance: order.stance,
         leaderId: order.leader,
       });
     } else if (order.t === "fleetDisband") {
-      disbandPlayerFleet(this.world, playerId, order.fleet);
+      accepted = disbandPlayerFleet(this.world, playerId, order.fleet);
     } else if (order.t === "fleetDetach") {
-      detachPlayerShip(this.world, playerId, order.ship);
+      accepted = detachPlayerShip(this.world, playerId, order.ship);
     } else if (order.t === "fleetRejoin") {
-      rejoinPlayerShip(this.world, playerId, order.ship);
+      accepted = rejoinPlayerShip(this.world, playerId, order.ship);
     } else if (order.t === "fleetOrder") {
-      applyFleetOrder(this.world, playerId, order.fleet, order.order, order.queue === true);
+      accepted = applyFleetOrder(this.world, playerId, order.fleet, order.order, order.queue === true);
     } else if (order.t === "shipOrder") {
-      applyShipSpecialOrder(this.world, playerId, order.ship, order.order);
+      accepted = applyShipSpecialOrder(this.world, playerId, order.ship, order.order);
     } else if (order.t === "saveGroup") {
-      savePlayerControlGroup(this.world, playerId, order.slot, order.ids);
+      accepted = savePlayerControlGroup(this.world, playerId, order.slot, order.ids);
     } else if (order.t === "sailToPort") {
-      applyPortOrder(this.world, playerId, order.port, order.ship);
+      accepted = applyPortOrder(this.world, playerId, order.port, order.ship);
     } else if (order.t === "attackPort") {
-      attackPort(this.world, playerId, order.port, order.ship);
+      accepted = attackPort(this.world, playerId, order.port, order.ship);
     } else if (order.t === "fleetAttackPort" && typeof order.fleet === "string") {
       const fleet = this.world.fleetModels.get(playerId)?.get(order.fleet);
-      if (fleet) {
+      if (!fleet) reject("That fleet does not exist.");
+      else {
+        accepted = false;
         for (const id of fleet.members) {
           if (this.world.portAttackTargets.has(id)) continue;
-          attackPort(this.world, playerId, order.port, id, true);
+          accepted = attackPort(this.world, playerId, order.port, id, true) || accepted;
         }
+        if (!accepted) reject("None of that fleet can attack this port.");
       }
     } else if (order.t === "buildFortification") {
-      buildPortFortification(this.world, playerId, order.port);
+      accepted = buildPortFortification(this.world, playerId, order.port);
     } else if (order.t === "testPort" && this.world.kind !== "normal") {
       if (typeof order.port !== "string") return;
       if (typeof order.owner === "string") {
@@ -675,9 +714,9 @@ export class GameRoom {
       if (order.mode === "finishBuild") finishTestPortBuild(this.world, order.port);
       if (order.mode === "fillStock") fillTestPortStock(this.world, order.port);
     } else if (order.t === "undock") {
-      undock(this.world, playerId, order.ship);
+      accepted = undock(this.world, playerId, order.ship);
     } else if (order.t === "endJourney") {
-      if (typeof order.ship === "string") endPlayerJourney(this.world, playerId, order.ship);
+      if (typeof order.ship === "string") accepted = endPlayerJourney(this.world, playerId, order.ship);
     } else if (order.t === "clearTrails") {
       clearPlayerTrails(this.world, playerId);
     } else if (order.t === "routeLine") {
@@ -702,25 +741,25 @@ export class GameRoom {
       }
       this.world.routePredictions.clear();
     } else if (order.t === "select") {
-      selectShip(this.world, playerId, order.ship);
+      accepted = selectShip(this.world, playerId, order.ship);
     } else if (order.t === "buy") {
-      buyShip(this.world, playerId, order.port, order.type, order.name);
+      accepted = buyShip(this.world, playerId, order.port, order.type, order.name) !== null;
     } else if (order.t === "hire") {
-      hireCrew(this.world, playerId, order.ship, order.port, order.count);
+      accepted = hireCrew(this.world, playerId, order.ship, order.port, order.count);
     } else if (order.t === "buyGoods") {
-      buyGoods(this.world, playerId, order.ship, order.port, order.good, order.amount);
+      accepted = buyGoods(this.world, playerId, order.ship, order.port, order.good, order.amount);
     } else if (order.t === "sellGoods") {
-      sellGoods(this.world, playerId, order.ship, order.port, order.good, order.amount);
+      accepted = sellGoods(this.world, playerId, order.ship, order.port, order.good, order.amount);
     } else if (order.t === "load") {
-      transferGoods(this.world, playerId, order.ship, order.port, order.good, order.amount, "load");
+      accepted = transferGoods(this.world, playerId, order.ship, order.port, order.good, order.amount, "load");
     } else if (order.t === "unload") {
-      transferGoods(this.world, playerId, order.ship, order.port, order.good, order.amount, "unload");
+      accepted = transferGoods(this.world, playerId, order.ship, order.port, order.good, order.amount, "unload");
     } else if (order.t === "resupply") {
-      resupplyShip(this.world, playerId, order.ship, order.port);
+      accepted = resupplyShip(this.world, playerId, order.ship, order.port);
     } else if (order.t === "repair") {
-      setPlayerRepair(this.world, playerId, order.ship, order.enabled);
+      accepted = setPlayerRepair(this.world, playerId, order.ship, order.enabled);
     } else if (order.t === "portRepair") {
-      repairAtPort(this.world, playerId, order.ship, order.port, order.mode);
+      accepted = repairAtPort(this.world, playerId, order.ship, order.port, order.mode);
     } else if (order.t === "spawnEnemies") {
       const classId = typeof order.type === "string" ? parseShipClass(order.type) : null;
       const chosenNavy = typeof order.name === "string" ? parseNavy(order.name) : null;
@@ -745,13 +784,13 @@ export class GameRoom {
       const to = typeof order.to === "string" ? order.to : null;
       resignPlayer(this.world, playerId, to);
     } else if (order.t === "battleOrder") {
-      setShipBattleOrder(this.world, playerId, order.ship, order.order);
+      accepted = setShipBattleOrder(this.world, playerId, order.ship, order.order);
     } else if (order.t === "fleetBattleOrder") {
-      setFleetBattleOrder(this.world, playerId, order.fleet, order.order);
+      accepted = setFleetBattleOrder(this.world, playerId, order.fleet, order.order);
     } else if (order.t === "acceptSurrender") {
-      acceptShipSurrender(this.world, playerId, order.ship);
+      accepted = acceptShipSurrender(this.world, playerId, order.ship);
     } else if (order.t === "cancelSurrender") {
-      cancelShipSurrender(this.world, playerId, order.ship);
+      accepted = cancelShipSurrender(this.world, playerId, order.ship);
     } else if (order.t === "board") {
       const odds = boardingOddsFor(this.world, playerId, order.ship, order.target);
       if (order.confirm !== true) {
@@ -764,22 +803,24 @@ export class GameRoom {
           }));
         }
       } else if (odds !== null) {
-        orderBoarding(this.world, playerId, order.ship, order.target);
+        accepted = orderBoarding(this.world, playerId, order.ship, order.target);
+      } else {
+        reject("Target is not an enemy ship.");
       }
     } else if (order.t === "cancelBoard") {
-      cancelBoarding(this.world, playerId, order.ship);
+      accepted = cancelBoarding(this.world, playerId, order.ship);
     } else if (order.t === "autoBoard") {
-      setAutoBoard(this.world, playerId, order.ship, order.enabled);
+      accepted = setAutoBoard(this.world, playerId, order.ship, order.enabled);
     } else if (order.t === "fleetAutoBoard") {
-      setFleetAutoBoard(this.world, playerId, order.fleet, order.enabled);
+      accepted = setFleetAutoBoard(this.world, playerId, order.fleet, order.enabled);
     } else if (order.t === "crewTransfer") {
-      transferPlayerCrew(this.world, playerId, order.donor, order.receiver, order.amount);
+      accepted = transferPlayerCrew(this.world, playerId, order.donor, order.receiver, order.amount);
     } else if (order.t === "claim") {
-      claimPlayerShip(this.world, playerId, order.ship, order.donor);
+      accepted = claimPlayerShip(this.world, playerId, order.ship, order.donor);
     } else if (order.t === "capturedCrew") {
-      chooseCapturedCrew(this.world, playerId, order.ship, order.choice, typeof order.prisoners === "number" ? order.prisoners : 0);
+      accepted = chooseCapturedCrew(this.world, playerId, order.ship, order.choice, typeof order.prisoners === "number" ? order.prisoners : 0);
     } else if (order.t === "handOverPrisoners") {
-      handOverPrisoners(this.world, playerId, order.ship, order.port);
+      accepted = handOverPrisoners(this.world, playerId, order.ship, order.port);
     } else if (order.t === "spawnAbandoned" && this.world.kind !== "normal") {
       if (typeof order.type === "string") spawnTestAbandoned(this.world, playerId, order.type);
     } else if (order.t === "setEnemyCrew" && this.world.kind !== "normal") {
@@ -787,16 +828,16 @@ export class GameRoom {
     } else if (order.t === "setFire" && this.world.kind !== "normal") {
       setTestFire(this.world, playerId, order.ship);
     } else if (order.t === "igniteFireShip") {
-      orderFireShipIgnite(this.world, playerId, order.ship, order.mode,
+      accepted = orderFireShipIgnite(this.world, playerId, order.ship, order.mode,
         typeof order.target === "string" ? order.target : undefined);
     } else if (order.t === "cancelIgnite") {
-      cancelFireShipContact(this.world, playerId, order.ship);
+      accepted = cancelFireShipContact(this.world, playerId, order.ship);
     } else if (order.t === "towShip") {
-      orderTowFireShip(this.world, playerId, order.ship, order.target);
+      accepted = orderTowFireShip(this.world, playerId, order.ship, order.target);
     } else if (order.t === "castOff") {
-      castOffTow(this.world, playerId, order.ship);
+      accepted = castOffTow(this.world, playerId, order.ship);
     } else if (order.t === "lights") {
-      setShipLights(this.world, playerId, order.ship, order.on);
+      accepted = setShipLights(this.world, playerId, order.ship, order.on);
     } else if (order.t === "testAnchoredFleet" && this.world.kind !== "normal") {
       const stance = order.stance === "engage" ? "engage" : "fightIfAttacked";
       spawnTestAnchoredFleet(this.world, playerId, stance);
@@ -804,8 +845,18 @@ export class GameRoom {
       if (typeof order.hour === "number") setTestTimeOfDay(this.world, order.hour);
     }
 
+    if (!accepted) {
+      const latest = this.world.notices.get(playerId)?.at(-1);
+      if (latest && latest !== beforeNotice) reason = latest;
+      reason ??= this.orderReason(order.t);
+    }
     if (typeof order.id === "string" && order.id.length <= 80) {
-      this.sockets.get(playerId)?.send(JSON.stringify({ t: "ack", id: order.id }));
+      this.sockets.get(playerId)?.send(JSON.stringify({
+        t: "ack",
+        id: order.id,
+        ok: accepted,
+        text: reason ?? undefined,
+      }));
     }
   }
 }

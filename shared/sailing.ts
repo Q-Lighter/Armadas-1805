@@ -54,6 +54,8 @@ export interface ShipRoute {
   /** The final destination, which may differ from the last waypoint. */
   goal: { x: number; y: number };
   kind: "point" | "port";
+  /** Arrival radius for this route; short sea orders finish close to the mark. */
+  arrivalKm?: number;
   portId: string | null;
   partial: boolean;
   message: string | null;

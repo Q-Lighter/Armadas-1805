@@ -2778,7 +2778,9 @@ export function spawnTestAnchoredFleet(
   if (!leader) return 0;
   const enemyNavy = NAVY_IDS.find((navy) => navy !== leader.navy) ?? "French";
   const fleet = world.botFleets.get("TEST-ENEMY") ?? [];
-  const centre = enemySpawnPoint(leader, 4, Math.PI / 2);
+  // Close enough that Tap-to-sail can reach the 600 m attack range without a
+  // long voyage, but far enough not to start inside the battle zone.
+  const centre = enemySpawnPoint(leader, 1.2, Math.PI / 2);
   for (let index = 0; index < 5; index += 1) {
     const offset = (index - 2) * 0.08;
     const ship = createShip(
@@ -2800,7 +2802,7 @@ export function spawnTestAnchoredFleet(
     fleet.push(ship);
   }
   world.botFleets.set("TEST-ENEMY", fleet);
-  pushNotice(world, playerId, "Spawned 5 anchored frigates, 4 km east.");
+  pushNotice(world, playerId, "Spawned 5 anchored frigates, 1.2 km east.");
   return 5;
 }
 
@@ -3508,7 +3510,8 @@ function takeReplanBudget(world: World, playerId: string): boolean {
 function startRouteLeg(ship: Ship): "sailing" | "arrived" | "blocked" {
   const route = ship.route;
   if (!route) return "blocked";
-  if (distanceKm(ship, route.goal) <= settings.sailing.arrivalRadiusKm) {
+  const arrivalKm = route.arrivalKm ?? settings.sailing.arrivalRadiusKm;
+  if (distanceKm(ship, route.goal) <= arrivalKm) {
     const partial = route.partial;
     ship.route = null;
     ship.order = null;
@@ -3598,6 +3601,7 @@ function installRoute(
     settings.route.curveSampleKm,
     settings.route.maxCurvePoints,
   );
+  const orderDistanceKm = distanceKm(ship, goal);
   const route: ShipRoute = {
     // Keep the planner's sparse legal legs for navigation. The sampled curve
     // is the smoothed presentation of the same track and is what the client
@@ -3607,6 +3611,9 @@ function installRoute(
     index: 0,
     goal: { x: goal.x, y: goal.y },
     kind,
+    arrivalKm: kind === "point" && orderDistanceKm <= settings.sailing.closeApproachOrderKm
+      ? settings.sailing.closeApproachKm
+      : settings.sailing.arrivalRadiusKm,
     portId,
     partial: plan.status === "partial",
     message: plan.message,
@@ -5538,7 +5545,10 @@ export function orderFireShipIgnite(
     return false;
   }
   if (chosenMode === "contact") {
-    if (!targetId || !target) return false;
+    if (!targetId || !target) {
+      pushNotice(world, playerId, "Target is not an enemy ship");
+      return false;
+    }
     ship.fireShip = {
       ignited: false,
       mode: "contact",
@@ -5671,6 +5681,10 @@ function stepContactFireShip(
   const distanceM = Math.hypot(target.x - ship.x, target.y - ship.y) * 1_000;
   if (hullTooLowToWait(ship.damage.hull, shipSpecFor(ship).hull) ||
       contactIgnitionInRange(distanceM)) {
+    // A contact fire ship has arrived at its target. Stop it there so the
+    // burning hulk can actually pass fire to the ship it rammed; an Ignite
+    // now hulk still keeps its way and drifts.
+    ship.speedKnots = 0;
     igniteFireShip(world, ownerId, ship, "contact", target.id);
     return true;
   }
@@ -5852,7 +5866,11 @@ function stepOwnerShip(
         ? Math.max(0.006, settings.ships.fireShips.igniteRangeM / 1000 * 0.5)
         : world.engagements.has(ship.id)
           ? 0.02
-          : ship.formationStation ? settings.fleets.stationArrivalRadiusKm : undefined,
+          : ship.formationStation
+            ? settings.fleets.stationArrivalRadiusKm
+            : ship.route
+              ? ship.route.arrivalKm ?? settings.sailing.arrivalRadiusKm
+              : undefined,
     ship.formationStation || ship.runState || ship.boardingShipId || world.engagements.has(ship.id)
       ? 0
       : settings.sailing.finalApproachKm,
@@ -7067,6 +7085,9 @@ function abandonNow(world: World, ownerId: string, ship: Ship): void {
 function updateAbandonment(world: World, dtGameSeconds: number): void {
   for (const { ownerId, ship } of allShips(world)) {
     if (ownerId === "" || ship.abandoned || ship.deliveryPortId) continue;
+    // Ignition empties the ship on purpose. It is a burning hulk, not an
+    // abandoned prize, and must stay in its owner's fleet until it sinks.
+    if (ship.fireShip?.ignited) continue;
     if (ship.crew >= minCrew(ship)) ship.hadMinimumCrew = true;
     if (ship.capturedCrew && ship.capturedCrew > 0) continue;
     if (shouldAbandon({
@@ -7106,6 +7127,14 @@ function updateFires(world: World, dtGameSeconds: number): void {
     if (!fire.burning) continue;
     const spec = shipSpecFor(ship);
     const damage = fireDamage(fire.strength, spec.hull, spec.crew, seconds);
+    if (ship.fireShip?.ignited) {
+      // A fire ship is consumed deliberately. Its full hull burn lasts the
+      // Draft 200 seconds even though ordinary fire alone would take longer.
+      damage.hullLoss = Math.max(
+        damage.hullLoss,
+        (spec.hull / settings.ships.fireShips.burnSeconds) * Math.max(0, seconds),
+      );
+    }
     if (ship.fireStartedByOwnerId && ship.fireStartedByNavy) {
       noteDamageCredit(world, ship, ship.fireStartedByOwnerId, ship.fireStartedByNavy,
         combatRealSeconds(world) * 1000 + 0);

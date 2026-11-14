@@ -215,6 +215,12 @@
             </div>
           </div>
         </div>
+        <p class="ship-lights" id="ship-lights">
+          <svg class="lantern-icon" viewBox="0 0 16 22" aria-hidden="true">
+            <path d="M5 2h6M6 2v2M10 2v2M4 5h8v13H4zM5 8h6v7H5zM6 18v2M10 18v2M8 0v2" />
+          </svg>
+          <span id="ship-lights-text">Lights: On</span>
+        </p>
         <button class="btn ship-damage" id="ship-damage" type="button">
           Damage
         </button>
@@ -427,6 +433,8 @@
         <button class="btn" id="test-set-wind" type="button">Set wind</button>
         <button class="btn" id="test-reset-room" type="button">Reset room</button>
         <button class="btn" id="perf-toggle" type="button" aria-pressed="false">Performance: off</button>
+        <button class="btn" id="debug-log-toggle" type="button" aria-expanded="false">Debug log</button>
+        <pre class="debug-log" id="debug-log-lines" hidden></pre>
       </div>
       <div class="test-invite">
         <h3>Invite second device</h3>

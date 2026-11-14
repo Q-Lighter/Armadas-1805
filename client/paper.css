@@ -3216,3 +3216,49 @@ body.game {
   min-height: 44px;
   font: inherit;
 }
+
+.fire-action-reason {
+  display: block;
+  font-size: 0.74rem;
+  font-weight: 400;
+  line-height: 1.2;
+  opacity: 0.82;
+}
+.fire-ship-buttons .btn:disabled,
+.ship-special-grid .btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.7;
+}
+.ship-lights {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  margin: 0.45rem 0;
+  font-size: 0.86rem;
+}
+.ship-lights[data-on="false"] {
+  color: var(--ink-faded);
+}
+.lantern-icon {
+  width: 12px;
+  height: 17px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.4;
+}
+.ship-lights[data-on="true"] .lantern-icon {
+  fill: #d99a2b;
+  stroke: #6b4a16;
+}
+.debug-log {
+  grid-column: 1 / -1;
+  max-height: 15rem;
+  overflow: auto;
+  margin: 0;
+  padding: 0.6rem;
+  border: 1px solid var(--rule);
+  background: rgba(255, 255, 255, 0.35);
+  font-size: 0.72rem;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}

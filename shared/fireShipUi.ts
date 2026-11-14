@@ -17,6 +17,9 @@ export interface FireShipActionButton {
   label: string;
   /** Ignite now always asks before consuming the ship. */
   confirm: boolean;
+  /** A false condition disables the button; it never hides it. */
+  disabled?: boolean;
+  reason?: string;
 }
 
 /**
@@ -31,23 +34,32 @@ export function fireShipCardActions(
   const fireShip = ship.classId === "fireShip";
   const towed = Boolean(ship.towedBy);
   if (fireShip && !ship.fireShipIgnited) {
-    if (!towed) {
-      if (ship.fireShipMode === "contact" && ship.fireShipTargetId) {
-        actions.push({ id: "cancelContact", label: "Cancel contact attack", confirm: false });
-      } else {
-        actions.push({ id: "igniteNow", label: "Ignite now", confirm: true });
-        actions.push({ id: "igniteContact", label: "Ignite on contact", confirm: false });
-      }
+    const refusal = towed ? { disabled: true, reason: "Cast off first" } : {};
+    actions.push({ id: "igniteNow", label: "Ignite now", confirm: true, ...refusal });
+    actions.push({ id: "igniteContact", label: "Ignite on contact", confirm: false, ...refusal });
+    if (ship.fireShipMode === "contact" && ship.fireShipTargetId) {
+      actions.push({ id: "cancelContact", label: "Cancel contact attack", confirm: false });
     }
   }
   if (fireShip && towed) {
     actions.push({ id: "castOff", label: "Cast off", confirm: false });
   }
+  const towerClass = ship.classId === "frigate" || ship.classId === "line" ||
+    ship.classId === "flagship";
+  if (towerClass) {
+    const towReason = ship.towingId
+      ? "Already towing a fire ship"
+      : hasTowTarget ? undefined : "No unlit fire ship within 300 m";
+    actions.push({
+      id: "tow",
+      label: "Tow fire ship",
+      confirm: false,
+      disabled: towReason !== undefined,
+      reason: towReason,
+    });
+  }
   if (ship.towingId) {
     actions.push({ id: "castOff", label: "Cast off", confirm: false });
-  } else if (!fireShip && hasTowTarget &&
-    (ship.classId === "frigate" || ship.classId === "line" || ship.classId === "flagship")) {
-    actions.push({ id: "tow", label: "Tow fire ship", confirm: false });
   }
   if (ship.lightsOn === false) {
     actions.push({ id: "lightsOn", label: "Lights on", confirm: false });
@@ -59,15 +71,16 @@ export function fireShipCardActions(
 
 /** A short card line for the fire-ship state, or an empty string. */
 export function fireShipStatusText(
-  ship: Pick<OwnShipSnapshot, "classId" | "fireShipIgnited" | "fireShipMode" | "towedBy" | "towingId" | "burning">,
+  ship: Pick<OwnShipSnapshot, "classId" | "fireShipIgnited" | "fireShipMode" | "towedBy" | "towingId" | "burning" | "lightsOn">,
   towName?: string | null,
 ): string {
-  if (ship.classId !== "fireShip" && !ship.towingId) return "";
-  if (ship.fireShipIgnited || ship.burning) return "Burning hulk · the crew is away";
-  if (ship.towedBy) return "In tow · only Cast off is accepted";
-  if (ship.towingId) return towName ? `Towing ${towName}` : "Towing a fire ship";
-  if (ship.fireShipMode === "contact") return "Contact attack · steering for the target";
-  return "Fire ship · not yet lit";
+  const lights = ship.lightsOn === false ? "Lights: Off" : "Lights: On";
+  if (ship.classId !== "fireShip" && !ship.towingId) return lights;
+  if (ship.fireShipIgnited || ship.burning) return `Burning hulk · the crew is away · ${lights}`;
+  if (ship.towedBy) return `In tow · only Cast off is accepted · ${lights}`;
+  if (ship.towingId) return `${towName ? `Towing ${towName}` : "Towing a fire ship"} · ${lights}`;
+  if (ship.fireShipMode === "contact") return `Contact attack · steering for the target · ${lights}`;
+  return `Fire ship · not yet lit · ${lights}`;
 }
 
 /** Three size bands used by the five review viewports. */

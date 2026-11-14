@@ -281,7 +281,7 @@ test("one player never receives another player's fleet details", () => {
   assert.equal(betaState.fleet[0]!.id, "beta");
   assert.equal(text.includes("Secret Kestrel"), false);
   assert.equal(text.includes('"m":40000'), false);
-  assert.ok(betaState.ships.every((ship) => ship.length === 9));
+  assert.ok(betaState.ships.every((ship) => ship.length === 11));
 
   const alphaState = visibleStateFor(world, "alpha");
   assert.equal(alphaState.fleet.some((ship) => ship.name === "Secret Kestrel"), true);

@@ -34,7 +34,7 @@ function equal(a: unknown, b: unknown): boolean {
 
 function changedFields(previous: StateMessage, current: StateMessage, includeFleet: boolean): Record<string, unknown> {
   const fields: Record<string, unknown> = {};
-  for (const key of ["m", "sel", "sp", "h", "d", "sv", "out", "go", "roster", "ports", "fleets", "groups", "chart", "l", "trailAdds", "trailReset", "lostMarks"] as const) {
+  for (const key of ["m", "sel", "sp", "h", "d", "sv", "out", "go", "roster", "ports", "fleets", "groups", "chart", "l", "npcs", "trailAdds", "trailReset", "lostMarks"] as const) {
     if (!equal(previous[key], current[key])) fields[key] = current[key];
   }
   if (includeFleet) fields.fleet = current.fleet;
@@ -145,10 +145,12 @@ export function encodeStateDelta(delta: StateDelta): ArrayBuffer {
     offset = writeString(view, bytes, offset, ship[6]);
     const docked = typeof ship[7] === "string";
     const waiting = typeof ship[8] === "string";
-    view.setUint8(offset, (docked ? 1 : 0) | (waiting ? 2 : 0));
+    const npc = ship[9] === 1;
+    view.setUint8(offset, (docked ? 1 : 0) | (waiting ? 2 : 0) | (npc ? 4 : 0));
     offset += 1;
     if (docked) offset = writeString(view, bytes, offset, ship[7] as string);
     if (waiting) offset = writeString(view, bytes, offset, ship[8] as string);
+    if (npc) offset = writeString(view, bytes, offset, ship[10] ?? "");
   }
   return buffer.slice(0, offset);
 }
@@ -191,7 +193,17 @@ export function decodeStateDelta(buffer: ArrayBuffer): StateDelta {
       waiting = value.value;
       offset = value.offset;
     }
-    ships.push([id.value, classId.value, x, y, heading, speed, navy.value as ShipSnapshot[6], docked, waiting]);
+    let npcKind: ShipSnapshot[10] = null;
+    if (flags & 4) {
+      const value = readString(view, bytes, offset);
+      npcKind = (value.value || null) as ShipSnapshot[10];
+      offset = value.offset;
+    }
+    ships.push([
+      id.value, classId.value, x, y, heading, speed,
+      navy.value as ShipSnapshot[6], docked, waiting,
+      flags & 4 ? 1 : 0, npcKind,
+    ]);
   }
   return { ...header, ships };
 }

@@ -47,6 +47,9 @@ import {
   buyShip,
   createWorld,
   hireCrew,
+  hirePrivateer,
+  lootNpcShip,
+  setPrivateerMode,
   disbandPlayerFleet,
   dropAnchor,
   weighAnchor,
@@ -102,7 +105,7 @@ import { CHART_BLOCKS } from "./chartBlocks.js";
 const playerIdPattern = /^[A-Za-z0-9_-]{1,40}$/;
 
 export class GameRoom {
-  private world: World = createWorld();
+  private world: World = createWorld("main", { npcs: true });
   private readonly sockets = new PlayerSessions<WebSocket>();
   private ticks = 0;
   private readonly metrics = new LoadMetrics();
@@ -155,10 +158,18 @@ export class GameRoom {
     let enemyNavy: NavyId | null = null;
     let dummy: DummyBehaviour = "fights";
     let abandonedSpec: string | null = null;
+    let npcs = true;
     let enemyCrewPercent: number | null = null;
     let fireShipCount = 0;
     let displayName: string | null = null;
     let teamJoin = false;
+    const rawNpc = url.searchParams.get("npc");
+    if (rawNpc !== null) {
+      if (rawNpc !== "0" && rawNpc !== "1") {
+        return new Response("npc must be 0 or 1.", { status: 400 });
+      }
+      npcs = rawNpc === "1";
+    }
     if (kind !== "normal") {
       const rawNavy = url.searchParams.get("navy");
       if (rawNavy !== null) {
@@ -282,6 +293,7 @@ export class GameRoom {
         shipClass: shipClass ?? undefined,
         startMoney,
         hungerMultiplier,
+        npcs,
       });
     }
 
@@ -567,6 +579,8 @@ export class GameRoom {
       case "towShip": return "Cannot tow that ship.";
       case "castOff": return "No tow to cast off.";
       case "lights": return "Cannot change that ship's lights.";
+      case "hirePrivateer": case "privateerMode": return "That privateer contract is not available.";
+      case "loot": return "There is nothing to loot there.";
       case "dropAnchor": return "Cannot drop anchor now.";
       case "weighAnchor": return "Cannot weigh anchor now.";
       case "battleOrder": case "fleetBattleOrder": return "That battle order is not allowed.";
@@ -846,6 +860,12 @@ export class GameRoom {
       accepted = castOffTow(this.world, playerId, order.ship);
     } else if (order.t === "lights") {
       accepted = setShipLights(this.world, playerId, order.ship, order.on);
+    } else if (order.t === "hirePrivateer") {
+      accepted = hirePrivateer(this.world, playerId, order.ship, order.mode, order.target);
+    } else if (order.t === "privateerMode") {
+      accepted = setPrivateerMode(this.world, playerId, order.ship, order.mode, order.target);
+    } else if (order.t === "loot") {
+      accepted = lootNpcShip(this.world, playerId, order.target, order.ship);
     } else if (order.t === "testAnchoredFleet" && this.world.kind !== "normal") {
       const stance = order.stance === "engage" ? "engage" : "fightIfAttacked";
       spawnTestAnchoredFleet(this.world, playerId, stance);

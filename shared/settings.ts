@@ -998,6 +998,55 @@ export const settings = {
     testNeighbourMaxKm: 4,
   },
 
+  /**
+   * 3H-c Draft: neutral traffic, privateers and escort work. The counts keep a
+   * normal room alive without turning it into a fleet battle; every number is
+   * a playtest value in one place.
+   */
+  npcs: {
+    /** Neutral merchant hulls in a full room. */
+    merchantCount: 12,
+    /** Independent whaling groups, and the hulls in each group. */
+    whalerGroups: 2,
+    whalerGroupSizes: [2, 3] as const,
+    /** Privateers available in a full room. */
+    privateerCount: 3,
+    /** The NPC brain runs at this frequency; the world still steps every tick. */
+    brainHz: 2,
+    /** How far a privateer looks for neutral trade to raid. */
+    raidRangeKm: 18,
+    /** Neutral merchants and whalers pick a next port inside this range. */
+    voyageRangeKm: 60,
+    /** Spread long route plans so the first neutral brain tick is not a spike. */
+    routePlansPerBrain: 1,
+    /** A neutral hull stopped this long tries a seaward recovery course. */
+    stuckRecoverGameMinutes: 8,
+    /** Neutral routes get a bounded coarse search; a partial local course is enough. */
+    maxRouteNodes: 60,
+    routeMarginKm: 10,
+    routeGridKm: 16,
+    /** A hired escort follows its protected ship at this distance. */
+    escortOffsetKm: 1.1,
+    /** Re-plan an escort or group follower only after the target has moved this far. */
+    followReplanKm: 3.5,
+    /** A privateer on patrol wanders inside this radius of its home port. */
+    patrolRadiusKm: 9,
+    /** One contract lasts this many game days. */
+    contractGameDays: 6,
+    /** A privateer contract fee, and the separate escort fee. */
+    privateerFee: 1_200,
+    escortFee: 900,
+    /** Neutral cargo is generated inside these tonne bands. */
+    merchantCargoMinTonnes: 42,
+    merchantCargoMaxTonnes: 180,
+    whalerCargoMinTonnes: 24,
+    whalerCargoMaxTonnes: 72,
+    /** A lost or claimed NPC hull returns after this many real minutes. */
+    replacementRealMinutes: 30,
+    /** NPCs see this far for their own simple decisions. */
+    sightKm: 14,
+  },
+
   /** Draft: test-room helpers. The whole panel is removed before release. */
   testing: {
     /** Enemy dummies appear this far from the spawning player. Draft: 3 km. */

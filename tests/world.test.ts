@@ -61,7 +61,7 @@ test("the state for one player is compact and public", () => {
   assert.equal(state.you, "alpha");
   assert.equal(state.k, "normal");
   assert.equal(state.ships.length, 2);
-  assert.equal(state.ships[0]?.length, 9);
+  assert.equal(state.ships[0]?.length, 11);
   assert.equal(state.ships[0]?.[6], "British");
   assert.deepEqual(state.roster?.map((entry) => entry.id).sort(), ["alpha", "beta"]);
   assert.ok(state.roster?.every((entry) => !("stats" in entry) && !("flagshipName" in entry)));

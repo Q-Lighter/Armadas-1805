@@ -130,7 +130,7 @@ test("another player never receives my private damage numbers", () => {
   const other = visibleStateFor(world, "q");
   const publicShip = other.ships.find((ship) => ship[0] === mine.id);
   assert.ok(publicShip);
-  assert.equal(publicShip.length, 9);
+  assert.equal(publicShip.length, 11);
   assert.equal(other.fleet.some((ship) => ship.id === mine.id), false);
   const ownState = visibleStateFor(world, "p");
   assert.ok(ownState.fleet[0]?.damage);

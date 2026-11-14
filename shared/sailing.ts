@@ -208,6 +208,27 @@ export interface Ship {
   prisoners?: number;
   /** 3D: Auto-board toggle, on by default. */
   autoBoard?: boolean;
+  /** 3H-c: neutral traffic and privateers. Human ships leave this undefined. */
+  isNpc?: boolean;
+  npcKind?: "merchant" | "whaler" | "privateer";
+  npcGroupId?: string;
+  npcGroupLeaderId?: string;
+  npcHomePortId?: string;
+  npcDestinationPortId?: string | null;
+  npcNextDecisionGameMs?: number;
+  npcMode?: "patrol" | "escort" | "raid";
+  npcHiredBy?: string | null;
+  npcContractUntilGameMs?: number;
+  npcEscortTargetId?: string | null;
+  npcFee?: number;
+  /** True after a player has taken the cargo; the empty hull remains. */
+  npcLooted?: boolean;
+  /** A claimed neutral hull stops being an NPC. */
+  npcClaimed?: boolean;
+  /** Game time a neutral hull was first seen stopped, for its own recovery. */
+  npcStoppedSinceGameMs?: number;
+  npcRecovering?: boolean;
+  npcRecoveryGoal?: { x: number; y: number };
   /** 3D: the enemy this ship is approaching or fighting while boarding. */
   boardingShipId?: string | null;
   /** True only on the ship that started the boarding. */

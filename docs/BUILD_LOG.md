@@ -3236,3 +3236,72 @@ fleet line ahead, and test the planner broadly.
 - No browser is available in this workspace: no visual review, real touch
   events, separate physical device or real Cloudflare timing was measured. The
   harness uses jsdom and a Pixi stub, not rendered pixels.
+
+## Session 3H-c: NPC ships, looting, privateers, escorts
+
+**Date:** 2026-11-14
+**Branch:** main
+
+### What was asked
+
+Add neutral merchants and whalers, Loot & leave, privateers with fees and
+modes for six game days, escort contracts, a 2 Hz NPC brain, replacement hulls
+after 30 real minutes, `&npc=0` test control and benchmarks, without leaking
+neutral cargo before boarding.
+
+### What was built
+
+- A separate `world.npcShips` layer holds twelve merchant hulls, two whaling
+  groups of two and three, and three privateers. They are not `botFleets` and
+  do not count as players. A full room starts with twenty neutral hulls.
+- The neutral brain runs at 2 Hz while movement runs on the ordinary world
+  tick. Merchants and whalers choose a port within 60 km, sail to its offshore
+  rendezvous, and use a bounded coarse local route with one route plan per
+  brain tick. A lone trader cruises to an offshore point instead of repeatedly
+  ordering the same short approach. Group followers copy the leader's planned
+  track. Neutral ships are exempt from the player stuck-recovery path and get
+  one seaward recovery course after eight game minutes pinned on a coast.
+- Neutral ships carry ordinary stores and cargo. Cargo is stored in the normal
+  hold but is absent from `visibleStateFor` ship rows, the new neutral contact
+  list and the binary delta until a player loots it.
+- Loot & leave takes what fits from a boarded, abandoned or surrendered neutral
+  hull, leaves the empty hull afloat, and lets the player claim it afterwards.
+  Claiming removes the hull from the neutral layer and schedules a replacement.
+- Privateer contracts: hire for six game days at 1,200 pieces of eight, or 900
+  for escort work. Modes are patrol, escort and raid; escort follows one of the
+  player's ships at 1.1 km. The existing attack and board orders work against a
+  privateer as an ordinary armed hull. There is no second hidden privateer
+  combat AI in this part.
+- Lost and claimed neutral hulls return after 30 real minutes in the same group
+  and home port with a fresh id. `&npc=0` disables the whole layer and
+  `&npc=1` enables it; the server enables it by default and direct world tests
+  opt in.
+- Public neutral contact snapshots contain identity, group, mode, hire state,
+  remaining contract time and fee, never cargo. Ship snapshots gained a neutral
+  flag and kind, and the binary delta carries both.
+- `tests/npcs-3h.test.ts` covers counts and group sizes, `&npc=0`, brain routes,
+  privateer hire/mode/expiry, cargo secrecy and looting, boarding a same-navy
+  neutral, binary deltas and 30-real-minute replacement.
+
+### Measurements
+
+- Twenty neutral hulls and one player, 600 ticks (2.4 game hours): **0.54 ms**
+  per world tick average, **11.59 ms** worst tick, 66 neutral route plans, 16
+  of 20 hulls under way at the end.
+- The same room for 4,000 ticks (16 game hours): **0.39 ms** per world tick
+  average, **9.12 ms** worst tick, 337 route plans, 18 of 20 hulls under way.
+  The recovery path and group followers keep the traffic moving without the
+  whole-map route cost seen in the first draft (84 ms/tick).
+- The first benchmark run exposed and fixed three real problems: repeated
+  all-map route plans, followers re-planning every few seconds, and neutral
+  hulls starting with empty provisions so they could not get under way.
+- New b3 tests: 8 tests in `npcs-3h.test.ts`; the full suite is **501/501**.
+
+### Checks
+
+- `npm test`: **501/501 passing**.
+- `npm run build`: passed.
+- `npm run test:e2e`: passed with the real client and GameRoom (`HARNESS OK`).
+- No browser is available in this workspace: no visual review, real touch
+  events, separate physical device or real Cloudflare frame timing was
+  measured. The harness uses jsdom and a Pixi stub, not rendered pixels.

@@ -138,7 +138,7 @@ test("3G another player sees only navy and class for my fire ship", () => {
   const seen = visibleStateFor(world, "beta").ships
     .find((ship) => ship[0] === alphaFire.id);
   assert.ok(seen);
-  assert.equal(seen.length, 9);
+  assert.equal(seen.length, 11);
   assert.equal(seen[1], "fireShip");
   assert.equal(seen[6], "British");
   const ownView = visibleStateFor(world, "alpha").fleet

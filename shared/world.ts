@@ -198,10 +198,12 @@ import {
   shipPrice,
 } from "./shipRules.js";
 import {
+  TRADE_GOOD_IDS,
   isCargoGoodId,
   isGoodId,
   isResourceId,
   goodName,
+  type CargoGoodId,
   type GoodId,
 } from "./data/goods.js";
 import {
@@ -372,6 +374,22 @@ export interface World {
   portStorage: Map<string, GoodsAmounts>;
   /** Resource stock held by NPC merchants, by port. */
   npcStocks: Map<string, GoodsAmounts>;
+  /** 3H-c: neutral merchants, whalers and privateers, never player property. */
+  npcShips: Ship[];
+  /** A test/dev room may switch the whole neutral traffic layer off with &npc=0. */
+  npcEnabled: boolean;
+  /** Neutral hulls waiting to return after being lost or claimed. */
+  npcReplacements: NpcReplacement[];
+  /** Next internal neutral hull number; replacement hulls get a fresh id. */
+  nextNpcId: number;
+  /** Last game time the 2 Hz neutral brain ran. */
+  npcLastBrainGameMs: number;
+  /** Count of neutral route plans, for the 3H-c load check. */
+  npcPlans: number;
+  /** Outcome counters for neutral route planning, for the 3H-c load check. */
+  npcPlanResults: { ok: number; land: number; empty: number; outside: number };
+  /** Round-robin position for the one neutral route plan per brain tick. */
+  npcPlanCursor: number;
   /** The current regional trends and per-port price factors. */
   priceState: PriceState;
   /** Game time of the next production cycle. */
@@ -465,7 +483,24 @@ export type ShipSnapshot = [
   navy: NavyId,
   dockedPortId: string | null,
   waitingPortId: string | null,
+  /** 3H-c: neutral traffic, rendered with its own colour and sheet. */
+  npc: 0 | 1,
+  npcKind: NpcKind | null,
 ];
+
+export type NpcKind = "merchant" | "whaler" | "privateer";
+
+/** Public neutral identity. Cargo is deliberately absent until it is looted. */
+export interface NpcContactSnapshot {
+  id: string;
+  kind: NpcKind;
+  groupId: string;
+  homePortId: string | null;
+  hiredBy: string | null;
+  mode: "patrol" | "escort" | "raid";
+  contractRemainingGameSeconds: number;
+  fee: number;
+}
 
 /** What a player may see of one port's trade. */
 export interface PortTradeSnapshot {
@@ -821,6 +856,8 @@ export interface StateMessage {
   go?: GameOverState;
   /** New own trail points since the last update, never another player's. */
   trailAdds?: Record<string, Array<[number, number]>>;
+  /** 3H-c: visible neutral identities, never their cargo. */
+  npcs?: NpcContactSnapshot[];
   /** Own trails that ended or were cleared since the last update. */
   trailReset?: string[];
   /** Own lost-ship X marks, kept until the game ends. */
@@ -836,6 +873,18 @@ export interface WorldOptions {
   hungerMultiplier?: number;
   /** Fixed room seed for repeatable prices. */
   priceSeed?: number;
+  /** Neutral traffic is opt-in for direct world tests; the server defaults it on. */
+  npcs?: boolean;
+}
+
+/** One neutral hull due to return after a loss or a claim. */
+export interface NpcReplacement {
+  kind: "merchant" | "whaler" | "privateer";
+  groupId: string;
+  homePortId: string;
+  /** Spawn slot, so a replacement keeps a different berth. */
+  slot: number;
+  dueGameMs: number;
 }
 
 function hashText(text: string): number {
@@ -888,7 +937,7 @@ export function createWorld(roomCode = "main", options: WorldOptions = {}): Worl
     : options.hungerMultiplier ?? settings.trade.testHungerMultiplier;
   const priceSeed = options.priceSeed ?? hashText(roomCode);
 
-  return {
+  const world: World = {
     tick: 0,
     gameSeconds: 0,
     gameMs: 0,
@@ -955,7 +1004,19 @@ export function createWorld(roomCode = "main", options: WorldOptions = {}): Worl
     abandonedShips: [],
     boardingFights: new Map(),
     sinkingShips: [],
+    npcShips: [],
+    // Direct world tests stay fast and deterministic. The server opts in by
+    // default, and a test/dev room can still ask for &npc=1.
+    npcEnabled: options.npcs === true,
+    npcReplacements: [],
+    nextNpcId: 1,
+    npcLastBrainGameMs: 0,
+    npcPlans: 0,
+    npcPlanResults: { ok: 0, land: 0, empty: 0, outside: 0 },
+    npcPlanCursor: 0,
   };
+  if (world.npcEnabled) spawnNeutralTraffic(world);
+  return world;
 }
 
 /** A small deterministic hash, so a returning player gets the same berth. */
@@ -1041,6 +1102,569 @@ function startSpot(
 /** Distance between two map points, in km. */
 function distanceKm(a: { x: number; y: number }, b: { x: number; y: number }): number {
   return Math.hypot(a.x - b.x, a.y - b.y);
+}
+
+
+/** Neutral traffic belongs to nobody, so it uses one reserved owner key. */
+const NPC_OWNER = "npc";
+
+const NPC_MERCHANT_NAMES = [
+  "Hannah", "Lively", "Betsey", "Friendship", "Dolphin", "Sally",
+  "Polly", "Nancy", "Peggy", "Adventure", "Supply", "Good Intent",
+];
+const NPC_WHALER_NAMES = [
+  "Jason", "Nantucket", "Tryal", "Amazon", "Hope", "Britannia",
+];
+const NPC_PRIVATEER_NAMES = ["Swift", "Rover", "Vixen"];
+
+/** A deterministic neutral spawn point just outside a port's anchorage. */
+function npcSpawnSpot(
+  world: World,
+  port: PlacedPort,
+  slot: number,
+  random: () => number,
+): { x: number; y: number; headingRad: number } {
+  const base = portStartCentre(port);
+  for (let attempt = 0; attempt < 28; attempt += 1) {
+    const degrees = slot * 137.508 + attempt * 19 + random() * 11;
+    const distance = 1.2 + random() * 2.8;
+    const x = base.x + Math.sin(degrees * DEG) * distance;
+    const y = base.y - Math.cos(degrees * DEG) * distance;
+    if (!isInsideMapFrame(x, y) || isLandAt(x, y)) continue;
+    if (!hasOffshoreClearance(x, y, 0.45)) continue;
+    if (world.npcShips.some((other) => distanceKm(other, { x, y }) < 1.2)) continue;
+    return {
+      x,
+      y,
+      headingRad: Math.atan2(port.anchorage.x - x, port.anchorage.y - y),
+    };
+  }
+  return {
+    x: base.x,
+    y: base.y,
+    headingRad: Math.atan2(port.anchorage.x - base.x, port.anchorage.y - base.y),
+  };
+}
+
+function npcCargoTonnes(kind: "merchant" | "whaler" | "privateer", random: () => number): number {
+  const low = kind === "whaler" ? settings.npcs.whalerCargoMinTonnes : settings.npcs.merchantCargoMinTonnes;
+  const high = kind === "whaler" ? settings.npcs.whalerCargoMaxTonnes : settings.npcs.merchantCargoMaxTonnes;
+  return Math.round(low + random() * Math.max(0, high - low));
+}
+
+/** Create one neutral hull. The caller decides when it enters world.npcShips. */
+function createNeutralShip(
+  world: World,
+  kind: "merchant" | "whaler" | "privateer",
+  groupId: string,
+  homePort: PlacedPort,
+  slot: number,
+  random: () => number,
+  leaderId?: string,
+): Ship {
+  const id = `npc-${world.nextNpcId++}`;
+  const classId: ShipClassId = kind === "privateer" ? "raider" : "trade";
+  const spot = npcSpawnSpot(world, homePort, slot, random);
+  const names = kind === "privateer"
+    ? NPC_PRIVATEER_NAMES
+    : kind === "whaler"
+      ? NPC_WHALER_NAMES
+      : NPC_MERCHANT_NAMES;
+  const name = names[(slot + world.nextNpcId) % names.length];
+  const ship = createShip(id, classId, spot.x, spot.y, spot.headingRad, "British", name);
+  ship.isNpc = true;
+  ship.npcKind = kind;
+  ship.npcGroupId = groupId;
+  ship.npcGroupLeaderId = leaderId;
+  ship.npcHomePortId = homePort.id;
+  ship.npcDestinationPortId = null;
+  ship.npcNextDecisionGameMs = 0;
+  ship.npcMode = "patrol";
+  ship.npcHiredBy = null;
+  ship.npcContractUntilGameMs = 0;
+  ship.npcEscortTargetId = null;
+  ship.npcFee = kind === "privateer" ? settings.npcs.privateerFee : 0;
+  ship.autoAnchor = false;
+  ship.stance = kind === "privateer" ? "engage" : "avoid";
+  // Neutrals are not in a player's hunger path, so they must start with full
+  // provisions and stores or the sailing model treats them as too weak to move.
+  ship.stores = fullStores(shipSpecFor(ship));
+  // Cargo lives in the ordinary hold, but it is never put in a public snapshot.
+  if (kind !== "privateer") {
+    const tonnes = npcCargoTonnes(kind, random);
+    const good: CargoGoodId = kind === "whaler"
+      ? "whaleOil"
+      : TRADE_GOOD_IDS[Math.floor(random() * TRADE_GOOD_IDS.length)] ?? "hides";
+    ship.stores.cargo[good] = tonnes;
+  }
+  world.npcShips.push(ship);
+  return ship;
+}
+
+/** The initial neutral traffic: 12 merchants, two whaling groups, 3 privateers. */
+function spawnNeutralTraffic(world: World): void {
+  const random = createSeededRandom(hashText(world.roomCode) ^ 0x6a09e667);
+  const ports = PLACED_PORTS.length > 0 ? PLACED_PORTS : [];
+  if (ports.length === 0) return;
+  for (let index = 0; index < settings.npcs.merchantCount; index += 1) {
+    const port = ports[index % ports.length];
+    if (port) createNeutralShip(world, "merchant", "merchants", port, index, random);
+  }
+  for (let group = 0; group < settings.npcs.whalerGroups; group += 1) {
+    const groupId = `whalers-${group + 1}`;
+    const port = ports[(group * 7 + 1) % ports.length];
+    if (!port) continue;
+    const size = settings.npcs.whalerGroupSizes[group] ?? 2;
+    let leaderId: string | undefined;
+    for (let member = 0; member < size; member += 1) {
+      const ship = createNeutralShip(
+        world,
+        "whaler",
+        groupId,
+        port,
+        20 + group * 5 + member,
+        random,
+        leaderId,
+      );
+      leaderId ??= ship.id;
+    }
+  }
+  for (let index = 0; index < settings.npcs.privateerCount; index += 1) {
+    const port = ports[(index * 9 + 5) % ports.length];
+    if (port) createNeutralShip(world, "privateer", `privateers-${index + 1}`, port, 40 + index, random);
+  }
+}
+
+function npcDestinationPort(world: World, ship: Ship, excludeId?: string | null): PlacedPort {
+  // Coastal trade stays local. Planning a Jamaica-to-Brazil route for a
+  // 40-crew merchant was both unrealistic and far too expensive at 2 Hz.
+  const nearby = PLACED_PORTS.filter((port) =>
+    distanceKm(ship, port.anchorage) <= settings.npcs.voyageRangeKm,
+  );
+  const ports = nearby.length > 0 ? nearby : PLACED_PORTS;
+  const seed = hashText(`${ship.id}:${Math.floor(world.gameMs / (10 * 60 * 1000))}`);
+  let index = seed % ports.length;
+  if (ports.length > 1 && (ports[index]?.id === ship.npcHomePortId || ports[index]?.id === excludeId)) {
+    index = (index + 1) % ports.length;
+  }
+  return ports[index] ?? PLACED_PORTS[0]!;
+}
+
+interface NpcPlanBudget {
+  left: number;
+}
+
+function npcPlanAllowed(budget?: NpcPlanBudget): boolean {
+  if (!budget) return true;
+  if (budget.left <= 0) return false;
+  budget.left -= 1;
+  return true;
+}
+
+/** An offshore cruise point for a lone local trader with no second port near. */
+function npcCruisePoint(world: World, ship: Ship): { x: number; y: number } {
+  const seed = hashText(`${ship.id}:${Math.floor(world.gameMs / (15 * 60 * 1000))}`);
+  for (let attempt = 0; attempt < 32; attempt += 1) {
+    const angle = ((seed % 360) + attempt * 37) * DEG;
+    const distance = 12 + ((seed >>> 8) % 12) + attempt * 0.4;
+    const x = ship.x + Math.sin(angle) * distance;
+    const y = ship.y - Math.cos(angle) * distance;
+    if (!isInsideMapFrame(x, y) || isLandAt(x, y)) continue;
+    if (!hasOffshoreClearance(x, y, 0.6)) continue;
+    return { x, y };
+  }
+  return { x: ship.x, y: ship.y };
+}
+
+/** A point away from the goal a stopped neutral was trying to reach. */
+function npcRecoveryPoint(
+  world: World,
+  ship: Ship,
+  blockedGoal: { x: number; y: number } | undefined,
+): { x: number; y: number } {
+  if (blockedGoal) {
+    const away = Math.atan2(ship.x - blockedGoal.x, -(ship.y - blockedGoal.y));
+    for (let attempt = 0; attempt < 20; attempt += 1) {
+      const angle = away + (attempt % 2 === 0 ? 1 : -1) * Math.ceil(attempt / 2) * 0.25;
+      const distance = 12 + attempt * 0.8;
+      const x = ship.x + Math.sin(angle) * distance;
+      const y = ship.y - Math.cos(angle) * distance;
+      if (!isInsideMapFrame(x, y) || isLandAt(x, y)) continue;
+      if (!hasOffshoreClearance(x, y, 0.6)) continue;
+      return { x, y };
+    }
+  }
+  return npcCruisePoint(world, ship);
+}
+
+/** Give a neutral hull a fresh planned course to a port anchorage. */
+function sendNpcToPort(
+  world: World,
+  ship: Ship,
+  port: PlacedPort,
+  budget?: NpcPlanBudget,
+): boolean {
+  ship.npcDestinationPortId = port.id;
+  // Neutral traffic meets a port at its offshore rendezvous. The anchorage
+  // itself is a shallow, crowded pilotage problem that is not modelled here.
+  const base = portStartCentre(port);
+  const goal = { x: base.x, y: base.y };
+  if (!npcPlanAllowed(budget)) return false;
+  if (installRoute(world, NPC_OWNER, ship, goal, "point", null, true)) return true;
+  const sea = nearestSeaPoint(goal, isLandAt, 50, isInsideMapFrame);
+  if (!sea || !npcPlanAllowed(budget)) return false;
+  return installRoute(world, NPC_OWNER, ship, sea, "point", null, true);
+}
+
+function npcCourseGoalNear(ship: Ship, goal: { x: number; y: number }, toleranceKm: number): boolean {
+  return Boolean(ship.route && distanceKm(ship.route.goal, goal) <= toleranceKm);
+}
+
+function sendNpcToPoint(
+  world: World,
+  ship: Ship,
+  goal: { x: number; y: number },
+  budget?: NpcPlanBudget,
+): boolean {
+  if (npcCourseGoalNear(ship, goal, settings.npcs.followReplanKm)) return true;
+  if (!npcPlanAllowed(budget)) return false;
+  return installRoute(world, NPC_OWNER, ship, goal, "point", null, true);
+}
+
+function npcGroupLeader(world: World, ship: Ship): Ship | undefined {
+  if (!ship.npcGroupLeaderId) return undefined;
+  return world.npcShips.find((other) =>
+    other.id === ship.npcGroupLeaderId && !other.abandoned && !other.npcClaimed,
+  );
+}
+
+/** Position an escort or formation follower beside the hull it protects. */
+function npcFollowGoal(target: Ship, offsetKm: number): { x: number; y: number } {
+  return {
+    x: target.x - Math.sin(target.headingRad) * offsetKm,
+    y: target.y + Math.cos(target.headingRad) * offsetKm,
+  };
+}
+
+function expireNpcContract(world: World, ship: Ship): void {
+  if (!ship.npcHiredBy || !ship.npcContractUntilGameMs) return;
+  if (world.gameMs < ship.npcContractUntilGameMs) return;
+  const playerId = ship.npcHiredBy;
+  ship.npcHiredBy = null;
+  ship.npcContractUntilGameMs = 0;
+  ship.npcEscortTargetId = null;
+  ship.npcMode = "patrol";
+  ship.route = null;
+  ship.order = null;
+  pushNotice(world, playerId, `${ship.name}'s privateer contract has ended.`);
+}
+
+function scheduleNpcReplacement(world: World, ship: Ship): void {
+  const due = world.gameMs +
+    settings.npcs.replacementRealMinutes * 60 * 1000 * settings.time.sailingTimeScale;
+  world.npcReplacements.push({
+    kind: ship.npcKind ?? "merchant",
+    groupId: ship.npcGroupId ?? "merchants",
+    homePortId: ship.npcHomePortId ?? PLACED_PORTS[0]?.id ?? "",
+    slot: world.nextNpcId,
+    dueGameMs: due,
+  });
+}
+
+function replaceDueNpcs(world: World): void {
+  if (world.npcReplacements.length === 0) return;
+  const due = world.npcReplacements.filter((entry) => entry.dueGameMs <= world.gameMs);
+  if (due.length === 0) return;
+  world.npcReplacements = world.npcReplacements.filter((entry) => entry.dueGameMs > world.gameMs);
+  const random = createSeededRandom(hashText(`${world.roomCode}:${world.gameMs}:npcs`));
+  for (const entry of due) {
+    const port = PORT_BY_ID.get(entry.homePortId);
+    if (!port) continue;
+    createNeutralShip(world, entry.kind, entry.groupId, port, entry.slot, random);
+  }
+}
+
+/** A privateer's simple choices, run at the 2 Hz neutral cadence. */
+function steerNeutralShip(world: World, ship: Ship, budget?: NpcPlanBudget): void {
+  if (ship.abandoned || ship.surrendered || ship.boardingShipId || world.boardingFights.has(ship.id)) return;
+  expireNpcContract(world, ship);
+  // Neutral hulls do not use the player's startRouteLeg arrival path, so clear
+  // their own finished leg here instead of lying stopped with a stale route.
+  if (ship.route) {
+    const arrivalKm = ship.route.arrivalKm ?? settings.sailing.arrivalRadiusKm;
+    if (distanceKm(ship, ship.route.goal) <= arrivalKm + 0.25) {
+      ship.route = null;
+      ship.order = null;
+      ship.helmTarget = undefined;
+      ship.arrived = true;
+    }
+  }
+
+  // A neutral hull pinned on a coast gets one seaward course of its own. The
+  // player stuck-recovery path is deliberately not used for neutral traffic.
+  if (ship.speedKnots >= 0.5) {
+    ship.npcStoppedSinceGameMs = undefined;
+    ship.npcRecovering = false;
+    ship.npcRecoveryGoal = undefined;
+  } else {
+    ship.npcStoppedSinceGameMs ??= world.gameMs;
+    if (world.gameMs - ship.npcStoppedSinceGameMs >=
+      settings.npcs.stuckRecoverGameMinutes * 60 * 1000) {
+      ship.npcRecoveryGoal = npcRecoveryPoint(world, ship, ship.route?.goal);
+      ship.route = null;
+      ship.order = null;
+      ship.helmTarget = undefined;
+      ship.npcDestinationPortId = null;
+      ship.npcRecovering = true;
+      ship.npcStoppedSinceGameMs = world.gameMs;
+    }
+  }
+  if (ship.npcRecovering) {
+    if (!ship.route && !ship.order) {
+      const goal = ship.npcRecoveryGoal ?? npcCruisePoint(world, ship);
+      if (sendNpcToPoint(world, ship, goal, budget)) ship.npcRecoveryGoal = undefined;
+    }
+    return;
+  }
+
+  if (ship.npcKind === "privateer" && ship.npcMode === "escort" && ship.npcHiredBy) {
+    const target = shipsForOwner(world, ship.npcHiredBy).find((candidate) =>
+      candidate.id === ship.npcEscortTargetId,
+    );
+    if (target) {
+      sendNpcToPoint(world, ship, npcFollowGoal(target, settings.npcs.escortOffsetKm), budget);
+      return;
+    }
+  }
+
+  if (ship.npcKind === "privateer" && ship.npcMode === "raid" && ship.npcHiredBy) {
+    let best: Ship | null = null;
+    let bestKm: number = settings.npcs.sightKm;
+    for (const other of world.npcShips) {
+      if (other === ship || other.abandoned || other.npcClaimed) continue;
+      if (other.npcKind === "privateer") continue;
+      const km = distanceKm(ship, other);
+      if (km < bestKm) {
+        bestKm = km;
+        best = other;
+      }
+    }
+    if (best) {
+      sendNpcToPoint(world, ship, npcFollowGoal(best, 0.6), budget);
+      return;
+    }
+  }
+
+  const leader = npcGroupLeader(world, ship);
+  if (leader) {
+    // A whaler follower copies the group leader's one planned track instead of
+    // re-planning its own route every few seconds. That keeps the 2 Hz brain
+    // cheap and the group visibly together.
+    if (leader.route) {
+      if (!ship.route || ship.route.plannedTick !== leader.route.plannedTick) {
+        ship.route = { ...leader.route, index: 0 };
+        ship.order = { type: "sailTo", x: leader.route.goal.x, y: leader.route.goal.y };
+        ship.helmTarget = undefined;
+      }
+    } else if (!ship.route && !ship.order) {
+      sendNpcToPoint(world, ship, npcFollowGoal(leader, 0.35), budget);
+    }
+    return;
+  }
+
+  if (ship.route || ship.order) return;
+
+  if (ship.npcKind === "privateer") {
+    const nearby = PLACED_PORTS.filter((port) =>
+      port.id !== ship.npcDestinationPortId &&
+      distanceKm(ship, port.anchorage) <= settings.npcs.voyageRangeKm
+    );
+    if (nearby.length === 0) {
+      sendNpcToPoint(world, ship, npcCruisePoint(world, ship), budget);
+      return;
+    }
+    const port = npcDestinationPort(world, ship, ship.npcDestinationPortId);
+    sendNpcToPort(world, ship, port, budget);
+    return;
+  }
+
+  let destination = ship.npcDestinationPortId
+    ? PORT_BY_ID.get(ship.npcDestinationPortId) ?? null
+    : null;
+  // Reaching the rendezvous clears the destination, otherwise the next brain
+  // tick would order the same short approach again and again. The old id is
+  // still used as the exclusion when choosing the next port.
+  if (destination && distanceKm(ship, portStartCentre(destination)) <= 4) destination = null;
+  if (!destination) {
+    const nearby = PLACED_PORTS.filter((port) =>
+      port.id !== ship.npcDestinationPortId &&
+      distanceKm(ship, port.anchorage) <= settings.npcs.voyageRangeKm
+    );
+    if (nearby.length === 0) {
+      sendNpcToPoint(world, ship, npcCruisePoint(world, ship), budget);
+      return;
+    }
+    destination = npcDestinationPort(world, ship, ship.npcDestinationPortId);
+  }
+  sendNpcToPort(world, ship, destination, budget);
+}
+
+/** The neutral layer's 2 Hz brain and its 30-real-minute replacement queue. */
+export function updateNpcs(world: World): void {
+  if (!world.npcEnabled) return;
+  const intervalMs = settings.time.sailingTimeScale * 1000 / settings.npcs.brainHz;
+  if (world.gameMs - world.npcLastBrainGameMs < intervalMs) return;
+  world.npcLastBrainGameMs = world.gameMs;
+  replaceDueNpcs(world);
+  const ships = [...world.npcShips];
+  const start = ships.length > 0 ? world.npcPlanCursor % ships.length : 0;
+  const budget: NpcPlanBudget = { left: settings.npcs.routePlansPerBrain };
+  for (let index = 0; index < ships.length; index += 1) {
+    const ship = ships[(start + index) % ships.length]!;
+    if (ship.damage.hull <= 0 || ship.npcClaimed) {
+      world.npcShips = world.npcShips.filter((candidate) => candidate.id !== ship.id);
+      if (!ship.npcClaimed) scheduleNpcReplacement(world, ship);
+      continue;
+    }
+    steerNeutralShip(world, ship, budget);
+  }
+  world.npcPlanCursor = ships.length > 0 ? (start + 1) % ships.length : 0;
+}
+
+/** Test/dev view of the neutral layer, without any cargo contents. */
+export function npcSummary(world: World): Array<{ id: string; kind: string; groupId: string; hiredBy: string | null }> {
+  return world.npcShips.map((ship) => ({
+    id: ship.id,
+    kind: ship.npcKind ?? "merchant",
+    groupId: ship.npcGroupId ?? "",
+    hiredBy: ship.npcHiredBy ?? null,
+  }));
+}
+
+function npcLooterFor(
+  world: World,
+  playerId: string,
+  shipId: string | undefined,
+): Ship | null {
+  const own = shipsForOwner(world, playerId);
+  if (shipId) return own.find((candidate) => candidate.id === shipId) ?? null;
+  return own[0] ?? null;
+}
+
+/**
+ * Loot and leave: take what fits from a neutral hull that has been boarded or
+ * abandoned, and leave the empty hull afloat. The cargo is never exposed before
+ * this point.
+ */
+export function lootNpcShip(
+  world: World,
+  playerId: string,
+  targetId: unknown,
+  looterId?: unknown,
+): boolean {
+  if (world.gameOver || typeof targetId !== "string") return false;
+  const target = world.npcShips.find((candidate) => candidate.id === targetId) ??
+    world.abandonedShips.find((candidate) => candidate.id === targetId);
+  if (!target || !target.isNpc) return false;
+  if (!target.abandoned && !target.surrendered && target.crew > 0) {
+    pushNotice(world, playerId, "Board or accept the surrender before looting.");
+    return false;
+  }
+  const looter = npcLooterFor(world, playerId, typeof looterId === "string" ? looterId : undefined);
+  if (!looter) return false;
+  if (Math.hypot(looter.x - target.x, looter.y - target.y) > settings.combat.transferRangeM / 1000) {
+    pushNotice(world, playerId, "Move alongside to loot.");
+    return false;
+  }
+  const capacities = shipStoreCapacities(shipSpecFor(looter));
+  let free = Math.max(0, capacities.cargo - cargoTotal(looter.stores.cargo));
+  let taken = 0;
+  for (const good of TRADE_GOOD_IDS) {
+    const amount = Math.max(0, target.stores.cargo[good] ?? 0);
+    if (amount <= 0 || free <= 0) continue;
+    const moved = Math.min(amount, free);
+    target.stores.cargo[good] = amount - moved;
+    looter.stores.cargo[good] = (looter.stores.cargo[good] ?? 0) + moved;
+    free -= moved;
+    taken += moved;
+  }
+  if (taken <= 0) {
+    pushNotice(world, playerId, target.npcLooted ? "That prize has already been looted." : "No cargo space for the prize goods.");
+    return false;
+  }
+  target.npcLooted = true;
+  pushNotice(world, playerId, `Looted ${Math.round(taken)} tonnes and left ${target.name} afloat.`);
+  return true;
+}
+
+/** Hire a privateer for six game days. Escorts follow one of the player's ships. */
+export function hirePrivateer(
+  world: World,
+  playerId: string,
+  shipId: unknown,
+  mode: unknown,
+  escortTargetId?: unknown,
+): boolean {
+  if (world.gameOver || typeof shipId !== "string") return false;
+  if (mode !== "escort" && mode !== "raid" && mode !== "patrol") return false;
+  const owner = world.owners.get(playerId);
+  const privateer = world.npcShips.find((ship) => ship.id === shipId && ship.npcKind === "privateer");
+  if (!owner || !privateer || privateer.abandoned || privateer.npcClaimed) return false;
+  if (privateer.npcHiredBy && privateer.npcHiredBy !== playerId &&
+    world.gameMs < (privateer.npcContractUntilGameMs ?? 0)) {
+    pushNotice(world, playerId, "That privateer is under another contract.");
+    return false;
+  }
+  const own = shipsForOwner(world, playerId);
+  const near = own.some((ship) =>
+    Math.hypot(ship.x - privateer.x, ship.y - privateer.y) <= settings.fog.sightRangeKm,
+  );
+  if (!near) return false;
+  const target = typeof escortTargetId === "string"
+    ? own.find((ship) => ship.id === escortTargetId) ?? null
+    : null;
+  if (mode === "escort" && !target) return false;
+  const fee = mode === "escort" ? settings.npcs.escortFee : settings.npcs.privateerFee;
+  if (owner.money < fee) {
+    pushNotice(world, playerId, "Not enough money for that contract.");
+    return false;
+  }
+  owner.money -= fee;
+  privateer.npcHiredBy = playerId;
+  privateer.npcMode = mode;
+  privateer.npcEscortTargetId = target?.id ?? null;
+  privateer.npcContractUntilGameMs = world.gameMs + gameCycleMs(settings.npcs.contractGameDays);
+  privateer.npcDestinationPortId = null;
+  privateer.route = null;
+  privateer.order = null;
+  pushNotice(world, playerId, `${privateer.name} hired for six game days (${mode}).`);
+  return true;
+}
+
+/** Change an existing privateer contract, keeping its expiry. */
+export function setPrivateerMode(
+  world: World,
+  playerId: string,
+  shipId: unknown,
+  mode: unknown,
+  escortTargetId?: unknown,
+): boolean {
+  if (world.gameOver || typeof shipId !== "string") return false;
+  if (mode !== "escort" && mode !== "raid" && mode !== "patrol") return false;
+  const privateer = world.npcShips.find((ship) => ship.id === shipId && ship.npcKind === "privateer");
+  if (!privateer || privateer.npcHiredBy !== playerId) return false;
+  if (world.gameMs >= (privateer.npcContractUntilGameMs ?? 0)) return false;
+  const target = typeof escortTargetId === "string"
+    ? shipsForOwner(world, playerId).find((ship) => ship.id === escortTargetId) ?? null
+    : null;
+  if (mode === "escort" && !target) return false;
+  privateer.npcMode = mode;
+  privateer.npcEscortTargetId = target?.id ?? null;
+  privateer.npcDestinationPortId = null;
+  privateer.route = null;
+  privateer.order = null;
+  pushNotice(world, playerId, `${privateer.name} is now on ${mode}.`);
+  return true;
 }
 
 /**
@@ -1303,6 +1927,7 @@ export function resetTestRoom(world: World): World {
     shipClass: world.startShipClass,
     startMoney: world.startMoney,
     hungerMultiplier: world.hungerMultiplier,
+    npcs: world.npcEnabled,
   });
   for (const record of world.playerRecords.values()) {
     const current = shipsForOwner(world, record.id)[0];
@@ -1666,7 +2291,9 @@ function validEngageTarget(
 ): Ship | null {
   if (objective !== "sink" && objective !== "capture") return null;
   const target = shipEntry(world, targetId);
-  if (!target || target.ship.navy === ship.navy || target.ship.deliveryPortId) return null;
+  if (!target || (!target.ship.isNpc && target.ship.navy === ship.navy) || target.ship.deliveryPortId) {
+    return null;
+  }
   if (!ownerCanSeeShip(world, ownerId, target.ship)) return null;
   return target.ship;
 }
@@ -1795,6 +2422,7 @@ function isFriendlyShip(
   other: Ship,
 ): boolean {
   if (other.surrendered || other.abandoned) return false;
+  if (other.isNpc) return false;
   if (otherOwnerId === shooterOwnerId) return true;
   return other.navy === shooterNavy || settings.combat.allies.includes(otherOwnerId);
 }
@@ -3500,6 +4128,7 @@ function routeKnownLand(
   world: World,
   playerId: string,
 ): (x: number, y: number) => boolean {
+  if (playerId === NPC_OWNER) return (x, y) => isLandAt(x, y);
   const chart = world.charts.get(playerId);
   return (x: number, y: number): boolean =>
     Boolean(chart && (chart.all || isCellDiscovered(chart, x, y)) && isLandAt(x, y));
@@ -3577,7 +4206,9 @@ function installRoute(
   goal: { x: number; y: number },
   kind: "point" | "port",
   portId: string | null,
+  npcRoute = false,
 ): boolean {
+  if (playerId === NPC_OWNER) world.npcPlans += 1;
   ship.route = null;
   ship.orderBestDistanceKm = undefined;
   ship.orderLastProgressGameMs = world.gameMs;
@@ -3588,8 +4219,21 @@ function installRoute(
     goal,
     knownLand,
     isInside: isInsideMapFrame,
+    ...(npcRoute
+      ? {
+        maxNodes: settings.npcs.maxRouteNodes,
+        marginKm: settings.npcs.routeMarginKm,
+        gridKm: settings.npcs.routeGridKm,
+      }
+      : {}),
   });
 
+  if (npcRoute) {
+    if (plan.status === "ok") world.npcPlanResults.ok += 1;
+    else if (plan.status === "land") world.npcPlanResults.land += 1;
+    else if (plan.status === "none") world.npcPlanResults.outside += 1;
+    else world.npcPlanResults.empty += 1;
+  }
   if (plan.status === "land") {
     pushNotice(world, playerId, ROUTE_LAND);
     ship.order = null;
@@ -3599,6 +4243,30 @@ function installRoute(
     if (plan.message) pushNotice(world, playerId, plan.message);
     ship.order = null;
     return false;
+  }
+
+  const orderDistanceKm = distanceKm(ship, goal);
+  if (npcRoute) {
+    // Neutral hulls follow the coarse legal legs directly. Smoothing a whole
+    // coastal course for every merchant cost more than the rest of the tick.
+    ship.route = {
+      waypoints: plan.waypoints.map((point) => ({ ...point })),
+      curve: [{ x: ship.x, y: ship.y }, ...plan.waypoints.map((point) => ({ ...point }))],
+      index: 0,
+      goal: { x: goal.x, y: goal.y },
+      kind,
+      arrivalKm: kind === "point" && orderDistanceKm <= settings.sailing.closeApproachOrderKm
+        ? settings.sailing.closeApproachKm
+        : settings.sailing.arrivalRadiusKm,
+      portId,
+      partial: plan.status === "partial",
+      message: plan.message,
+      plannedTick: world.tick,
+    };
+    ship.order = { type: "sailTo", x: goal.x, y: goal.y };
+    ship.helmTarget = { type: "sailTo", x: goal.x, y: goal.y };
+    ship.arrived = false;
+    return true;
   }
 
   const spec = shipSpecFor(ship);
@@ -3619,7 +4287,6 @@ function installRoute(
   const curve = routeWithinCorridor(smoothed, rawPath, settings.route.kinematicCorridorKm)
     ? sampleRouteCurve(smoothed, settings.route.curveSampleKm, settings.route.maxCurvePoints)
     : sampleRouteCurve(rawPath, settings.route.curveSampleKm, settings.route.maxCurvePoints);
-  const orderDistanceKm = distanceKm(ship, goal);
   const route: ShipRoute = {
     // Keep the planner's sparse legal legs for navigation. The sampled curve
     // is the smoothed presentation of the same track and is what the client
@@ -3853,6 +4520,9 @@ function allShips(world: World): Array<{ ownerId: string; ship: Ship }> {
   }
   for (const [ownerId, fleet] of world.botFleets) {
     for (const ship of fleet) ships.push({ ownerId, ship });
+  }
+  for (const ship of world.npcShips) {
+    if (!ship.abandoned && !ship.npcClaimed) ships.push({ ownerId: NPC_OWNER, ship });
   }
   for (const ship of world.abandonedShips) ships.push({ ownerId: "", ship });
   return ships;
@@ -5995,6 +6665,9 @@ function updateCoastSafety(world: World, windFromDeg: number): void {
 /** 3H-b2: warn, then clear an order that has made no progress for too long. */
 function updateStuckRoutes(world: World): void {
   for (const { ownerId, ship } of allShips(world)) {
+    // Neutral hulls use their own 2 Hz brain; the player recovery path would
+    // keep clearing and re-planning their coastal courses.
+    if (ship.isNpc) continue;
     if (
       !ship.route ||
       !ship.order ||
@@ -6124,7 +6797,7 @@ function stepOwnerShip(
     }
   }
 
-  if (ship.route) {
+  if (ship.route && !ship.isNpc) {
     // The helm follows a pure-pursuit point, not the next waypoint vertex.
     // If the order vanished, either finish or take the next point.
     if (!ship.order) startRouteLeg(ship);
@@ -6369,6 +7042,22 @@ function takePrize(
   target.lastAttackedRealMs = undefined;
   target.abandoned = false;
   target.boardingShipId = null;
+  if (target.isNpc) {
+    world.npcShips = world.npcShips.filter((ship) => ship.id !== target.id);
+    world.npcReplacements.push({
+      kind: target.npcKind ?? "merchant",
+      groupId: target.npcGroupId ?? "merchants",
+      homePortId: target.npcHomePortId ?? PLACED_PORTS[0]?.id ?? "",
+      slot: world.nextNpcId,
+      dueGameMs: world.gameMs +
+        settings.npcs.replacementRealMinutes * 60 * 1000 * settings.time.sailingTimeScale,
+    });
+    target.isNpc = false;
+    target.npcClaimed = true;
+    target.npcHiredBy = null;
+    target.npcMode = "patrol";
+    target.npcEscortTargetId = null;
+  }
   target.boardingAttacker = false;
   const wasFlagship = target.isFlagship === true;
   holdPosition(target);
@@ -6830,7 +7519,8 @@ export function boardingOddsFor(
   if (typeof shipId !== "string" || typeof targetId !== "string") return null;
   const ship = shipsForOwner(world, playerId).find((candidate) => candidate.id === shipId);
   const target = shipEntry(world, targetId)?.ship;
-  if (!ship || !target || ship.surrendered || ship.abandoned || target.abandoned || target.navy === ship.navy) {
+  if (!ship || !target || ship.surrendered || ship.abandoned || target.abandoned ||
+    (!target.isNpc && target.navy === ship.navy)) {
     return null;
   }
   if (!ownerCanSeeShip(world, playerId, target)) return null;
@@ -6966,7 +7656,7 @@ export function orderBoarding(
   const targetEntry = shipEntry(world, targetId);
   if (!ship || !targetEntry || !world.players.has(playerId)) return false;
   const target = targetEntry.ship;
-  if (target.navy === ship.navy || target.abandoned || target.surrendered) {
+  if ((!target.isNpc && target.navy === ship.navy) || target.abandoned || target.surrendered) {
     pushNotice(world, playerId, target.abandoned
       ? "Use Claim on an abandoned ship."
       : target.surrendered ? "Use Accept on a surrendered ship." : "That ship cannot be boarded.");
@@ -7862,6 +8552,7 @@ export function stepWorld(
   for (const playerId of world.fleets.keys()) {
     syncPlayerFleets(world, playerId);
   }
+  updateNpcs(world);
   for (const { ship } of allShips(world)) ship.formationStation = false;
   prepareShipCommands(world);
   prepareFleetCommands(world);
@@ -7888,6 +8579,10 @@ export function stepWorld(
     for (const ship of fleet) {
       stepOwnerShip(world, ownerId, ship, dtGameSeconds, windFromDeg);
     }
+  }
+  for (const ship of world.npcShips) {
+    if (ship.abandoned) continue;
+    stepOwnerShip(world, NPC_OWNER, ship, dtGameSeconds, windFromDeg);
   }
   updateTows(world);
 
@@ -8335,6 +9030,7 @@ export function visibleStateFor(
   const allShips: Ship[] = [];
   for (const fleet of world.fleets.values()) allShips.push(...fleet);
   for (const fleet of world.botFleets.values()) allShips.push(...fleet);
+  allShips.push(...world.npcShips.filter((ship) => !ship.abandoned && !ship.npcClaimed));
   for (const entry of world.sinkingShips) {
     if (!allShips.some((ship) => ship.id === entry.ship.id)) allShips.push(entry.ship);
   }
@@ -8354,6 +9050,8 @@ export function visibleStateFor(
       ship.navy,
       ship.dockedPortId,
       ship.waitingPortId,
+      ship.isNpc ? 1 : 0,
+      ship.npcKind ?? null,
     ]);
   }
 
@@ -8771,6 +9469,22 @@ export function visibleStateFor(
     portBattle.push(battleRow);
   }
 
+  const npcContacts: NpcContactSnapshot[] = world.npcShips
+    .filter((ship) => visibleIds.has(ship.id))
+    .map((ship) => ({
+      id: ship.id,
+      kind: ship.npcKind ?? "merchant",
+      groupId: ship.npcGroupId ?? "",
+      homePortId: ship.npcHomePortId ?? null,
+      hiredBy: ship.npcHiredBy ?? null,
+      mode: ship.npcMode ?? "patrol",
+      contractRemainingGameSeconds: Math.max(
+        0,
+        Math.round(((ship.npcContractUntilGameMs ?? 0) - world.gameMs) / 1000),
+      ),
+      fee: ship.npcFee ?? 0,
+    }));
+
   const state: StateMessage = {
     t: "s",
     tick: world.tick,
@@ -8789,6 +9503,7 @@ export function visibleStateFor(
     fleets: includeFleet ? fleetSnapshotsFor(world, playerId) : [],
     groups: world.controlGroups.get(playerId) ?? {},
   };
+  if (npcContacts.length > 0) state.npcs = npcContacts;
   if (Object.keys(trailAdds).length > 0) state.trailAdds = trailAdds;
   if (trailReset.length > 0) state.trailReset = trailReset;
   if ((owner?.lostMarks.length ?? 0) > 0) {

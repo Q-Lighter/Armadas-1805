@@ -313,6 +313,42 @@ Read this file at the start of every prompt, then follow it for the whole sessio
   after playtesting. Later phases add depth, shallows, grounding, tides,
   currents, real weather and night sight; none of those are built here.
 
+## NPC groups
+
+- Neutral traffic is a separate layer from player fleets. A full room has
+  twelve merchant hulls, two whaling groups (two and three hulls) and three
+  privateers. They are marked as neutral for colours, sheets and hostile-target
+  rules even though a neutral hull uses an ordinary ship class. They are not in
+  `botFleets`, which stays the load-test facility.
+- The neutral brain runs at 2 Hz while movement runs every tick. Merchants and
+  whalers pick another port within 60 km (Draft), meet it at an offshore
+  rendezvous rather than the crowded anchorage, and use a bounded coarse local
+  route. A lone trader with no second port nearby cruises to an offshore point
+  and back. Group followers copy the leader's planned track instead of
+  planning their own. A neutral hull pinned on a coast for eight game minutes
+  takes one seaward recovery course; the player stuck-recovery rules do not
+  apply to it.
+- Loot and leave: after a neutral ship is boarded, abandoned or has struck,
+  a player alongside can take what fits in their hold. The cargo is never
+  shown in the public ship or neutral contact snapshot before that point. The
+  emptied hull stays afloat and can still be claimed; claiming removes it from
+  the neutral layer.
+- Privateer contracts: a player may hire a nearby privateer for six game days.
+  The base fee is 1,200 pieces of eight, or 900 for an escort. Modes are patrol,
+  escort and raid. Escort follows one of the player's ships at 1.1 km; raid
+  shadows the nearest neutral trader; patrol wanders near its home port. A
+  privateer is still an ordinary armed hull, so an ordinary attack or board
+  order resolves against it normally. The privateer does not run a second
+  hidden combat AI, and a real privateer prize economy is a later hook.
+- A neutral hull that is sunk or claimed returns after 30 real minutes as a
+  fresh hull in the same group and home port. This is a replacement, not a
+  respawn of the old hull.
+- Test and dev rooms accept `&npc=0` to remove the whole neutral layer and
+  `&npc=1` to put it back. The server enables it by default; direct world tests
+  opt in. All counts, ranges, fees, cargo bands and timers are Draft values in
+  `shared/settings.ts` and may change after playtesting. Real privateer prize
+  courts, alliances and a trade economy are later phases.
+
 ## Elimination and winning
 
 - Every player has exactly one flagship. In a normal room it is the navy's

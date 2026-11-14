@@ -186,8 +186,9 @@ Read this file at the start of every prompt, then follow it for the whole sessio
   defences work until the tier finishes. Costs come from the port's own stock,
   scaled small x0.5, medium x1, large x2: tier 1 = 60 t timber + 20 t repair
   materials; tier 2 = 150 + 50; tier 3 = 300 + 100. One build at a time, started
-  by the owner, no cancellation. Research is a hook; only test and dev rooms
-  unlock it in 3F, so normal rooms show "Needs research".
+  by the owner, no cancellation. The build is allowed only up to the navy's
+  researched Fortification tier; without that research the button says
+  "Needs research".
 - Attack port is a Sink order for a ship or fleet. Ships close to 600 m and
   stand and fire; damage is the pounds of landed shot. Unowned, enemy and other
   navies' ports can be attacked; your own, teammates' and NPC ports cannot.
@@ -230,10 +231,10 @@ Read this file at the start of every prompt, then follow it for the whole sessio
   minimum-crew rule still applies, so it arrives with no crew. Draft: its turn
   rate is 60% of a raider's. It is a SMALL ship for damage, never an armed ship
   for port capture, and can be boarded, captured, claimed and abandoned.
-- Research hook: `fireShipsUnlocked()` is true only in test and dev rooms for
-  now. Normal rooms show "Needs research" in the buy list. It is sold at ports
-  that sell small ships, never at NPC ports, and sails in a fleet; in Convoy it
-  sits in the protected middle with the trade ships.
+- Research: fire ships need the first Fire ships research level. Until then
+  the buy list shows "Needs research: Fire ships". They are sold at ports that
+  sell small ships, never at NPC ports, and sail in a fleet; in Convoy they sit
+  in the protected middle with the trade ships.
 - Ignite now: the crew escape (no loss, no prisoners, crew set to zero). The
   ship keeps its heading, its speed falls to zero over 20 seconds, then it
   drifts with the wind. It burns at strength 100 and nobody fights that fire
@@ -428,6 +429,44 @@ Read this file at the start of every prompt, then follow it for the whole sessio
   concerned, and the receiver is told "You received N ships".
 - The port-ownership hook (`portsForPlayer`) and the allies hook
   (`alliedPlayerIds`) exist and return nothing or nobody for now.
+
+## Research and upgrades
+
+- Each navy has one research tree: 5 shared branches of 5 upgrades, plus 6
+  unique upgrades for that navy. Every navy has 31 upgrades and the same total
+  cost. Levels are L1, L2 and L3, except the three cold-weather items (one level
+  each, 2 units) and Fortification (3, 6 and 12 units). Normal levels cost 1, 2
+  and 4 units. Unique upgrades cost the same as shared ones.
+- One research unit is 100 points (Draft unit size). Research points belong to
+  the navy, so teammates share one pool. The first discovery of a port gives 15
+  small, 25 medium or 40 large points; capturing a port gives 120, 250 or 500;
+  each first 25 km block gives 0.5 points. Reef, depth and weather surveys are
+  hooks. Levels are bought in order, at any time, anywhere.
+- Ship upgrades are researched for the navy but fitted to each ship at a port.
+  Fitting costs 5% of the ship's price per level fitted (Draft), reduced by the
+  Shipyard and capped at a 60% total discount, and the ship stays docked for one
+  game day. "Upgrade ship" fits every unlocked ship level; the Fleet panel can
+  upgrade every docked ship. A newly ordered ship arrives with every unlocked
+  ship upgrade fitted for free. A captured ship keeps its fitted levels and they
+  keep working.
+- Port upgrades apply automatically to every port the navy owns; no per-port
+  building except Fortification. A captured port has the port upgrades its
+  previous owner's navy had researched and keeps its Fortification tier.
+- Capturing a ship or port that has an upgrade unlocks that upgrade's first level
+  for the capturing navy if it has none. Each repeat capture gives one capture
+  point; every 3 points unlock the next level, up to the highest level seen on
+  a captured ship or port. This works for shared and foreign unique upgrades.
+- Each effect is ACTIVE or a HOOK. ACTIVE effects are wired into sailing, sight,
+  gunnery, boarding, fitting, prices, storage, repairs, supplies and cargo. A
+  HOOK stores and reports its level but changes nothing until its system arrives
+  (weather, night sight, depth, income, healing, port log, alliances, trade
+  routes, silver shares).
+- Every ship has its own sight radius: 25 km base, 15 km for a fire ship,
+  multiplied by Chronometer and charts. It is used for discovery and spotting.
+  The night multiplier is a hook.
+- EFFECTS ARE DRAFT unless marked AGREED. All numbers are in
+  `shared/settings.ts`; the tree names and ACTIVE/HOOK labels are in
+  `shared/data/research.ts`.
 
 ## Ways of working
 

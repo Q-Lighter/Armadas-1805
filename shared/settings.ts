@@ -895,6 +895,103 @@ export const settings = {
     },
   },
 
+  /**
+   * 3I research. AGREED costs and sources are marked; effect numbers are
+   * Draft. One unit is this many points. Every upgrade is bought with units.
+   */
+  research: {
+    /** Draft: one research unit costs this many points. */
+    pointsPerUnit: 100,
+    /** AGREED level costs in units, except the cold items and Fortification. */
+    levelCostUnits: [1, 2, 4] as const,
+    /** AGREED: each cold-weather item has one level and costs two units. */
+    coldCostUnits: 2,
+    /** AGREED: Fortification tiers cost 3, 6 and 12 units. */
+    fortificationCostUnits: [3, 6, 12] as const,
+    /** AGREED first-discovery points by port size. */
+    foundPortPoints: { S: 15, M: 25, L: 40 },
+    /** AGREED capture points by port size. */
+    capturedPortPoints: { S: 120, M: 250, L: 500 },
+    /** AGREED: each newly discovered 25 km block gives this many points. */
+    blockPoints: 0.5,
+    /** Draft: a ship fitting costs this share of its price per missing level. */
+    fittingPriceSharePerLevel: 0.05,
+    /** AGREED: fitting keeps the ship docked for one game day. */
+    fittingDockGameDays: 1,
+    /** AGREED: total price discounts never exceed 60% (multiplier floor 0.4). */
+    minimumPriceMultiplier: 0.4,
+    /** Draft: the share of a prize's surviving crew that joins by default. */
+    prizeJoinBase: 0.7,
+    /** AGREED: three capture points unlock the next level. */
+    capturePointsPerLevel: 3,
+    /** Draft first-hour simulation: three ports found, blocks and one small port. */
+    firstHour: {
+      foundPortSizes: ["S", "M", "L"] as const,
+      discoveredBlocks: 100,
+      capturedPortSize: "S" as const,
+    },
+
+    /** Draft: every numeric effect, indexed by level (L1, L2, L3). */
+    effects: {
+      copperSpeed: [0.03, 0.05, 0.08],
+      improvedRiggingDeg: [2, 4, 6],
+      chronometerSight: [0.05, 0.10, 0.15],
+      nightWatchSight: [0.10, 0.20, 0.30],
+      masterPilotsDamage: [0.25, 0.50, 0.75],
+      masterPilotsFreeSeconds: [0.1, 0.2, 0.3],
+      gunCarriagesReload: [0.05, 0.10, 0.15],
+      gunneryHit: [1.03, 1.06, 1.10],
+      specialistChainGrape: [2.2, 2.4, 2.6],
+      specialistGrapeRangeM: [350, 400, 450],
+      fireShipIgnitionBonusM: [25, 25, 25],
+      fireShipSpot: [1, 0.8, 0.8],
+      fireShipPrice: [1, 1, 0.7],
+      hotShotChance: [1 / 20, 1 / 15, 1 / 10],
+      coldSuppliesDays: [10, 10, 10],
+      lightningReduction: [0.33, 0.66, 0.90],
+      stormDamageReduction: [0.10, 0.20, 0.30],
+      shipyardDiscount: [0.10, 0.20, 0.30],
+      warehouseStorage: [0.25, 0.50, 0.75],
+      harbourSpeed: [0.20, 0.40, 0.60],
+      marketIncome: [0.10, 0.20, 0.30],
+      hospitalCost: [0.25, 0.50, 0.75],
+      lookoutRange: [0.20, 0.40, 0.60],
+      signalRotation: [0.20, 0.35, 0.50],
+      boardingStrength: [1.05, 1.10, 1.15],
+      prizeCrewBonus: [0.10, 0.20, 0.30],
+      blockadeSupplies: [0.05, 0.10, 0.15],
+      dockyardSeaRepair: [0.10, 0.20, 0.30],
+      weatherlyStorm: [0.10, 0.15, 0.20],
+      jamaicaIncome: [0.10, 0.20, 0.30],
+      hondurasTimber: [0.25, 0.50, 0.75],
+      navigationActs: [0.18, 0.21, 0.25],
+      saneHullSpeed: [0.03, 0.05, 0.08],
+      raidingSpeed: [0.05, 0.10, 0.15],
+      biscuitSupplies: [0.05, 0.10, 0.15],
+      caribbeanPlanters: [0.25, 0.50, 0.75],
+      pacificIncome: [0.10, 0.20, 0.30],
+      francoDutchDiscount: [0.25, 0.50, 0.75],
+      heavyTimbersHull: [0.02, 0.04, 0.06],
+      havanaRepairMaterial: [0.10, 0.20, 0.30],
+      stoutBatteriesHealth: [0.10, 0.20, 0.30],
+      silverOutput: [0.25, 0.50, 0.75],
+      riverPlateHides: [0.25, 0.50, 0.75],
+      riverPlateIncome: [0.10, 0.20, 0.30],
+      treasureCargo: [0.04, 0.08, 0.12],
+      treasureSilverShare: [0.06, 0.07, 0.08],
+      shallowDraughtM: [0.1, 0.2, 0.3],
+      roomyHolds: [0.04, 0.08, 0.12],
+      dykeFortCost: [0.10, 0.20, 0.30],
+      guianasOutput: [0.10, 0.20, 0.30],
+      guianasIncome: [0.10, 0.20, 0.30],
+      caribbeanFreePortsIncome: [0.10, 0.20, 0.30],
+      bankingPurchase: [0.03, 0.06, 0.09],
+      /** Base per-ship sight radii, AGREED 25 km and 15 km for a fire ship. */
+      shipSightKm: 25,
+      fireShipSightKm: 15,
+    },
+  },
+
   /** Goods, port production, prices and trading. Draft values. */
   trade: {
     /** Posted base prices in pieces of eight per tonne. */

@@ -122,6 +122,14 @@
       "types": "./dist/screenLayout.d.ts",
       "default": "./dist/screenLayout.js"
     },
+    "./research": {
+      "types": "./dist/research.d.ts",
+      "default": "./dist/research.js"
+    },
+    "./research-data": {
+      "types": "./dist/data/research.d.ts",
+      "default": "./dist/data/research.js"
+    },
     "./fog-paint": {
       "types": "./dist/fogPaint.d.ts",
       "default": "./dist/fogPaint.js"

@@ -56,6 +56,8 @@ function changedFields(previous: StateMessage, current: StateMessage, includeFle
   fields.sf = current.sf ?? [];
   fields.abandoned = current.abandoned ?? [];
   fields.burning = current.burning ?? [];
+  fields.burningStrength = current.burningStrength ?? {};
+  fields.nightLightsOff = current.nightLightsOff ?? [];
   fields.grappled = current.grappled ?? [];
   fields.sinking = current.sinking ?? [];
   fields.log = current.log ?? [];
@@ -209,8 +211,11 @@ export function applyStateDelta(base: StateMessage, delta: StateDelta): StateMes
   if ("go" in delta.fields && delta.fields.go === undefined) delete next.go;
   // The full state omits empty optional lists. Keep the delta result identical
   // rather than leaving a harmless but different empty array behind.
-  for (const key of ["events", "sf", "abandoned", "burning", "grappled", "sinking", "log"] as const) {
+  for (const key of ["events", "sf", "abandoned", "burning", "nightLightsOff", "grappled", "sinking", "log"] as const) {
     if (Array.isArray(next[key]) && (next[key] as unknown[]).length === 0) delete next[key];
+  }
+  if (next.burningStrength && Object.keys(next.burningStrength).length === 0) {
+    delete next.burningStrength;
   }
   const ships = new Map(base.ships.map((ship) => [ship[0], ship]));
   for (const id of delta.removed) ships.delete(id);

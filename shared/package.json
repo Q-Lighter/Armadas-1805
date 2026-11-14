@@ -265,6 +265,10 @@
     "./render-motion": {
       "types": "./dist/renderMotion.d.ts",
       "default": "./dist/renderMotion.js"
+    },
+    "./fire-visuals": {
+      "types": "./dist/fireVisuals.d.ts",
+      "default": "./dist/fireVisuals.js"
     }
   },
   "files": [

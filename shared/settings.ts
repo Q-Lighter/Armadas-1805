@@ -59,6 +59,48 @@ export const settings = {
     lowResolutionScale: 0.7,
   },
 
+  /** Draft: burning-ship ink, the effect gallery and the lights-off ring. */
+  effects: {
+    /** Close zoom: flames and their smoke are drawn in this much screen. */
+    closeZoomMaxKm: 2.5,
+    /** Mid zoom: an orange glow and smoke, up to this view width. */
+    midZoomMaxKm: 30,
+    /** A flame is at least this many pixels tall at close zoom. */
+    closeFlameMinPx: 5,
+    /** Flames along the deck: 3 at low strength and 5 at full strength. */
+    closeFlameCountMin: 3,
+    closeFlameCountMax: 5,
+    /** How often flame shapes flicker, in cycles per second. */
+    flickerHz: 5.5,
+    /** Flame alpha stays well above the 0.5 draw-plan requirement. */
+    flameAlphaMin: 0.58,
+    flameAlphaMax: 0.94,
+    /** Mid-zoom orange glow radius in pixels. */
+    midGlowMinPx: 10,
+    midGlowMaxPx: 18,
+    midGlowAlpha: 0.72,
+    /** Far zoom: the pulsing orange dot is at least this many px across. */
+    farDotDiameterPx: 14,
+    farDotAlphaMin: 0.62,
+    farDotAlphaMax: 0.94,
+    farDotPulseHz: 0.9,
+    /** Smoke puffs, drift and fade. */
+    smokePuffs: 3,
+    smokeDriftPx: 15,
+    smokeAlpha: 0.3,
+    /** A short orange-white ignition flash after a ship catches fire. */
+    ignitionFlashMs: 650,
+    ignitionFlashRadiusPx: 20,
+    /** Effect gallery: seconds for each named effect. */
+    gallerySeconds: 6,
+    /** Lights-off night ring at the agreed 5 km spotting range. */
+    lightsRingDashCount: 48,
+    lightsRingDashShare: 0.48,
+    lightsRingWidthPx: 1.3,
+    lightsRingAlpha: 0.22,
+    lightsRingLabel: "Seen within 5 km",
+  },
+
   /** The chart: the flat map frame and how it is turned into tiles. */
   map: {
     /** The map frame, in degrees. x grows east and y grows south. */

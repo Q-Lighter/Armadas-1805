@@ -3056,3 +3056,50 @@ hulls by about 19 degrees in 60 seconds just because a neighbour was inside the
 - No browser is available in this workspace, so these are measured proxies, not
   a visual review. The harness cannot dispatch real `PointerEvent`s and the
   second client is a second jsdom page in the same process, not a second device.
+
+## Session 3H-a: fire visuals, effect gallery, lights ring
+
+**Date:** 2026-11-14
+**Branch:** main
+
+### What was asked
+
+Make burning ships visible at close, mid and far zoom, add a test/dev effect
+gallery, and draw a night lights-off spotting ring with a card lantern state.
+
+### Cause of the invisible fire
+
+The burning ink was built correctly, but each ship's `statusInk` stayed at its
+local origin. It was attached directly to `fleetLayer`, so its coordinates were
+read as world-screen `0,0`; the flames, glow and smoke were drawn at the
+top-left of the chart rather than on the hull, and were clipped away in normal
+views. The ink was also below hulls added later. A second, smaller error hid
+the effect when the quality governor dropped `fireGlow`, even though fire is
+important state rather than optional polish.
+
+### What was built
+
+- A dedicated `shipFxLayer` above every hull and a `shipLabelLayer` above the
+  fire. Ignition flash, flame polygons, glow, smoke and the lights-off ring are
+  painted in screen coordinates in that layer. Quality never removes fire.
+- `shared/fireVisuals.ts`: browser-free close/mid/far fire plans, the 12-entry
+  gallery sequence, six-second cycling and the night ring rule.
+- Fire shape counts and opacity: 3-5 orange/red flame polygons at 1 km, an orange
+  glow plus smoke at 5 km, and a 14 px pulsing dot at 50-200 km.
+- Test/dev **Effect gallery** button: fire at three strengths, smoke, ignition,
+  splash, hit flash, damage smoke, tow rope, white flag, lantern glow and
+  flagship pennant, six seconds each with its name.
+- Night **Seen within 5 km** dashed ring for any ship with lights off; own live
+  sight circles are unchanged. The ship card lights row remains On/Off.
+- Visible burning ships now carry their strength in state and the delta, and
+  visible lights-off ships are identified at night. Neither exposes cargo.
+
+### Checks
+
+- `npm test`: **476/476 passing**, including fire plans at 1, 5, 50 and 200 km,
+  alpha above 0.5, far dot at least 10 px, layer order and night-ring gating.
+- `npm run build`: passed.
+- `npm run test:e2e`: passed with the real client and real GameRoom.
+- No browser is available, so the gallery, flame look and ring were not viewed
+  on screen. The draw plans, real client display tree and jsdom harness were
+  checked instead.

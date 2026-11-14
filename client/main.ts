@@ -7,6 +7,12 @@
 import { Application, Container, Graphics, RenderTexture, Sprite, Text, Texture } from "pixi.js";
 import { settings } from "@naval/shared/settings";
 import { MotionTrack } from "@naval/shared/render-motion";
+import {
+  fireVisualPlan,
+  galleryFrame,
+  lightsRingPlan,
+  type FireShape,
+} from "@naval/shared/fire-visuals";
 import { MAP_HEIGHT_KM, MAP_WIDTH_KM, lonLatToMap } from "@naval/shared/map";
 import {
   blockIdForCell,
@@ -680,11 +686,15 @@ interface ShipView {
   running: boolean;
   abandoned: boolean;
   burning: boolean;
+  fireStrength: number;
+  ignitionAt: number | null;
   sinking: boolean;
   lantern: boolean;
+  lightsOff: boolean;
   isFlagship: boolean;
   statusInk: Graphics;
   statusLabel: Text;
+  lightsLabel: Text;
   statusKey: string;
 }
 
@@ -791,6 +801,7 @@ async function start(): Promise<void> {
   const fireShipButtonsOut = element<HTMLElement>("fire-ship-buttons");
   const shipLightsOut = element<HTMLElement>("ship-lights");
   const shipLightsText = element<HTMLElement>("ship-lights-text");
+  const effectGalleryButton = element<HTMLButtonElement>("effect-gallery");
   const debugLogToggle = element<HTMLButtonElement>("debug-log-toggle");
   const debugLogLines = element<HTMLElement>("debug-log-lines");
   const fireTargetBox = element<HTMLElement>("fire-ship-target");
@@ -1144,6 +1155,22 @@ async function start(): Promise<void> {
   marker.visible = false;
 
   const fleetLayer = new Container();
+  // Fire and status ink sit above every hull, and their labels above the ink.
+  // Keeping these as separate stage layers prevents a later hull from covering
+  // a burning ship and guarantees labels stay readable.
+  const shipFxLayer = new Container();
+  const shipFxInk = new Graphics();
+  shipFxLayer.addChild(shipFxInk);
+  const shipLabelLayer = new Container();
+  const galleryLayer = new Container();
+  const galleryInk = new Graphics();
+  const galleryLabel = new Text({
+    text: "",
+    style: { fontFamily: "Source Sans 3", fontSize: 16, fill: INK_COLOR },
+  });
+  galleryLabel.anchor.set(0.5, 0);
+  galleryLayer.addChild(galleryInk, galleryLabel);
+  galleryLayer.visible = false;
   const fleetGroupLayer = new Container();
   const fleetFormationInk = new Graphics();
   fleetGroupLayer.addChild(fleetFormationInk);
@@ -1178,8 +1205,11 @@ async function start(): Promise<void> {
     portLayer,
     lastSeenLayer,
     fleetLayer,
+    shipFxLayer,
+    shipLabelLayer,
     fleetGroupLayer,
     combatFxInk,
+    galleryLayer,
     windLayer,
     borderLayer,
     grainLayer,
@@ -1253,8 +1283,12 @@ async function start(): Promise<void> {
   let surrenderFlags = new Set<string>();
   let abandonedFlags = new Set<string>();
   let burningFlags = new Set<string>();
+  let burningStrength = new Map<string, number>();
+  let nightLightsOff = new Set<string>();
   let sinkingFlags = new Set<string>();
   let grappledPairs: Array<[string, string]> = [];
+  let effectGalleryOn = false;
+  let effectGalleryStartedAt = 0;
   let surrenderConfirmShipId: string | null = null;
   let latestRoster: Array<{ id: string; name: string; navy: NavyId }> = [];
   let latestOut: StateMessage["out"] | null = null;
@@ -2672,6 +2706,7 @@ async function start(): Promise<void> {
       ship.runLabel.visible = false;
       ship.statusInk.visible = false;
       ship.statusLabel.visible = false;
+      ship.lightsLabel.visible = false;
     }
     fleetGroupLayer.visible = used > 0;
   }
@@ -2733,6 +2768,153 @@ async function start(): Promise<void> {
       }
     }
     combatFx.length = write;
+  }
+
+  /** Paint a shared fire plan into any Pixi Graphics. */
+  function paintFireShapes(graphics: Graphics, shapes: readonly FireShape[]): void {
+    for (const shape of shapes) {
+      if (shape.kind === "flame" && shape.points && shape.points.length >= 6) {
+        graphics.poly(shape.points);
+      } else {
+        graphics.circle(shape.x, shape.y, shape.radius);
+      }
+      graphics.fill({ color: shape.color, alpha: shape.alpha });
+    }
+  }
+
+  /** Live fire, the ignition flash and the lights-off spotting ring. */
+  function drawShipEffects(ship: ShipView, screen: { x: number; y: number }, now: number): void {
+    if (!ship.hull.visible) {
+      ship.lightsLabel.visible = false;
+      return;
+    }
+    shippingEffects: {
+      const canvasPx = Math.min(app.screen.width, app.screen.height);
+      if (ship.burning) {
+        const plan = fireVisualPlan({
+          screenX: screen.x,
+          screenY: screen.y,
+          viewportPx: canvasPx,
+          kmAcross: view.kmAcross,
+          strength: ship.fireStrength,
+          headingRad: ship.heading,
+          windFromDeg: windFrom,
+          timeMs: now,
+          seed: ship.id,
+        });
+        paintFireShapes(shipFxInk, plan.shapes);
+        if (ship.ignitionAt !== null) {
+          const age = now - ship.ignitionAt;
+          if (age >= 0 && age <= settings.effects.ignitionFlashMs) {
+            const t = age / settings.effects.ignitionFlashMs;
+            shipFxInk.circle(screen.x, screen.y, 7 + t * settings.effects.ignitionFlashRadiusPx)
+              .fill({ color: 0xffd47a, alpha: (1 - t) * 0.9 });
+            shipFxInk.circle(screen.x, screen.y, 4 + t * 9)
+              .fill({ color: 0xff6a1e, alpha: (1 - t) * 0.75 });
+          }
+        }
+      }
+      const night = gameClockAt(clockShownMs).daylight < 0.25;
+      const ring = lightsRingPlan(night, !ship.lightsOff);
+      if (!ring.shown) {
+        ship.lightsLabel.visible = false;
+        break shippingEffects;
+      }
+      const radius = ring.radiusKm * scale();
+      const count = settings.effects.lightsRingDashCount;
+      const dash = (Math.PI * 2) / count * settings.effects.lightsRingDashShare;
+      for (let index = 0; index < count; index += 1) {
+        const start = (index / count) * Math.PI * 2;
+        shipFxInk
+          .moveTo(screen.x + Math.cos(start) * radius, screen.y + Math.sin(start) * radius)
+          .lineTo(
+            screen.x + Math.cos(start + dash) * radius,
+            screen.y + Math.sin(start + dash) * radius,
+          );
+      }
+      shipFxInk.stroke({
+        width: settings.effects.lightsRingWidthPx,
+        color: 0xd9b25c,
+        alpha: settings.effects.lightsRingAlpha,
+      });
+      ship.lightsLabel.text = ring.label;
+      ship.lightsLabel.position.set(screen.x + 13, screen.y + 16);
+      ship.lightsLabel.visible = true;
+    }
+  }
+
+  /** Six-second parade of every effect, independent of world state. */
+  function drawEffectGallery(now: number): void {
+    galleryInk.clear();
+    galleryLayer.visible = effectGalleryOn;
+    galleryLabel.visible = effectGalleryOn;
+    if (!effectGalleryOn) return;
+    const frame = galleryFrame(now - effectGalleryStartedAt);
+    const cx = app.screen.width / 2;
+    const cy = app.screen.height / 2;
+    const t = frame.elapsedMs / 1000;
+    const effect = frame.effect;
+    galleryLabel.text = `${effect.name} · ${Math.ceil(frame.remainingMs / 1000)}s`;
+    galleryLabel.position.set(cx, Math.min(app.screen.height - 34, cy + 74));
+    const puff = (x: number, y: number, radius: number, color: number, alpha: number): void => {
+      galleryInk.circle(x, y, radius).fill({ color, alpha });
+    };
+    if (effect.id.startsWith("fire")) {
+      const plan = fireVisualPlan({
+        screenX: cx,
+        screenY: cy,
+        viewportPx: Math.min(app.screen.width, app.screen.height),
+        kmAcross: 1,
+        strength: effect.strength ?? 100,
+        headingRad: 0,
+        windFromDeg: 315,
+        timeMs: now,
+        seed: effect.id,
+      });
+      paintFireShapes(galleryInk, plan.shapes);
+    } else if (effect.id === "smoke") {
+      for (let index = 0; index < 5; index += 1) {
+        puff(cx + index * 8, cy - index * 10, 8 + index * 3, 0x34383a, 0.32 - index * 0.04);
+      }
+    } else if (effect.id === "ignition") {
+      const flash = (t % 1);
+      galleryInk.circle(cx, cy, 8 + flash * 34).fill({ color: 0xffb02e, alpha: 0.75 * (1 - flash) });
+      galleryInk.circle(cx, cy, 4 + flash * 17).fill({ color: 0xfff2c4, alpha: 0.9 * (1 - flash) });
+    } else if (effect.id === "splash") {
+      galleryInk.circle(cx, cy, 8 + t * 22).stroke({ width: 2, color: 0x3d5866, alpha: 0.55 });
+      galleryInk.circle(cx, cy, 4 + t * 12).stroke({ width: 1.5, color: 0x7c948a, alpha: 0.65 });
+    } else if (effect.id === "hit") {
+      puff(cx, cy, 6 + t * 7, 0x7d2a20, Math.max(0, 0.75 - t * 0.12));
+      for (let index = 0; index < 8; index += 1) {
+        const angle = (index / 8) * Math.PI * 2;
+        galleryInk.moveTo(cx, cy).lineTo(cx + Math.cos(angle) * 24, cy + Math.sin(angle) * 24)
+          .stroke({ width: 1.5, color: 0x7d2a20, alpha: Math.max(0, 0.6 - t * 0.08) });
+      }
+    } else if (effect.id === "damage-smoke") {
+      for (let index = 0; index < 4; index += 1) {
+        puff(cx - 12 + index * 8, cy - 8 - index * 7, 7 + index * 3, 0x5f6568, 0.28 - index * 0.04);
+      }
+    } else if (effect.id === "tow") {
+      puff(cx - 38, cy, 15, 0x9b2d2d, 0.9);
+      puff(cx + 38, cy, 15, 0x2d2a28, 0.9);
+      for (let index = 1; index < 12; index += 2) {
+        const x = cx - 22 + index * 4;
+        puff(x, cy + Math.sin(index) * 2, 1.5, 0x4a3220, 0.9);
+      }
+    } else if (effect.id === "white-flag") {
+      galleryInk.moveTo(cx, cy + 28).lineTo(cx, cy - 30).stroke({ width: 2, color: INK_COLOR });
+      galleryInk.poly([cx + 1, cy - 30, cx + 28, cy - 24, cx + 1, cy - 14])
+        .fill({ color: 0xfffdf2, alpha: 0.98 }).stroke({ width: 1, color: INK_COLOR });
+    } else if (effect.id === "lantern") {
+      puff(cx, cy, 34, 0xffd27a, 0.13);
+      puff(cx, cy, 18, 0xffd27a, 0.25);
+      puff(cx, cy, 6, 0xffe6a8, 0.9);
+      galleryInk.rect(cx - 7, cy - 12, 14, 24).fill({ color: 0x4a3220, alpha: 0.9 });
+    } else if (effect.id === "pennant") {
+      galleryInk.moveTo(cx, cy + 28).lineTo(cx, cy - 32).stroke({ width: 2, color: INK_COLOR });
+      galleryInk.poly([cx, cy - 32, cx + 30, cy - 24, cx, cy - 16])
+        .fill({ color: 0x8c1d1d, alpha: 0.95 });
+    }
   }
 
   function portAt(screenX: number, screenY: number): PortMarkerPlan | null {
@@ -4616,6 +4798,11 @@ async function start(): Promise<void> {
       style: { fontFamily: "Source Sans 3", fontSize: 9, fill: 0x4a3a2a },
     });
     statusLabel.visible = false;
+    const lightsLabel = new Text({
+      text: settings.effects.lightsRingLabel,
+      style: { fontFamily: "Source Sans 3", fontSize: 9, fill: 0xd9b25c },
+    });
+    lightsLabel.visible = false;
     return {
       id: "",
       hull,
@@ -4637,17 +4824,21 @@ async function start(): Promise<void> {
       running: false,
       abandoned: false,
       burning: false,
+      fireStrength: 0,
+      ignitionAt: null,
       sinking: false,
       lantern: false,
+      lightsOff: false,
       isFlagship: false,
       statusInk,
       statusLabel,
+      lightsLabel,
       statusKey: "",
     };
   }
 
   function shipDisplayChildren(ship: ShipView): Array<Container | Graphics | Text> {
-    return [ship.hull, ship.ring, ship.flag, ship.flagshipInk, ship.runInk, ship.runLabel, ship.statusInk, ship.statusLabel];
+    return [ship.hull, ship.ring, ship.flag, ship.flagshipInk, ship.runInk, ship.runLabel, ship.statusInk, ship.statusLabel, ship.lightsLabel];
   }
 
   function updateShipStores(ship: OwnShipSnapshot | null): void {
@@ -6077,6 +6268,14 @@ async function start(): Promise<void> {
     );
     abandonedFlags = idList(state.abandoned);
     burningFlags = idList(state.burning);
+    burningStrength = new Map(
+      state.burningStrength && typeof state.burningStrength === "object"
+        ? Object.entries(state.burningStrength)
+          .filter(([, value]) => typeof value === "number" && Number.isFinite(value))
+          .map(([id, value]) => [id, Math.max(0, Math.min(100, value as number))])
+        : [],
+    );
+    nightLightsOff = idList(state.nightLightsOff);
     sinkingFlags = idList(state.sinking);
     grappledPairs = Array.isArray(state.grappled)
       ? state.grappled.filter((pair): pair is [string, string] =>
@@ -6269,10 +6468,16 @@ async function start(): Promise<void> {
         ship.runLabel.visible = false;
         ship.statusInk.clear();
         ship.statusLabel.visible = false;
+        ship.lightsLabel.visible = false;
         ship.hull.alpha = 1;
         for (const child of shipDisplayChildren(ship)) {
           if (!child.parent) fleetLayer.addChild(child);
         }
+        // Hulls and normal ink stay in the fleet layer; fire status moves above
+        // every hull and its labels above the ink.
+        if (ship.statusInk.parent !== shipFxLayer) shipFxLayer.addChild(ship.statusInk);
+        if (ship.statusLabel.parent !== shipLabelLayer) shipLabelLayer.addChild(ship.statusLabel);
+        if (ship.lightsLabel.parent !== shipLabelLayer) shipLabelLayer.addChild(ship.lightsLabel);
         ships.set(id, ship);
       }
 
@@ -6291,10 +6496,18 @@ async function start(): Promise<void> {
       ship.surrendered = ownRow?.surrendered === true || surrenderFlags.has(id);
       ship.running = ownRow?.running === true;
       ship.abandoned = abandonedFlags.has(id) || ownRow?.abandoned === true;
+      const wasBurning = ship.burning;
       ship.burning = burningFlags.has(id) || ownRow?.burning === true;
+      ship.fireStrength = ship.burning
+        ? burningStrength.get(id) ?? ownRow?.fireStrength ?? 100
+        : 0;
+      ship.ignitionAt = ship.burning
+        ? wasBurning ? ship.ignitionAt : performance.now()
+        : null;
       ship.sinking = sinkingFlags.has(id);
+      ship.lightsOff = ownRow ? ownRow.lightsOn === false : nightLightsOff.has(id);
       const night = gameClockAt(clockShownMs).daylight < 0.25;
-      ship.lantern = night && (ownRow ? ownRow.lightsOn !== false : true) && !ship.burning;
+      ship.lantern = night && !ship.lightsOff && !ship.burning;
       ship.isFlagship = ownRow?.isFlagship === true;
       if (ship.sinking) ship.surrendered = false;
       if (id === selectedShipId) own = snapshot;
@@ -7285,6 +7498,16 @@ async function start(): Promise<void> {
   });
   testToolsClose.addEventListener("click", closeTestTools);
   perfToggle.addEventListener("click", () => setPerfVisible(!perfVisible));
+  effectGalleryButton.addEventListener("click", () => {
+    effectGalleryOn = !effectGalleryOn;
+    effectGalleryStartedAt = performance.now();
+    effectGalleryButton.setAttribute("aria-pressed", String(effectGalleryOn));
+    effectGalleryButton.textContent = effectGalleryOn ? "Stop effect gallery" : "Effect gallery";
+    if (!effectGalleryOn) {
+      galleryLayer.visible = false;
+      galleryInk.clear();
+    }
+  });
   debugLogToggle.addEventListener("click", () => {
     debugLogOpen = !debugLogOpen;
     debugLogLines.hidden = !debugLogOpen;
@@ -7596,6 +7819,7 @@ async function start(): Promise<void> {
     }
 
     const flagScale = clamp(8 / Math.max(1, view.kmAcross), 0.65, 1.6);
+    shipFxInk.clear();
     for (const ship of ships.values()) {
       safeLayer(`ship ${ship.id}`, () => {
         const motion = ship.motion.sample(renderAtSeconds);
@@ -7634,7 +7858,7 @@ async function start(): Promise<void> {
         // 3D status layers are pooled graphics. Rebuild the ink only when the
         // flags or zoom bucket change, not on every animation frame.
         const abandonedSize = abandonedMarkerSize(view.kmAcross);
-        const statusKey = `${ship.classId}|${ship.abandoned}|${ship.burning}|${ship.sinking}|${ship.lantern}|${quality.fireGlow}|${abandonedSize}`;
+        const statusKey = `${ship.classId}|${ship.abandoned}|${ship.sinking}|${ship.lantern}|${abandonedSize}`;
         if (statusKey !== ship.statusKey) {
           ship.statusKey = statusKey;
           ship.statusInk.clear();
@@ -7647,17 +7871,12 @@ async function start(): Promise<void> {
           if (ship.classId === "fireShip") {
             ship.statusInk.circle(0, 0, 3.2).fill({ color: 0x2d2a28, alpha: 0.95 });
           }
-          if (ship.lantern && quality.fireGlow) {
+          if (ship.lantern) {
             ship.statusInk.circle(0, 0, 9).fill({ color: 0xffd27a, alpha: 0.12 });
             ship.statusInk.circle(0, 0, 2).fill({ color: 0xffe6a8, alpha: 0.7 });
           }
-          if (ship.burning && quality.fireGlow) {
-            ship.statusInk.circle(0, 0, 12).fill({ color: 0xe06a1f, alpha: 0.22 });
-            ship.statusInk.circle(0, 0, 6).fill({ color: 0xff9b2e, alpha: 0.55 });
-            ship.statusInk.circle(-5, -12, 4).fill({ color: 0x2d2a28, alpha: 0.25 });
-            ship.statusInk.circle(4, -18, 6).fill({ color: 0x2d2a28, alpha: 0.18 });
-          }
         }
+        ship.statusInk.position.set(screen.x, screen.y);
         ship.statusLabel.visible = false;
         ship.hull.alpha = ship.sinking ? 0.5 : 1;
         if (ship.abandoned) {
@@ -7671,9 +7890,9 @@ async function start(): Promise<void> {
           ship.statusLabel.visible = ship.hull.visible;
         }
         ship.statusInk.visible = ship.hull.visible && (
-          ship.abandoned || ship.classId === "fireShip" ||
-          ship.lantern || (ship.burning && quality.fireGlow)
+          ship.abandoned || ship.classId === "fireShip" || ship.lantern
         );
+        safeLayer(`ship effects ${ship.id}`, () => drawShipEffects(ship, screen, now));
       });
     }
 
@@ -7714,6 +7933,7 @@ async function start(): Promise<void> {
     safeLayer("trails", () => drawTrails());
     safeLayer("combat range", () => drawCombatRange());
     safeLayer("combat effects", () => drawCombatFx(now));
+    safeLayer("effect gallery", () => drawEffectGallery(now));
 
     for (let index = 0; index < lastSeenViews.length; index += 1) {
       const markerView = lastSeenViews[index];
@@ -7802,6 +8022,7 @@ async function start(): Promise<void> {
       selectedShipId: () => string;
       fleet: () => Array<Record<string, unknown>>;
       tick: () => number;
+      gallery: () => { on: boolean; name: string; remainingSeconds: number };
     };
   };
   (window as ArmadaTestWindow).__armadaTest = {
@@ -7817,6 +8038,19 @@ async function start(): Promise<void> {
     },
     drawPlan: () => [...ships.values()].map((ship) => {
       const screen = toScreen(ship.x, ship.y);
+      const fire = ship.burning
+        ? fireVisualPlan({
+            screenX: screen.x,
+            screenY: screen.y,
+            viewportPx: Math.min(app.screen.width, app.screen.height),
+            kmAcross: view.kmAcross,
+            strength: ship.fireStrength,
+            headingRad: ship.heading,
+            windFromDeg: windFrom,
+            timeMs: performance.now(),
+            seed: ship.id,
+          })
+        : null;
       return {
         id: ship.id,
         classId: ship.classId,
@@ -7828,6 +8062,13 @@ async function start(): Promise<void> {
         visible: ship.hull.visible,
         own: ship.own,
         burning: ship.burning,
+        fireBand: fire?.band ?? null,
+        fireShapes: fire?.shapes.length ?? 0,
+        fireAlphaMax: fire ? Math.max(0, ...fire.shapes.map((shape) => shape.alpha)) : 0,
+        lightsRing: lightsRingPlan(
+          gameClockAt(clockShownMs).daylight < 0.25,
+          !ship.lightsOff,
+        ).shown,
         sinking: ship.sinking,
         abandoned: ship.abandoned,
         lantern: ship.lantern,
@@ -7840,6 +8081,14 @@ async function start(): Promise<void> {
     selectedShipId: () => selectedShipId,
     fleet: () => fleetShips.map((ship) => ({ ...ship })),
     tick: () => latestTick,
+    gallery: () => {
+      const frame = galleryFrame(performance.now() - effectGalleryStartedAt);
+      return {
+        on: effectGalleryOn,
+        name: effectGalleryOn ? frame.effect.name : "",
+        remainingSeconds: effectGalleryOn ? Math.ceil(frame.remainingMs / 1000) : 0,
+      };
+    },
   };
   window.addEventListener("error", (event) => {
     reportClientError(event.error ?? event.message, "window error");

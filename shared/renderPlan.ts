@@ -9,6 +9,7 @@ import {
   type ChartBlock,
 } from "./fog.js";
 import { settings } from "./settings.js";
+import { fireVisualPlan, type FireShape } from "./fireVisuals.js";
 import {
   layoutPortMarkers,
   type PortInfo,
@@ -27,6 +28,7 @@ export type RenderLayerName =
   | "liveCoast"
   | "ports"
   | "ships"
+  | "shipEffects"
   | "weather";
 
 export interface RenderBounds {
@@ -57,6 +59,18 @@ export interface ShipRenderPlanInput {
   ships: readonly { x: number; y: number }[];
   /** Only found ports; hidden ports must never be passed here. */
   ports?: readonly PortInfo[];
+  /** Burning ships, so the fire ink is part of the same layer plan. */
+  fires?: readonly {
+    id: string;
+    x: number;
+    y: number;
+    headingRad: number;
+    strength: number;
+  }[];
+  /** Wind direction the smoke drifts from. */
+  windFromDeg?: number;
+  /** Fixed animation time for a reproducible plan. */
+  timeMs?: number;
 }
 
 export interface ShipRenderPlan {
@@ -64,6 +78,8 @@ export interface ShipRenderPlan {
   activeBlocks: number;
   /** Visible found-port markers and their shifted labels. */
   ports: PortMarkerPlan[];
+  /** Fire ink in the top ship-effect layer. */
+  fires: FireShape[];
 }
 
 function union(a: RenderBounds | null, b: RenderBounds): RenderBounds {
@@ -245,6 +261,33 @@ export function buildShipRenderPlan(input: ShipRenderPlanInput): ShipRenderPlan 
     }
   }
 
+  let fireBounds: RenderBounds | null = null;
+  const fires: FireShape[] = [];
+  for (const fire of input.fires ?? []) {
+    const point = toScreen(fire.x, fire.y);
+    if (point.x < 0 || point.x > input.width || point.y < 0 || point.y > input.height) continue;
+    const plan = fireVisualPlan({
+      screenX: point.x,
+      screenY: point.y,
+      viewportPx: Math.min(input.width, input.height),
+      kmAcross: input.view.kmAcross,
+      strength: fire.strength,
+      headingRad: fire.headingRad,
+      windFromDeg: input.windFromDeg ?? settings.weather.windFromDeg,
+      timeMs: input.timeMs ?? 0,
+      seed: fire.id,
+    });
+    for (const shape of plan.shapes) {
+      fires.push(shape);
+      fireBounds = union(fireBounds, {
+        x: shape.x - shape.radius,
+        y: shape.y - shape.radius,
+        width: shape.radius * 2,
+        height: shape.radius * 2,
+      });
+    }
+  }
+
   const liveVisible = sightExtent !== null && sightExtent.width > 0 && sightExtent.height > 0;
   const portMarkers = layoutPortMarkers({
     width: input.width,
@@ -266,6 +309,7 @@ export function buildShipRenderPlan(input: ShipRenderPlanInput): ShipRenderPlan 
   return {
     activeBlocks: active.length,
     ports: portMarkers,
+    fires,
     layers: [
       layer("paper", true, screen, 1),
       layer("dimSea", dimSea !== null, dimSea, dimSeaItems),
@@ -278,6 +322,7 @@ export function buildShipRenderPlan(input: ShipRenderPlanInput): ShipRenderPlan 
       layer("liveCoast", liveVisible && liveCoast !== null, liveCoast, liveCoastItems, sightExtent),
       layer("ports", portMarkers.length > 0, portBounds, portMarkers.length),
       layer("ships", shipBounds !== null, shipBounds, shipItems),
+      layer("shipEffects", fires.length > 0, fireBounds, fires.length),
       layer("weather", true, screen, settings.view.windStreakCount),
     ],
   };

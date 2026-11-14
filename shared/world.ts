@@ -791,6 +791,10 @@ export interface StateMessage {
   /** 3D public flags. No crew, prisoner or fire-strength numbers. */
   abandoned?: string[];
   burning?: string[];
+  /** Visible burning ships' strength, for scaling the fire ink. */
+  burningStrength?: Record<string, number>;
+  /** Visible ships with their lights off at night, for the 5 km ring. */
+  nightLightsOff?: string[];
   grappled?: Array<[string, string]>;
   sinking?: string[];
   /** 3E: this player's own elimination, never another player's. */
@@ -8245,6 +8249,14 @@ export function visibleStateFor(
   const burningFlags = ships
     .filter((snapshot) => shipEntry(world, snapshot[0])?.ship.fire?.burning === true)
     .map((snapshot) => snapshot[0]);
+  const burningStrength: Record<string, number> = {};
+  for (const id of burningFlags) {
+    const strength = shipEntry(world, id)?.ship.fire?.strength ?? 0;
+    burningStrength[id] = Number(Math.max(0, Math.min(100, strength)).toFixed(1));
+  }
+  const nightLightsOff = clock.isDay ? [] : ships
+    .filter((snapshot) => shipEntry(world, snapshot[0])?.ship.lightsOff === true)
+    .map((snapshot) => snapshot[0]);
   const grappled: Array<[string, string]> = [];
   for (const fight of world.boardingFights.values()) {
     if (visibleIds.has(fight.attackerId) && visibleIds.has(fight.defenderId)) {
@@ -8391,6 +8403,8 @@ export function visibleStateFor(
     .map((record) => ({ id: record.id, name: record.name, navy: record.navy }));
   if (abandonedFlags.length > 0) state.abandoned = abandonedFlags;
   if (burningFlags.length > 0) state.burning = burningFlags;
+  if (burningFlags.length > 0) state.burningStrength = burningStrength;
+  if (nightLightsOff.length > 0) state.nightLightsOff = nightLightsOff;
   if (grappled.length > 0) state.grappled = grappled;
   if (sinkingFlags.length > 0) state.sinking = sinkingFlags;
   if (!includeFleet) {

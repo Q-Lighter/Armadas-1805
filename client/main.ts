@@ -1123,7 +1123,7 @@ async function start(): Promise<void> {
   let layoutApplyFrame = 0;
   const UNPLACED_LAYOUT_IDS = new Set([
     "capture-strip", "escort-strip", "charting", "version-notice",
-    "client-error", "quality-note", "target-card", "layout-debug-layer",
+    "client-error", "quality-note", "layout-debug-layer",
   ]);
   const chartDebug = query.get("chartdebug") === "1";
   let perfVisible = query.get("perf") === "1";

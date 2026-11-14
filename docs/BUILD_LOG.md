@@ -3179,3 +3179,60 @@ turns sooner.
 - No browser is available in this workspace: no visual review, real touch
   events, second physical device or real Cloudflare frame timing were measured.
   The harness is jsdom with a Pixi stub, not rendered pixels.
+
+## Session 3H-b2: coast safety, planner and recovery
+
+**Date:** 2026-11-14
+**Branch:** main
+
+### What was asked
+
+Add automatic coast safety, idle anchoring and stuck recovery, replace the
+long-route planner with a kinematic one that stays inside its time budget, keep
+fleet line ahead, and test the planner broadly.
+
+### What was built
+
+- Coast safety runs every two real seconds. It probes three kilometres along the
+  ship's course, and 7.5 km on a lee shore (2.5x). An idle ship inside the probe
+  anchors; a ship with an order turns seaward. Port anchorages are relaxed.
+  Contact fire ships, tows, boarders, runners and engaged ships are exempt.
+- An independent ship with no order anchors after 20 game minutes. This is
+  separate from the manual anchor: a new order wakes an automatic anchor at
+  once, including orders issued by a fire-ship contact or a fleet. A manually
+  dropped anchor still needs the full 20 real seconds to weigh.
+- Stuck recovery tracks the best distance to a routed goal. After 30 game
+  minutes without 20 m of improvement it warns "no progress; trying a new tack"
+  and clears the manoeuvre cooldowns. After 60 game minutes it clears the order
+  and anchors. Ships still making way are never treated as stuck.
+- The planner now uses the fine 2 km grid for routes up to 30 km and the 4 km
+  grid beyond that. Long searches use a stronger weighted heuristic and skip
+  the soft open-water cost, while keeping the hard four-kilometre clearance and
+  exact land-crossing check. The smoothed curve is kept inside a five-kilometre
+  corridor around the raw plan; if it strays, the raw plan is used instead. The
+  one stored curve feeds the route dots, ghost path and live helm.
+- Line ahead remains the fleet's default and its upwind fallback; followers use
+  the leader's recorded track rather than a straight-line offset.
+
+### Measurements
+
+- 200 deterministic Caribbean scenarios: median **0.08 ms**, p95 **2.28 ms**.
+  All 200 returned a navigable plan; no waypoint or segment crossed land.
+- 100 local fine-grid routes around Jamaica: median **0.00 ms**.
+- Kingston to Montego Bay (71 km, around Jamaica): median **1.02 ms** over 15
+  warm runs. The old grid-only planner measured about 17 ms for the same plan
+  on this VM before the changes; the earlier 2E log recorded 8.2 ms.
+- The existing 100-ship world-step budget test still passes under the 16 ms
+  limit; no new 100-ship timing was taken in this part.
+- New b2 tests: 200 scenarios, bay turn-around, peninsula, lee-shore anchoring,
+  idle auto-anchor, stuck warning/clear, eight-ship line ahead and 100 fine
+  local routes.
+
+### Checks
+
+- `npm test`: **493/493 passing**.
+- `npm run build`: passed.
+- `npm run test:e2e`: passed with the real client and GameRoom.
+- No browser is available in this workspace: no visual review, real touch
+  events, separate physical device or real Cloudflare timing was measured. The
+  harness uses jsdom and a Pixi stub, not rendered pixels.

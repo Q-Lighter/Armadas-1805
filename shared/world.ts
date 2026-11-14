@@ -82,6 +82,7 @@ import {
   routeSegmentClear,
   routeLookAheadPoint,
   routeSegmentHasClearance,
+  routeWithinCorridor,
   sampleRouteCurve,
   smoothRoute,
 } from "./route.js";
@@ -381,6 +382,8 @@ export interface World {
   hungerMultiplier: number;
   /** Automatic re-plan budget per player, counted in server ticks. */
   routePlans: Map<string, { tick: number; count: number }>;
+  /** 3H-b2: game time of the last fixed-cadence coast safety pass. */
+  lastCoastSafetyGameMs: number;
   /** Ships currently under an Engage ship order, by ship id. */
   engagements: Map<string, Engagement>;
   /** Short, non-damaging combat events for visible players. */
@@ -932,6 +935,7 @@ export function createWorld(roomCode = "main", options: WorldOptions = {}): Worl
     nextPriceShiftGameMs: gameCycleMs(settings.trade.pricesCycle.shiftGameDays),
     hungerMultiplier: Math.max(0, hungerMultiplier),
     routePlans: new Map(),
+    lastCoastSafetyGameMs: 0,
     engagements: new Map(),
     combatEvents: [],
     nextCombatEventId: 1,
@@ -3575,6 +3579,9 @@ function installRoute(
   portId: string | null,
 ): boolean {
   ship.route = null;
+  ship.orderBestDistanceKm = undefined;
+  ship.orderLastProgressGameMs = world.gameMs;
+  ship.orderStuckWarned = false;
   const knownLand = routeKnownLand(world, playerId);
   const plan = planRoute({
     start: { x: ship.x, y: ship.y },
@@ -3599,16 +3606,19 @@ function installRoute(
   const cruiseKmPerSecond = (spec.cruiseKnots * 1.852) / 3600;
   const minRadiusKm =
     (cruiseKmPerSecond / turnRateRad) * settings.route.curveRadiusFactor;
-  const curve = sampleRouteCurve(
-    smoothRoute(
-      { x: ship.x, y: ship.y },
-      plan.waypoints,
-      (x, y) => !hasRouteClearance({ x, y }, knownLand, settings.route.clearanceKm),
-      minRadiusKm,
-    ),
-    settings.route.curveSampleKm,
-    settings.route.maxCurvePoints,
+  const rawPath = [{ x: ship.x, y: ship.y }, ...plan.waypoints];
+  const smoothed = smoothRoute(
+    { x: ship.x, y: ship.y },
+    plan.waypoints,
+    (x, y) => !hasRouteClearance({ x, y }, knownLand, settings.route.clearanceKm),
+    minRadiusKm,
   );
+  // The kinematic curve is the one path used by the route dots, the ghost
+  // prediction and the live helm. Keep every rounded corner inside the same
+  // five-kilometre corridor; a fillet that cuts too far is discarded whole.
+  const curve = routeWithinCorridor(smoothed, rawPath, settings.route.kinematicCorridorKm)
+    ? sampleRouteCurve(smoothed, settings.route.curveSampleKm, settings.route.maxCurvePoints)
+    : sampleRouteCurve(rawPath, settings.route.curveSampleKm, settings.route.maxCurvePoints);
   const orderDistanceKm = distanceKm(ship, goal);
   const route: ShipRoute = {
     // Keep the planner's sparse legal legs for navigation. The sampled curve
@@ -3716,6 +3726,7 @@ export function applyOrder(
 
   const ship = shipForOrder(world, playerId, shipId);
   if (!ship || ship.deliveryPortId) return false;
+  wakeAutoAnchor(world, playerId, ship);
   if (ship.anchored) {
     pushNotice(world, playerId, "Weigh anchor before sailing.");
     return false;
@@ -3763,6 +3774,16 @@ export function applyOrder(
   return installRoute(world, playerId, ship, { x, y }, "point", null);
 }
 
+/** A new order wakes an automatic anchor at once; a manual anchor still waits. */
+function wakeAutoAnchor(world: World, playerId: string, ship: Ship): void {
+  if (!ship.anchored || !ship.autoAnchor || ship.waitingPortId) return;
+  ship.anchored = false;
+  ship.autoAnchor = false;
+  ship.weighAnchorRemainingRealSeconds = undefined;
+  ship.hoveTo = false;
+  if (world.players.has(playerId)) pushNotice(world, playerId, `${ship.name}: anchor away.`);
+}
+
 /** 3H: drop anchor at or below three knots. The hull then holds position. */
 export function dropAnchor(world: World, playerId: string, shipId: unknown): boolean {
   if (typeof shipId !== "string") return false;
@@ -3774,6 +3795,7 @@ export function dropAnchor(world: World, playerId: string, shipId: unknown): boo
     return false;
   }
   ship.anchored = true;
+  ship.autoAnchor = false;
   ship.weighAnchorRemainingRealSeconds = undefined;
   ship.hoveTo = false;
   ship.speedKnots = 0;
@@ -3793,6 +3815,7 @@ export function weighAnchor(world: World, playerId: string, shipId: unknown): bo
   const ship = shipsForOwner(world, playerId).find((candidate) => candidate.id === shipId);
   if (!ship || !ship.anchored || ship.weighAnchorRemainingRealSeconds !== undefined) return false;
   ship.weighAnchorRemainingRealSeconds = settings.manoeuvres.weighAnchorRealSeconds;
+  ship.autoAnchor = false;
   ship.speedKnots = 0;
   ship.order = null;
   ship.route = null;
@@ -4474,6 +4497,7 @@ export function applyPortOrder(
     return false;
   }
   if (ship.dockedPortId && !undock(world, playerId, ship.id)) return false;
+  wakeAutoAnchor(world, playerId, ship);
 
   ship.waitingPortId = null;
   ship.waitingSinceGameMs = 0;
@@ -5853,6 +5877,173 @@ function updateFog(world: World): void {
 }
 
 /** Advance every ship by a number of game seconds. */
+/** Set an automatic anchor; the reason is shown once to a human owner. */
+function autoAnchorShip(world: World, ownerId: string, ship: Ship, reason: string): void {
+  if (ship.anchored) return;
+  ship.anchored = true;
+  ship.autoAnchor = true;
+  ship.weighAnchorRemainingRealSeconds = undefined;
+  ship.hoveTo = false;
+  ship.speedKnots = 0;
+  ship.order = null;
+  ship.route = null;
+  ship.helmTarget = undefined;
+  ship.manoeuvre = undefined;
+  ship.formationStation = false;
+  ship.idleSinceGameMs = undefined;
+  if (world.players.has(ownerId)) pushNoticeOnce(world, ownerId, ship.id, "autoAnchor", `${ship.name}: ${reason}`);
+}
+
+/** Reset the idle clock and anchor a ship that has waited long enough. */
+function updateIdleAnchor(
+  world: World,
+  ownerId: string,
+  ship: Ship,
+): void {
+  if (
+    !ship.autoAnchor ||
+    ship.anchored ||
+    ship.order ||
+    ship.route ||
+    ship.formationStation ||
+    ship.fleetId ||
+    ship.dockedPortId ||
+    ship.deliveryPortId ||
+    ship.waitingPortId ||
+    ship.towerShipId ||
+    ship.towedShipId ||
+    ship.fireShip?.ignited ||
+    ship.boardingShipId ||
+    ship.runState ||
+    world.engagements.has(ship.id) ||
+    ship.speedKnots > settings.manoeuvres.anchorMaxSpeedKnots
+  ) {
+    ship.idleSinceGameMs = undefined;
+    return;
+  }
+  const port = [...world.ports.values()].some((candidate) =>
+    distanceKm(ship, candidate.anchorage) <= settings.coastSafety.portRelaxKm
+  );
+  if (port) {
+    ship.idleSinceGameMs = undefined;
+    return;
+  }
+  ship.idleSinceGameMs ??= world.gameMs;
+  if (
+    world.gameMs - ship.idleSinceGameMs >=
+    settings.manoeuvres.autoAnchorIdleGameMinutes * 60 * 1000
+  ) {
+    autoAnchorShip(world, ownerId, ship, "anchored after lying idle.");
+  }
+}
+
+/**
+ * 3H-b2: every two real seconds, look three kilometres ahead for a coast. A
+ * lee shore is probed 2.5 times further. A ship with a seaward escape turns
+ * away; an idle ship anchors. Port approaches are already safe.
+ */
+function updateCoastSafety(world: World, windFromDeg: number): void {
+  for (const { ownerId, ship } of allShips(world)) {
+    if (
+      ship.anchored ||
+      ship.dockedPortId ||
+      ship.deliveryPortId ||
+      ship.waitingPortId ||
+      ship.runState ||
+      ship.boardingShipId ||
+      ship.fireShip?.ignited ||
+      ship.fireShip?.mode === "contact" ||
+      ship.towerShipId ||
+      ship.towedShipId ||
+      world.engagements.has(ship.id)
+    ) continue;
+    if (
+      [...world.ports.values()].some((port) =>
+        distanceKm(ship, port.anchorage) <= settings.coastSafety.portRelaxKm
+      )
+    ) continue;
+
+    const bearing = ship.order
+      ? Math.atan2(ship.order.x - ship.x, -(ship.order.y - ship.y))
+      : ship.headingRad;
+    const lee = isCoastDownwind(ship.x, ship.y, windFromDeg, isLandAt);
+    const range = settings.coastSafety.probeKm *
+      (lee ? settings.coastSafety.leeShoreMultiplier : 1);
+    const ahead = landInSector(
+      ship.x,
+      ship.y,
+      bearing,
+      range,
+      settings.coastSafety.halfAngleDeg,
+      isLandAt,
+    );
+    if (!ahead && !lee) continue;
+
+    if (!ship.order && ship.speedKnots <= settings.manoeuvres.anchorMaxSpeedKnots) {
+      autoAnchorShip(world, ownerId, ship, "coast close; anchored.");
+      continue;
+    }
+    if (ship.order) {
+      ship.coastEscapeHeadingRad ??= chooseCoastEscapeHeading(ship, windFromDeg);
+      if (world.players.has(ownerId)) {
+        pushNoticeOnce(world, ownerId, ship.id, "coastSafety", "Coast ahead: standing off.");
+      }
+    }
+  }
+}
+
+/** 3H-b2: warn, then clear an order that has made no progress for too long. */
+function updateStuckRoutes(world: World): void {
+  for (const { ownerId, ship } of allShips(world)) {
+    if (
+      !ship.route ||
+      !ship.order ||
+      ship.formationStation ||
+      ship.fleetId ||
+      ship.runState ||
+      ship.boardingShipId ||
+      ship.anchored ||
+      world.engagements.has(ship.id)
+    ) continue;
+    const distance = distanceKm(ship, ship.route.goal);
+    const progressKm = settings.manoeuvres.stuckProgressM / 1000;
+    if (
+      ship.orderBestDistanceKm === undefined ||
+      distance <= ship.orderBestDistanceKm - progressKm
+    ) {
+      ship.orderBestDistanceKm = distance;
+      ship.orderLastProgressGameMs = world.gameMs;
+    }
+    // A hull that still has steerage way is not stuck: long tacks and a
+    // circuitous but legal route must not trip the recovery timer.
+    if (ship.speedKnots >= 0.5) {
+      ship.orderLastProgressGameMs = world.gameMs;
+      continue;
+    }
+    const last = ship.orderLastProgressGameMs ?? world.gameMs;
+    const idleGameSeconds = Math.max(0, (world.gameMs - last) / 1000);
+    if (
+      !ship.orderStuckWarned &&
+      idleGameSeconds >= settings.manoeuvres.stuckWarnGameMinutes * 60
+    ) {
+      ship.orderStuckWarned = true;
+      ship.manoeuvreCooldownSeconds = 0;
+      ship.tackCooldownSeconds = 0;
+      if (world.players.has(ownerId)) {
+        pushNotice(world, ownerId, `${ship.name}: no progress; trying a new tack.`);
+      }
+    }
+    if (idleGameSeconds >= settings.manoeuvres.stuckClearGameMinutes * 60) {
+      ship.order = null;
+      ship.route = null;
+      ship.helmTarget = undefined;
+      ship.speedKnots = 0;
+      ship.arrived = false;
+      autoAnchorShip(world, ownerId, ship, "no progress; order cleared.");
+    }
+  }
+}
+
 function stepOwnerShip(
   world: World,
   ownerId: string,
@@ -5894,6 +6085,8 @@ function stepOwnerShip(
 
   if (stepContactFireShip(world, ownerId, ship, dtGameSeconds)) return;
 
+  updateIdleAnchor(world, ownerId, ship);
+
   // 3H anchors: a held hull does not drift. It swings slowly head to wind,
   // and weighing anchor is a 20 real-second job before the helm answers.
   if (ship.weighAnchorRemainingRealSeconds !== undefined) {
@@ -5908,9 +6101,16 @@ function stepOwnerShip(
     }
   }
   if (ship.anchored) {
-    ship.speedKnots = 0;
-    ship.order = null;
-    ship.route = null;
+    // An automatic anchor never blocks a real order, including one issued by a
+    // contact fire ship or a fleet rather than through applyOrder.
+    if (ship.autoAnchor && ship.order) {
+      ship.anchored = false;
+      ship.autoAnchor = false;
+      ship.weighAnchorRemainingRealSeconds = undefined;
+    } else {
+      ship.speedKnots = 0;
+      ship.order = null;
+      ship.route = null;
     const spec = shipSpecFor(ship);
     const performance = shipPerformance(spec, ship.damage, windFromDeg);
     const maxTurn = performance.turnRateDegPerSecond *
@@ -5919,8 +6119,9 @@ function stepOwnerShip(
       -maxTurn,
       Math.min(maxTurn, shortestTurnDegrees(ship.headingRad, windFromDeg * Math.PI / 180)),
     );
-    ship.headingRad += turn * Math.PI / 180;
-    return;
+      ship.headingRad += turn * Math.PI / 180;
+      return;
+    }
   }
 
   if (ship.route) {
@@ -7664,6 +7865,12 @@ export function stepWorld(
   for (const { ship } of allShips(world)) ship.formationStation = false;
   prepareShipCommands(world);
   prepareFleetCommands(world);
+  const coastIntervalMs = settings.coastSafety.intervalRealSeconds * 1000 *
+    settings.time.sailingTimeScale;
+  if (world.gameMs - world.lastCoastSafetyGameMs >= coastIntervalMs) {
+    updateCoastSafety(world, windFromDeg);
+    world.lastCoastSafetyGameMs = world.gameMs;
+  }
   applyStances(world);
   updateEngagements(world);
 
@@ -7687,6 +7894,7 @@ export function stepWorld(
   const separationMovedShips = separateShips(world, dtGameSeconds);
   updateFleetCommands(world);
   updateShipCommands(world);
+  updateStuckRoutes(world);
   // Formation and special orders can change the tower's limit after the tow
   // pass. Make both hulls agree on the final pair speed for this tick.
   syncTowedSpeeds(world);

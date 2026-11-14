@@ -312,6 +312,14 @@ export const settings = {
     weighAnchorRealSeconds: 20,
     /** An anchored hull swings toward the wind at this share of turn rate. */
     anchorSwingRateShare: 0.2,
+    /** 3H-b2: a ship left with no order anchors after this many game minutes. */
+    autoAnchorIdleGameMinutes: 20,
+    /** After this long without closing the destination, warn the captain. */
+    stuckWarnGameMinutes: 30,
+    /** After this long without progress, clear the order and anchor. */
+    stuckClearGameMinutes: 60,
+    /** A change of this many metres counts as progress towards the goal. */
+    stuckProgressM: 20,
   },
 
   /** Placeholder weather: one constant wind until the weather phase. */
@@ -702,8 +710,17 @@ export const settings = {
   route: {
     /** Search grid around the ship and destination. */
     gridKm: 2,
-    /** Fallback grid if the first search hits its node limit. */
+    /** Fallback and long-route grid. Four kilometres keeps a long coastal
+     *  search inside the two-millisecond budget while preserving terminal
+     *  clearance at ports. */
     coarseGridKm: 4,
+    /** Routes this long use the coarse grid; shorter ones get the fine 2 km
+     *  grid so local corners and harbour approaches stay precise. */
+    kinematicFineKm: 30,
+    /** Budget for one kinematic route search, in milliseconds. */
+    kinematicBudgetMs: 2,
+    /** Smoothed route corners may stray this far from the raw plan. */
+    kinematicCorridorKm: 5,
     /** Preferred clearance from known land. */
     clearanceKm: 8,
     /** Hard fallback where the eight-kilometre channel is too narrow. */
@@ -991,6 +1008,20 @@ export const settings = {
     dummyRunHullShare: 0.5,
     /** A dummy with `surrenders` strikes below this hull share. Draft: 30%. */
     dummySurrenderHullShare: 0.3,
+  },
+
+  /** 3H-b2: look ahead on a fixed cadence and stand off a closing coast. */
+  coastSafety: {
+    /** Real seconds between safety probes. */
+    intervalRealSeconds: 2,
+    /** Normal forward probe distance in km. */
+    probeKm: 3,
+    /** A lee shore is probed this much further ahead. */
+    leeShoreMultiplier: 2.5,
+    /** Half-angle of the forward probe, in degrees. */
+    halfAngleDeg: 35,
+    /** An approach inside this range of any port anchorage is already safe. */
+    portRelaxKm: 1.5,
   },
 
   /** What happens when a ship meets land or the chart edge. */

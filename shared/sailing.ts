@@ -135,6 +135,14 @@ export interface Ship {
   weighAnchorRemainingRealSeconds?: number;
   /** Automatic anchoring for an idle ship near a lee shore. */
   autoAnchor?: boolean;
+  /** 3H-b2: game time the present idle spell began. */
+  idleSinceGameMs?: number;
+  /** 3H-b2: best distance reached on the current routed order. */
+  orderBestDistanceKm?: number;
+  /** 3H-b2: game time distance last improved by the progress margin. */
+  orderLastProgressGameMs?: number;
+  /** 3H-b2: the no-progress warning has already been sent. */
+  orderStuckWarned?: boolean;
   /** A held escape heading while turning away from a nearby coast. */
   coastEscapeHeadingRad?: number | null;
   /** True once the last order was completed. */

@@ -391,6 +391,34 @@ export function sampleRouteCurve(
   return out;
 }
 
+/** Distance from a point to a route polyline, including segment interiors. */
+export function routeDistanceToPolyline(point: MapPoint, path: readonly MapPoint[]): number {
+  if (path.length === 0) return Infinity;
+  if (path.length === 1) return distance(point, path[0]!);
+  let best = Infinity;
+  for (let index = 0; index + 1 < path.length; index += 1) {
+    const a = path[index]!;
+    const b = path[index + 1]!;
+    const dx = b.x - a.x;
+    const dy = b.y - a.y;
+    const length = dx * dx + dy * dy;
+    const t = length > 1e-12
+      ? Math.max(0, Math.min(1, ((point.x - a.x) * dx + (point.y - a.y) * dy) / length))
+      : 0;
+    best = Math.min(best, Math.hypot(point.x - (a.x + dx * t), point.y - (a.y + dy * t)));
+  }
+  return best;
+}
+
+/** True when every sampled point stays inside the route's corridor. */
+export function routeWithinCorridor(
+  points: readonly MapPoint[],
+  rawPath: readonly MapPoint[],
+  corridorKm: number,
+): boolean {
+  return points.every((point) => routeDistanceToPolyline(point, rawPath) <= corridorKm);
+}
+
 /** Drop the part of a route the ship has already passed. */
 export function remainingRouteCurve(
   points: readonly MapPoint[],
@@ -568,6 +596,26 @@ function searchGrid(search: SearchOptions): SearchResult {
     safety.set(key, safe);
     return safe;
   };
+  // Clearance cost probes are much more expensive than the land lookup itself.
+  // A cell can be reached from several parents, so compute its cost only once.
+  const softCosts = new Map<string, number>();
+  const softCost = (point: MapPoint, key: string): number => {
+    // The hard clearance check is the safety rule. On the long-route grid the
+    // open-water preference is only a tie-breaker; skipping its 64 probes
+    // keeps the whole search inside the 2 ms budget.
+    if (search.gridKm >= settings.route.coarseGridKm) return 0;
+    const cached = softCosts.get(key);
+    if (cached !== undefined) return cached;
+    const cost = routeClearancePenalty(
+      point,
+      search.knownLand,
+      search.clearanceKm,
+      search.softClearanceKm,
+      search.softClearanceWeight,
+    );
+    softCosts.set(key, cost);
+    return cost;
+  };
   const directions = [
     [1, 0], [-1, 0], [0, 1], [0, -1],
     [1, 1], [1, -1], [-1, 1], [-1, -1],
@@ -621,15 +669,7 @@ function searchGrid(search: SearchOptions): SearchResult {
       const key = nodeKey(column, row);
       const existing = nodes.get(key);
       const step = distance(current, point);
-      const g = current.g +
-        step *
-          (1 + routeClearancePenalty(
-            point,
-            search.knownLand,
-            search.clearanceKm,
-            search.softClearanceKm,
-            search.softClearanceWeight,
-          ));
+      const g = current.g + step * (1 + softCost(point, key));
       if (existing && existing.g <= g) continue;
 
       const next: GridNode = existing ?? {
@@ -646,10 +686,10 @@ function searchGrid(search: SearchOptions): SearchResult {
       };
       next.g = g;
       next.h = distance(point, search.goal);
-      // Slightly weighted A*: routes stay sensible but the search visits far
-      // fewer nodes around long coastlines. The saved path is still checked
-      // segment by segment against known land before it is returned.
-      next.f = g + next.h * 1.3;
+      // Weighted A*: long coastal routes use a stronger pull towards the goal
+      // so the search visits fewer nodes and stays inside the 2 ms budget. The
+      // saved path is still checked segment by segment against known land.
+      next.f = g + next.h * (search.gridKm >= settings.route.coarseGridKm ? 2.4 : 1.3);
       next.parent = current;
       next.closed = false;
       nodes.set(key, next);
@@ -730,6 +770,8 @@ function withGoal(
 export function planRoute(options: RouteOptions): RoutePlan {
   const baseGrid = options.gridKm ?? settings.route.gridKm;
   const clearanceKm = options.clearanceKm ?? settings.route.clearanceKm;
+  const directDistanceKm = distance(options.start, options.goal);
+  const longRoute = directDistanceKm > settings.route.kinematicFineKm;
   const minimumClearanceKm =
     options.minimumClearanceKm ?? settings.route.minimumClearanceKm;
   const softClearanceKm =
@@ -770,7 +812,10 @@ export function planRoute(options: RouteOptions): RoutePlan {
   }
 
   let nodes = 0;
-  let gridKm = baseGrid;
+  // Fine 2 km planning is only needed for short local routes. A long coastal
+  // detour uses the 5 km grid: the same land clearance, a quarter of the nodes,
+  // and comfortably inside the two-millisecond planning budget.
+  let gridKm = longRoute ? settings.route.coarseGridKm : baseGrid;
   let bestPartial: MapPoint[] = [];
   for (let attempt = 0; attempt < 2; attempt += 1) {
     let limitSeen = false;

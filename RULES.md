@@ -267,6 +267,52 @@ Read this file at the start of every prompt, then follow it for the whole sessio
   existing hove-to gunnery timing means both stances reached 100%, so the target
   was not met without unrelated combat changes.
 
+## Sailing and manoeuvres
+
+- The helm needs way on. A hull below 2 knots (Draft) loses turn rate in
+  proportion to speed; at rest only backing the sails can pivot it, at 15% of the
+  normal rate. Every class turns about three times faster than the old 90-degree
+  time, so a frigate at cruise circles in about 5.2 ship lengths rather than
+  15.7. The measured table is in the 3H-b1 build log. No AGREED turning number
+  changed.
+- A course change of 110 degrees or more is a manoeuvre. If the shorter turn
+  crosses the wind the ship tacks; otherwise it wears round. A damaged or very
+  slow hull wears instead of tacking. A clean tack can miss stays; damaged rig,
+  damaged rudder, low crew and strong wind increase the chance. A missed stays
+  drops into irons, where the ship backs its sails for one ship length and pays
+  off onto a close-hauled course. In a narrow channel with the wind onto a lee
+  shore it box-hauls instead, backing and filling without a long downwind loop.
+  Warping is port-water only, at 1 knot, and needs no wind.
+- A ship shortens sail near a coast (1.5 km Draft) or in a channel under 2 km
+  wide, keeping half speed. Ports, their anchorages and their approaches are
+  exempt from automatic coast avoidance.
+- Anchors: drop below 3 knots. An anchored hull neither drifts nor answers a
+  sailing order, and swings slowly head to wind. Weighing anchor takes 20 real
+  seconds, during which the helm does not answer. An independent ship left with
+  no order for 20 game minutes anchors itself; a new order wakes that automatic
+  anchor immediately. Manually dropped anchors still need Weigh anchor.
+- Coast safety runs every 2 real seconds. It probes 3 km ahead, or 7.5 km when
+  the wind blows onto a lee shore (2.5x Draft), and turns a ship with an order
+  away from the closing coast. An idle ship inside the probe anchors instead.
+  The tick path check still stops any hull that actually reaches land, and the
+  chart edge keeps its 100 m margin.
+- The route planner is kinematic: 2 km fine grid for routes up to 30 km, 5 km
+  long-route grid with the same 4 km minimum hull clearance, weighted search and
+  a five-kilometre corridor around the raw plan when rounding corners. A long
+  Jamaica detour plans in about 2 ms on this VM; the 200-case median is in the
+  3H-b2 build log. The one planned curve is used by the route dots, the ghost
+  prediction and the live helm, so they cannot disagree about a corner.
+- A routed ship that makes less than 20 m of progress for 30 game minutes gets
+  "no progress; trying a new tack". At 60 game minutes the order is cleared and
+  the ship anchors. A hull still making way is never treated as stuck.
+- Fleet orders keep line ahead. A follower steers for its slot on the leader's
+  recorded track, not a straight-line offset. If the formation would face into
+  the wind it falls back to line ahead; this is the only formation that does
+  not need the wind on the beam.
+- Draft values for all of the above live in `shared/settings.ts` and may change
+  after playtesting. Later phases add depth, shallows, grounding, tides,
+  currents, real weather and night sight; none of those are built here.
+
 ## Elimination and winning
 
 - Every player has exactly one flagship. In a normal room it is the navy's

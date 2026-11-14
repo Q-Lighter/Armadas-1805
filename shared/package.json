@@ -226,6 +226,10 @@
       "types": "./dist/crewUi.d.ts",
       "default": "./dist/crewUi.js"
     },
+    "./npc-ui": {
+      "types": "./dist/npcUi.d.ts",
+      "default": "./dist/npcUi.js"
+    },
     "./elimination": {
       "types": "./dist/elimination.d.ts",
       "default": "./dist/elimination.js"

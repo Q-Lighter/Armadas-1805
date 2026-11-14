@@ -343,6 +343,24 @@ Read this file at the start of every prompt, then follow it for the whole sessio
 - A neutral hull that is sunk or claimed returns after 30 real minutes as a
   fresh hull in the same group and home port. This is a replacement, not a
   respawn of the old hull.
+- The map marks neutral hulls with their own ink: merchants are ochre with a
+  round marker, whalers teal with a diamond, and privateers rust with a
+  triangle. A hired privateer gains a thin gold ring. These are recon markers,
+  not navy colours; a last-seen neutral keeps the same marker after it leaves
+  sight. Hired privateers are also listed in a compact escort strip even when
+  the hull is out of sight, and contract expiry produces a notice.
+- Selecting a neutral opens its battle actions. A surrendered or abandoned
+  hull gets **Loot & leave** in the battle bar; an abandoned hull can still be
+  claimed. An unhired privateer offers **Hire privateer**, and a hired one
+  offers **Manage contract**. The loot sheet deliberately shows no cargo until
+  the server marks the hull surrendered or abandoned. It lists only goods that
+  fit the selected ship's free hold, and the emptied hull stays afloat.
+- The privateer sheet shows the 1,200-piece fee, the 900-piece escort fee, the
+  three modes and the six-game-day contract. **Escort** opens a target sheet
+  for one of the player's ships. The five sheet layouts (360x740, 412x915,
+  740x360, 768x1024 and 1280x800) keep 44 px targets and scroll inside the
+  viewport. These presentation details are Draft and may change after a real
+  phone review.
 - Test and dev rooms accept `&npc=0` to remove the whole neutral layer and
   `&npc=1` to put it back. The server enables it by default; direct world tests
   opt in. All counts, ranges, fees, cargo bands and timers are Draft values in

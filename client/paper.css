@@ -3277,3 +3277,152 @@ body.game {
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
+
+/* --- 3H-d: neutral contacts, loot, privateers and escorts --------------- */
+/* The sheets reuse the paper surrender sheet. These rules only lay out the
+   prize cargo, the three privateer modes and the escort target picker. */
+.npc-sheet .panel-head h2 {
+  font-size: clamp(1.1rem, 3.8vw, 1.45rem);
+}
+
+.loot-cargo {
+  display: grid;
+  gap: 0.25rem;
+  margin: 0.55rem 0;
+  padding: 0;
+  list-style: none;
+  border-top: 1px solid var(--rule);
+}
+
+
+.loot-cargo li {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 0.5rem;
+  padding: 0.4rem 0;
+  border-bottom: 1px dotted var(--rule);
+  font-size: 0.9rem;
+}
+
+.loot-cargo li span:last-child {
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+}
+
+.loot-free {
+  margin: 0.3rem 0 0.5rem;
+  color: var(--ink-faded);
+  font-size: 0.84rem;
+}
+
+.npc-mode-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.35rem;
+  margin: 0.65rem 0;
+}
+
+.npc-mode-grid .btn {
+  min-width: 44px;
+  min-height: 44px;
+  padding: 0.3rem 0.25rem;
+  white-space: normal;
+}
+
+.npc-mode-grid .btn.is-active {
+  background: #8c1d1d;
+  border-color: #5b2a24;
+  color: #fff8e6;
+}
+
+.npc-mode-grid .btn:disabled {
+  opacity: 0.65;
+}
+
+#escort-target {
+  width: 100%;
+  min-height: 44px;
+  margin: 0.2rem 0 0.55rem;
+  padding: 0.4rem 0.5rem;
+  border: 1px solid var(--rule);
+  border-radius: 2px;
+  background: rgba(255, 250, 235, 0.72);
+  color: var(--ink);
+  font: inherit;
+}
+
+.escort-strip {
+  position: fixed;
+  z-index: 22;
+  top: max(5.2rem, calc(env(safe-area-inset-top) + 4.8rem));
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  width: min(28rem, calc(100% - 1.5rem));
+  margin: 0;
+  padding: 0.35rem 0.45rem 0.35rem 0.65rem;
+  border: 1px solid var(--rule);
+  background: var(--paper);
+  color: var(--ink);
+  font-size: calc(0.86rem * var(--ui-scale));
+}
+
+/* Stack below a capture strip when both are visible. */
+.capture-strip:not([hidden]) + .escort-strip {
+  top: max(8.25rem, calc(env(safe-area-inset-top) + 7.85rem));
+}
+
+.escort-strip[hidden] {
+  display: none;
+}
+
+#escort-strip-text {
+  min-width: 0;
+  flex: 1 1 auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.escort-strip .btn {
+  flex: 0 0 auto;
+  min-width: 44px;
+  min-height: 44px;
+  padding: 0.2rem 0.55rem;
+  font-size: 0.78rem;
+}
+
+@media (max-width: 640px) {
+  .escort-strip {
+    left: max(0.4rem, env(safe-area-inset-left));
+    right: max(0.4rem, env(safe-area-inset-right));
+    width: auto;
+    transform: none;
+    top: max(5.4rem, calc(env(safe-area-inset-top) + 5rem));
+  }
+
+  .capture-strip:not([hidden]) + .escort-strip {
+    top: max(8.5rem, calc(env(safe-area-inset-top) + 8.1rem));
+  }
+
+  #escort-strip-text {
+    font-size: 0.78rem;
+  }
+}
+
+@media (max-height: 440px) and (orientation: landscape) {
+  .escort-strip {
+    top: max(4.6rem, calc(env(safe-area-inset-top) + 4.2rem));
+    padding-block: 0.2rem;
+  }
+
+  .capture-strip:not([hidden]) + .escort-strip {
+    top: max(7.5rem, calc(env(safe-area-inset-top) + 7.1rem));
+  }
+
+  .npc-mode-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}

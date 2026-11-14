@@ -43,6 +43,8 @@ export interface SeenShip {
   x: number;
   y: number;
   atGameSeconds: number;
+  /** 3H-d: neutral kind, so a last-seen marker keeps its neutral ink. */
+  npcKind?: string | null;
 }
 
 export interface ChartState {

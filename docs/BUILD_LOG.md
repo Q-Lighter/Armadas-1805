@@ -3305,3 +3305,72 @@ neutral cargo before boarding.
 - No browser is available in this workspace: no visual review, real touch
   events, separate physical device or real Cloudflare frame timing was
   measured. The harness uses jsdom and a Pixi stub, not rendered pixels.
+
+## Session 3H-d: NPC port, loot, privateer and escort screens
+
+**Date:** 2026-11-14
+**Branch:** main
+
+### What was asked
+
+Finish the neutral traffic screens: a Loot battle-bar action and sheet, privateer
+and escort sheets, recon markers, neutral NPC colours, an escort strip and
+notices, sheets tested at the five review sizes, and no cargo for unboarded
+ships.
+
+### What was built
+
+- Neutral hulls no longer borrow a navy colour. Merchants are ochre with a round
+  recon marker, whalers teal with a diamond, and privateers rust with a
+  triangle. A hired privateer gets a thin gold ring. Last-seen neutral markers
+  keep the same shape and a "Neutral merchant/whaler/privateer" label, so a
+  contact does not turn into a British ship when it leaves the sight circle.
+- Selecting a neutral opens its battle actions. A surrendered or abandoned
+  hull gets **Loot & leave**; an abandoned hull can still be claimed. An
+  unhired privateer offers **Hire privateer**, and one under the player's
+  contract offers **Manage contract**. The pure `npcBattleActions` plan is
+  tested for each case.
+- The loot sheet lists only goods still in the prize hold, the free tonnes in
+  the selected ship's hold, and explains a full hold, an out-of-range ship, an
+  already looted prize or an empty hold. It is gated twice: the server omits
+  `lootCargo` until the hull is surrendered or abandoned, and the client sheet
+  refuses to draw cargo unless that field exists. The **Loot & leave** button
+  sends the existing `loot` order, which leaves the emptied hull afloat.
+- The privateer sheet shows the 1,200-piece fee, the 900-piece escort fee, the
+  six-game-day contract, remaining time and Patrol / Escort / Raid modes. It
+  handles money, sight, another contract and expiry with explicit reasons. The
+  escort sheet picks one of the player's ships and sends either `hirePrivateer`
+  or `privateerMode` with `mode: "escort"` and that target.
+- The escort strip lists every privateer under the player's contract with its
+  mode, protected ship and time left, even when the privateer has sailed out of
+  sight. It has a Manage button that opens the contract sheet. Contract expiry
+  now produces a server notice, alongside the existing hire and mode notices.
+- The contact snapshot gained a display name and optional post-surrender
+  `lootCargo`/`looted`; the ordinary unboarded contact shape is still
+  identity-only and checked by the 3H-c privacy test. A departed neutral keeps
+  its kind in the last-seen tuple. Abandoned neutral hulls stay in the visible
+  ship list so the battle bar and loot sheet can still reach them.
+- `shared/npcUi.ts` owns the colours, marker shapes, battle actions, loot
+  gating, privateer/escort labels, escort strip and `npcSheetLayout`. The client
+  uses the same plans; tests can check them without a browser.
+
+### Layout checks
+
+`npcSheetLayout` is asserted at **360x740**, **412x915**, **740x360**,
+**768x1024** and **1280x800**. Every size keeps a 44 px minimum target, a sheet
+inside the viewport, and scrolling content; phones use one column and wider
+screens two. The new sheets reuse the existing full-screen paper sheet on
+phones and the centred 28 rem sheet above 640 px.
+
+### Checks
+
+- `npm test`: **510/510 passing** on the clean rerun. (One unrelated ghost
+  prediction budget test measured 2.11 ms against its 2 ms limit during a
+  loaded full run; the focused rerun passed at about 1 ms and the full suite
+  then passed.)
+- `npm run build`: passed.
+- `npm run test:e2e`: passed with the real client and GameRoom (`HARNESS OK`).
+- No browser is available in this workspace. The client was not visually
+  inspected: no screenshots, real touch targets, rendered Pixi pixels, separate
+  physical device, real frame rate or Cloudflare timing. The layout claims come
+  from the shared layout plan and jsdom harness, not from a browser review.

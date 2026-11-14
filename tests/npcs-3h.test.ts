@@ -105,6 +105,7 @@ test("a privateer contract expires and its hull returns to patrol", () => {
   assert.equal(privateer.npcHiredBy, null);
   assert.equal(privateer.npcMode, "patrol");
   assert.equal(world.owners.get("alpha")!.money, 5_000 - settings.npcs.privateerFee);
+  assert.ok(world.notices.get("alpha")?.some((text) => /contract has ended/.test(text)));
 });
 
 test("the binary delta keeps neutral flags and kind", () => {
@@ -137,7 +138,7 @@ test("neutral cargo is absent from public state and loot only moves after boardi
   const contact = state.npcs?.find((entry) => entry.id === merchant.id);
   assert.ok(contact);
   assert.deepEqual(Object.keys(contact!).sort(),
-    ["contractRemainingGameSeconds", "fee", "groupId", "hiredBy", "homePortId", "id", "kind", "mode"]);
+    ["contractRemainingGameSeconds", "fee", "groupId", "hiredBy", "homePortId", "id", "kind", "mode", "name"]);
   assert.equal(JSON.stringify(contact).includes("cargo"), false);
   const row = state.ships.find((entry) => entry[0] === merchant.id);
   assert.equal(row?.[9], 1);
@@ -146,6 +147,10 @@ test("neutral cargo is absent from public state and loot only moves after boardi
   assert.equal(lootNpcShip(world, "alpha", merchant.id, player.id), false);
   merchant.abandoned = true;
   world.abandonedShips.push(merchant);
+  const lootState = visibleStateFor(world, "alpha");
+  const lootContact = lootState.npcs?.find((entry) => entry.id === merchant.id);
+  assert.ok(lootContact?.lootCargo && lootContact.lootCargo.length > 0);
+  assert.equal(lootContact?.looted, false);
   assert.equal(lootNpcShip(world, "alpha", merchant.id, player.id), true);
   const after = merchant.stores.cargo.whaleOil + merchant.stores.cargo.sugar +
     merchant.stores.cargo.hides + merchant.stores.cargo.tobacco +
@@ -155,6 +160,25 @@ test("neutral cargo is absent from public state and loot only moves after boardi
   assert.equal(merchant.npcLooted, true);
   assert.ok(world.npcShips.some((ship) => ship.id === merchant.id), "loot and leave keeps the hull afloat");
   assert.equal(lootNpcShip(world, "alpha", merchant.id, player.id), false);
+});
+
+test("the owner gets an escort snapshot even without a visible contact", () => {
+  const world = room();
+  const player = addPlayer(world, "alpha");
+  world.owners.get("alpha")!.money = 5_000;
+  const privateer = world.npcShips.find((ship) => ship.npcKind === "privateer")!;
+  moveTo(privateer, player.x + 0.2, player.y);
+  assert.equal(hirePrivateer(world, "alpha", privateer.id, "escort", player.id), true);
+  moveTo(privateer, player.x + 80, player.y + 80);
+  const state = visibleStateFor(world, "alpha");
+  const escort = state.escorts?.find((entry) => entry.id === privateer.id);
+  assert.ok(escort);
+  assert.equal(escort!.name, privateer.name);
+  assert.equal(escort!.mode, "escort");
+  assert.equal(escort!.targetId, player.id);
+  assert.equal(escort!.targetName, player.name);
+  assert.ok(escort!.contractRemainingGameSeconds > 0);
+  assert.equal(JSON.stringify(escort).includes("cargo"), false);
 });
 
 test("a neutral merchant can be boarded despite sharing the player's navy", () => {

@@ -37,9 +37,11 @@ import {
 } from "@naval/shared/player-identity";
 import { TAKEN_OVER_CLOSE_CODE } from "@naval/shared/player-sessions";
 import type {
+  EscortSnapshot,
   FleetMemberSnapshot,
   FleetSnapshot,
   LastSeenSnapshot,
+  NpcContactSnapshot,
   OrderLineSnapshot,
   OwnShipSnapshot,
   ShipSnapshot,
@@ -115,6 +117,18 @@ import {
   statsRows,
   victoryRows,
 } from "@naval/shared/status-ui";
+import {
+  neutralHullStyle,
+  neutralMarker,
+  npcBattleActions,
+  npcKindLabel,
+  npcLootSheet,
+  privateerSheet,
+  escortSheet,
+  escortStrip,
+  type NpcKindId,
+  type NpcModeId,
+} from "@naval/shared/npc-ui";
 import {
   abandonedMarkerSize,
   boardSheet,
@@ -697,6 +711,10 @@ interface ShipView {
   statusInk: Graphics;
   statusLabel: Text;
   lightsLabel: Text;
+  npcKind: NpcKindId | null;
+  npcHired: boolean;
+  reconInk: Graphics;
+  reconLabel: Text;
   statusKey: string;
 }
 
@@ -895,6 +913,35 @@ async function start(): Promise<void> {
   const capturedKill = element<HTMLButtonElement>("captured-kill");
   const capturedPrisoners = element<HTMLButtonElement>("captured-prisoners");
   const capturedClose = element<HTMLButtonElement>("captured-close");
+  const lootSheetPanel = element<HTMLElement>("loot-sheet");
+  const lootTitle = element<HTMLElement>("loot-title");
+  const lootDetail = element<HTMLElement>("loot-detail");
+  const lootCargo = element<HTMLElement>("loot-cargo");
+  const lootFree = element<HTMLElement>("loot-free");
+  const lootNotice = element<HTMLElement>("loot-notice");
+  const lootConfirm = element<HTMLButtonElement>("loot-confirm");
+  const lootCancel = element<HTMLButtonElement>("loot-cancel");
+  const lootClose = element<HTMLButtonElement>("loot-close");
+  const privateerSheetPanel = element<HTMLElement>("privateer-sheet");
+  const privateerTitle = element<HTMLElement>("privateer-title");
+  const privateerDetail = element<HTMLElement>("privateer-detail");
+  const privateerContract = element<HTMLElement>("privateer-contract");
+  const privateerMode = element<HTMLElement>("privateer-mode");
+  const privateerNotice = element<HTMLElement>("privateer-notice");
+  const privateerActions = element<HTMLElement>("privateer-actions");
+  const privateerClose = element<HTMLButtonElement>("privateer-close");
+  const escortSheetPanel = element<HTMLElement>("escort-sheet");
+  const escortTitle = element<HTMLElement>("escort-title");
+  const escortDetail = element<HTMLElement>("escort-detail");
+  const escortFee = element<HTMLElement>("escort-fee");
+  const escortTarget = element<HTMLSelectElement>("escort-target");
+  const escortNotice = element<HTMLElement>("escort-notice");
+  const escortConfirm = element<HTMLButtonElement>("escort-confirm");
+  const escortCancel = element<HTMLButtonElement>("escort-cancel");
+  const escortClose = element<HTMLButtonElement>("escort-close");
+  const escortStripPanel = element<HTMLElement>("escort-strip");
+  const escortStripText = element<HTMLElement>("escort-strip-text");
+  const escortStripOpen = element<HTMLButtonElement>("escort-open");
   const portPrisoners = element<HTMLElement>("port-prisoners");
   const portHandover = element<HTMLButtonElement>("port-handover");
   const portPrisonerTotal = element<HTMLElement>("port-prisoner-total");
@@ -1309,6 +1356,11 @@ async function start(): Promise<void> {
   const surrenderDismissed = new Set<string>();
   let battleBarKey = "";
   let boardTargetId: string | null = null;
+  let npcContacts = new Map<string, NpcContactSnapshot>();
+  let npcEscorts: EscortSnapshot[] = [];
+  let lootTargetId: string | null = null;
+  let privateerSheetId: string | null = null;
+  let escortPrivateerId: string | null = null;
   let fireActionMode: "none" | "ignitePick" | "igniteConfirm" | "towPick" = "none";
   let fireActionShipId: string | null = null;
   let fireTargetId: string | null = null;
@@ -4724,19 +4776,27 @@ async function start(): Promise<void> {
 
   function drawLastSeen(): void {
     clearLastSeen();
-    for (const [classId, navy, x, y, age] of lastSeen) {
+    for (const row of lastSeen) {
+      const [classId, navy, x, y, age, npcKind] = row;
       const container = new Container();
       const mark = new Graphics();
-      mark
-        .circle(0, 0, 8)
-        .stroke({ width: 1, color: INK_COLOR, alpha: 0.55 })
-        .moveTo(-5, -5)
-        .lineTo(5, 5)
-        .moveTo(5, -5)
-        .lineTo(-5, 5)
-        .stroke({ width: 1, color: INK_COLOR, alpha: 0.55 });
+      let labelText = `${navy} ${classId} · ${Math.round(age)}s`;
+      if (npcKind) {
+        const marker = neutralMarker(npcKind, false);
+        paintNeutralMarker(mark, marker, 0, 0);
+        labelText = `Neutral ${marker.label} · ${Math.round(age)}s`;
+      } else {
+        mark
+          .circle(0, 0, 8)
+          .stroke({ width: 1, color: INK_COLOR, alpha: 0.55 })
+          .moveTo(-5, -5)
+          .lineTo(5, 5)
+          .moveTo(5, -5)
+          .lineTo(-5, 5)
+          .stroke({ width: 1, color: INK_COLOR, alpha: 0.55 });
+      }
       const label = new Text({
-        text: `${navy} ${classId} · ${Math.round(age)}s`,
+        text: labelText,
         style: { fontFamily: "Source Sans 3", fontSize: 10, fill: INK_COLOR },
       });
       label.alpha = 0.65;
@@ -4744,7 +4804,7 @@ async function start(): Promise<void> {
       container.addChild(mark, label);
       lastSeenLayer.addChild(container);
       lastSeenViews.push(container);
-      container.position.set(0, 0);
+      container.position.set(x, y);
       container.alpha = 0.8;
       container.visible = false;
     }
@@ -4759,9 +4819,20 @@ async function start(): Promise<void> {
       .stroke({ width: 1, color: INK_COLOR });
   }
 
-  function paintHull(hull: Graphics, own: boolean, navy: string): Graphics {
+  function asNpcKind(value: unknown): NpcKindId | null {
+    return value === "merchant" || value === "whaler" || value === "privateer" ? value : null;
+  }
+
+  function paintHull(
+    hull: Graphics,
+    own: boolean,
+    navy: string,
+    npcKind: NpcKindId | null = null,
+    npcHired = false,
+  ): Graphics {
     const size = own ? 1 : 0.85;
     const fleetColor = navyColorNumber(parseNavy(navy) ?? "British");
+    const neutral = npcKind ? neutralHullStyle(npcKind, npcHired) : null;
     hull.clear();
     hull
       .poly([
@@ -4772,9 +4843,44 @@ async function start(): Promise<void> {
         -4.5 * size, 7 * size,
         -5 * size, -4 * size,
       ])
-      .fill(fleetColor)
-      .stroke({ width: 1.4, color: own ? 0xf3e7cb : 0x1b2f3d });
+      .fill(neutral?.fill ?? fleetColor)
+      .stroke({ width: 1.4, color: own ? 0xf3e7cb : neutral?.stroke ?? 0x1b2f3d });
     return hull;
+  }
+
+  function paintNeutralMarker(
+    ink: Graphics,
+    marker: ReturnType<typeof neutralMarker>,
+    cx: number,
+    cy: number,
+  ): void {
+    const size = marker.sizePx;
+    if (marker.shape === "circle") {
+      ink.circle(cx, cy, size).fill(marker.fill).stroke({ width: 1.3, color: marker.stroke });
+    } else if (marker.shape === "diamond") {
+      ink.poly([cx, cy - size, cx + size, cy, cx, cy + size, cx - size, cy])
+        .fill(marker.fill).stroke({ width: 1.3, color: marker.stroke });
+    } else {
+      ink.poly([cx, cy - size, cx + size, cy + size, cx - size, cy + size])
+        .fill(marker.fill).stroke({ width: 1.3, color: marker.stroke });
+    }
+    if (marker.hiredRing) {
+      ink.circle(cx, cy, size + 3).stroke({ width: 1.2, color: 0xd6b45a, alpha: 0.95 });
+    }
+  }
+
+  function updateShipReconMarker(ship: ShipView): void {
+    ship.reconInk.clear();
+    ship.reconInk.visible = false;
+    ship.reconLabel.visible = false;
+    if (!ship.npcKind) return;
+    const marker = neutralMarker(ship.npcKind, ship.npcHired);
+    paintNeutralMarker(ship.reconInk, marker, 0, -22);
+    ship.reconInk.visible = true;
+    ship.reconLabel.text = marker.short;
+    ship.reconLabel.style.fill = marker.stroke;
+    ship.reconLabel.position.set(9, -27);
+    ship.reconLabel.visible = true;
   }
 
   function makeHull(own: boolean, navy: string): Graphics {
@@ -4822,6 +4928,13 @@ async function start(): Promise<void> {
       style: { fontFamily: "Source Sans 3", fontSize: 9, fill: 0xd9b25c },
     });
     lightsLabel.visible = false;
+    const reconInk = new Graphics();
+    reconInk.visible = false;
+    const reconLabel = new Text({
+      text: "",
+      style: { fontFamily: "Source Sans 3", fontSize: 8, fill: 0x4a3220, fontWeight: "600" },
+    });
+    reconLabel.visible = false;
     return {
       id: "",
       hull,
@@ -4852,12 +4965,16 @@ async function start(): Promise<void> {
       statusInk,
       statusLabel,
       lightsLabel,
+      npcKind: null,
+      npcHired: false,
+      reconInk,
+      reconLabel,
       statusKey: "",
     };
   }
 
   function shipDisplayChildren(ship: ShipView): Array<Container | Graphics | Text> {
-    return [ship.hull, ship.ring, ship.flag, ship.flagshipInk, ship.runInk, ship.runLabel, ship.statusInk, ship.statusLabel, ship.lightsLabel];
+    return [ship.hull, ship.ring, ship.flag, ship.flagshipInk, ship.runInk, ship.runLabel, ship.reconInk, ship.reconLabel, ship.statusInk, ship.statusLabel, ship.lightsLabel];
   }
 
   function updateShipStores(ship: OwnShipSnapshot | null): void {
@@ -5471,6 +5588,211 @@ async function start(): Promise<void> {
     capturedSheetPanel.hidden = false;
   }
 
+  // ---- 3H-d: loot, privateer and escort screens --------------------------
+
+  function closeLootSheet(): void {
+    lootSheetPanel.hidden = true;
+    lootTargetId = null;
+  }
+
+  function openLootSheet(targetId: string): void {
+    const contact = npcContacts.get(targetId);
+    if (!contact) return;
+    const target = ships.get(targetId);
+    const looter = selectedFleetShip();
+    const alongside = !!(target && looter &&
+      Math.hypot(target.x - looter.x, target.y - looter.y) <=
+        settings.combat.transferRangeM / 1000);
+    const freeTonnes = looter
+      ? Math.max(0, looter.capacities.cargo - looter.cargoUsed)
+      : 0;
+    const plan = npcLootSheet({
+      name: contact.name,
+      kind: contact.kind,
+      eligible: Array.isArray(contact.lootCargo),
+      lootCargo: contact.lootCargo ?? null,
+      looted: contact.looted === true,
+      freeTonnes,
+      alongside,
+    });
+    lootTargetId = targetId;
+    lootTitle.textContent = plan.title;
+    lootDetail.textContent = plan.detail;
+    lootCargo.replaceChildren();
+    for (const row of plan.cargoRows) {
+      const item = document.createElement("li");
+      const name = document.createElement("span");
+      const tonnes = document.createElement("span");
+      name.textContent = row.name;
+      tonnes.textContent = `${row.tonnes.toFixed(1)} t`;
+      item.append(name, tonnes);
+      lootCargo.append(item);
+    }
+    lootFree.textContent = plan.freeText;
+    lootNotice.textContent = plan.reason ?? "";
+    lootNotice.hidden = plan.reason === null;
+    lootConfirm.textContent = plan.actionLabel;
+    lootConfirm.disabled = !plan.canLoot;
+    privateerSheetPanel.hidden = true;
+    escortSheetPanel.hidden = true;
+    lootSheetPanel.hidden = false;
+  }
+
+  function closePrivateerSheet(): void {
+    privateerSheetPanel.hidden = true;
+    privateerSheetId = null;
+  }
+
+  function privateerInfo(id: string): {
+    name: string;
+    hiredByMe: boolean;
+    hiredByOther: boolean;
+    visible: boolean;
+    mode: NpcModeId;
+    fee: number;
+    remainingGameSeconds: number;
+    escortTargetId: string | null;
+  } | null {
+    const contact = npcContacts.get(id);
+    const escort = npcEscorts.find((row) => row.id === id);
+    if (!contact && !escort) return null;
+    const hiredByMe = contact?.hiredBy === identity.id || !!escort;
+    return {
+      name: contact?.name ?? escort?.name ?? "Privateer",
+      hiredByMe,
+      hiredByOther: contact?.hiredBy !== null && contact?.hiredBy !== undefined && !hiredByMe,
+      visible: !!contact,
+      mode: (contact?.mode ?? escort?.mode ?? "patrol") as NpcModeId,
+      fee: contact?.fee ?? settings.npcs.privateerFee,
+      remainingGameSeconds: contact?.contractRemainingGameSeconds ??
+        escort?.contractRemainingGameSeconds ?? 0,
+      escortTargetId: escort?.targetId ?? null,
+    };
+  }
+
+  function openPrivateerSheet(id: string): void {
+    const info = privateerInfo(id);
+    if (!info) return;
+    const plan = privateerSheet({
+      name: info.name,
+      hiredByMe: info.hiredByMe,
+      hiredByOther: info.hiredByOther,
+      visible: info.visible,
+      mode: info.mode,
+      fee: info.fee,
+      remainingGameSeconds: info.remainingGameSeconds,
+      money,
+    });
+    privateerSheetId = id;
+    privateerTitle.textContent = plan.title;
+    privateerDetail.textContent = plan.detail;
+    privateerContract.textContent = `${plan.contractText} · ${plan.feeText}`;
+    privateerNotice.textContent = plan.reason ?? "";
+    privateerNotice.hidden = plan.reason === null;
+    privateerMode.replaceChildren();
+    for (const mode of plan.modes) {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = `btn${mode.active ? " is-active" : ""}`;
+      button.textContent = mode.label;
+      button.disabled = mode.disabled;
+      button.setAttribute("aria-pressed", String(mode.active));
+      button.addEventListener("click", () => {
+        if (mode.id === "escort") {
+          openEscortSheet(id);
+          return;
+        }
+        sendCommand({ t: "privateerMode", ship: id, mode: mode.id });
+        closePrivateerSheet();
+      });
+      privateerMode.append(button);
+    }
+    privateerActions.replaceChildren();
+    if (!info.hiredByMe) {
+      const hire = document.createElement("button");
+      hire.type = "button";
+      hire.className = "btn btn-seal";
+      hire.textContent = plan.hireLabel;
+      hire.disabled = !plan.canHire;
+      hire.addEventListener("click", () => {
+        sendCommand({ t: "hirePrivateer", ship: id, mode: "raid" });
+        closePrivateerSheet();
+      });
+      const escort = document.createElement("button");
+      escort.type = "button";
+      escort.className = "btn";
+      escort.textContent = plan.escortLabel;
+      escort.disabled = !plan.canHire;
+      escort.addEventListener("click", () => openEscortSheet(id));
+      privateerActions.append(hire, escort);
+    } else {
+      const escort = document.createElement("button");
+      escort.type = "button";
+      escort.className = "btn";
+      escort.textContent = "Escort a ship…";
+      escort.addEventListener("click", () => openEscortSheet(id));
+      privateerActions.append(escort);
+    }
+    lootSheetPanel.hidden = true;
+    escortSheetPanel.hidden = true;
+    privateerSheetPanel.hidden = false;
+  }
+
+  function closeEscortSheet(): void {
+    escortSheetPanel.hidden = true;
+    escortPrivateerId = null;
+  }
+
+  function openEscortSheet(privateerId: string): void {
+    const info = privateerInfo(privateerId);
+    if (!info) return;
+    const targets = fleetShips
+      .filter((ship) => ship.status !== "delivery")
+      .map((ship) => ({ id: ship.id, name: ship.name, classId: ship.classId }));
+    const plan = escortSheet({
+      privateerName: info.name,
+      hiredByMe: info.hiredByMe,
+      fee: settings.npcs.escortFee,
+      money,
+      targets,
+      selectedTargetId: info.escortTargetId ?? selectedShipId,
+    });
+    escortPrivateerId = privateerId;
+    escortTitle.textContent = plan.title;
+    escortDetail.textContent = plan.hint;
+    escortFee.textContent = plan.feeText;
+    escortNotice.textContent = plan.reason ?? "";
+    escortNotice.hidden = plan.reason === null;
+    escortTarget.replaceChildren();
+    for (const row of plan.targets) {
+      const option = document.createElement("option");
+      option.value = row.id;
+      option.textContent = `${row.name} · ${row.classId}`;
+      option.selected = row.selected;
+      escortTarget.append(option);
+    }
+    escortTarget.disabled = plan.targets.length === 0;
+    escortTarget.value = plan.selectedTargetId ?? "";
+    escortConfirm.textContent = plan.confirmLabel;
+    escortConfirm.disabled = !plan.canConfirm;
+    privateerSheetPanel.hidden = true;
+    lootSheetPanel.hidden = true;
+    escortSheetPanel.hidden = false;
+  }
+
+  function refreshEscortStrip(): void {
+    const plan = escortStrip(npcEscorts.map((escort) => ({
+      id: escort.id,
+      name: escort.name,
+      mode: escort.mode,
+      targetName: escort.targetName,
+      contractRemainingGameSeconds: escort.contractRemainingGameSeconds,
+    })));
+    escortStripText.textContent = plan.text;
+    escortStripPanel.hidden = !plan.shown;
+    escortStripOpen.hidden = !plan.shown;
+  }
+
   function openSurrenderConfirm(shipId: string): void {
     const row = shipById(shipId);
     if (!row || row.surrendered) return;
@@ -5529,22 +5851,43 @@ async function start(): Promise<void> {
     if (selectedEnemyId && !ships.has(selectedEnemyId)) selectedEnemyId = null;
     const enemy = selectedEnemyId ? ships.get(selectedEnemyId) : null;
     if (enemy) {
-      const key = `enemy:${enemy.id}:${enemy.navy}:${enemy.classId}`;
+      const contact = npcContacts.get(enemy.id);
+      const hiredByMe = contact?.hiredBy === identity.id;
+      const hiredByOther = contact?.hiredBy !== null && contact?.hiredBy !== undefined && !hiredByMe;
+      const key = [
+        "enemy", enemy.id, enemy.navy, enemy.classId, enemy.npcKind ?? "",
+        enemy.abandoned ? "abandoned" : "", enemy.surrendered ? "surrendered" : "",
+        contact?.hiredBy ?? "", contact?.mode ?? "", contact?.looted ? "looted" : "",
+      ].join("|");
       if (key === battleBarKey) return;
       battleBarKey = key;
-      battleBarTitle.textContent = `${enemy.navy} ${enemy.classId}`;
+      const title = enemy.npcKind
+        ? `${npcKindLabel(enemy.npcKind)} ${enemy.classId}${contact?.name ? ` · ${contact.name}` : ""}`
+        : `${enemy.navy} ${enemy.classId}`;
+      battleBarTitle.textContent = title;
       battleBarActions.replaceChildren();
-      const action = document.createElement("button");
-      action.type = "button";
-      action.className = "btn btn-seal";
-      if (enemy.abandoned) {
-        action.textContent = "Claim";
-        action.addEventListener("click", () => openCrewSheet(enemy.id, true));
-      } else if (!enemy.surrendered) {
-        action.textContent = "Board";
-        action.addEventListener("click", () => openBoardSheet(enemy.id));
+      const npcAction = (action: string): (() => void) => {
+        if (action === "manageContract" || action === "hirePrivateer") {
+          return () => openPrivateerSheet(enemy.id);
+        }
+        if (action === "loot") return () => openLootSheet(enemy.id);
+        if (action === "claim") return () => openCrewSheet(enemy.id, true);
+        return () => openBoardSheet(enemy.id);
+      };
+      for (const item of npcBattleActions({
+        kind: enemy.npcKind,
+        hiredByMe,
+        hiredByOther,
+        abandoned: enemy.abandoned,
+        surrendered: enemy.surrendered,
+      })) {
+        const button = document.createElement("button");
+        button.type = "button";
+        button.className = `btn${item.seal ? " btn-seal" : ""}`;
+        button.textContent = item.label;
+        button.addEventListener("click", npcAction(item.id));
+        battleBarActions.append(button);
       }
-      if (action.textContent) battleBarActions.append(action);
       battleBar.hidden = false;
       document.body.classList.add("has-battle-bar");
       return;
@@ -6217,6 +6560,61 @@ async function start(): Promise<void> {
         }
       }
     }
+
+    // Neutral contacts are visible identities only. Cargo is present only
+    // when the server says the hull is abandoned or has struck.
+    const incomingContacts = new Map<string, NpcContactSnapshot>();
+    if (Array.isArray(state.npcs)) {
+      for (const raw of state.npcs) {
+        if (!raw || typeof raw !== "object") continue;
+        const row = raw as unknown as Record<string, unknown>;
+        if (typeof row.id !== "string") continue;
+        if (row.kind !== "merchant" && row.kind !== "whaler" && row.kind !== "privateer") continue;
+        if (row.mode !== "patrol" && row.mode !== "escort" && row.mode !== "raid") continue;
+        const cargo: NpcContactSnapshot["lootCargo"] = [];
+        if (Array.isArray(row.lootCargo)) {
+          for (const rawCargo of row.lootCargo) {
+            if (!rawCargo || typeof rawCargo !== "object") continue;
+            const line = rawCargo as Record<string, unknown>;
+            if (typeof line.good !== "string" || !(GOOD_IDS as readonly string[]).includes(line.good)) continue;
+            const tonnes = finiteNumber(line.tonnes);
+            if (tonnes === null || tonnes <= 0) continue;
+            cargo.push({ good: line.good as GoodId, tonnes });
+          }
+        }
+        incomingContacts.set(row.id, {
+          id: row.id,
+          name: typeof row.name === "string" ? row.name : row.id,
+          kind: row.kind,
+          groupId: typeof row.groupId === "string" ? row.groupId : "",
+          homePortId: typeof row.homePortId === "string" ? row.homePortId : null,
+          hiredBy: typeof row.hiredBy === "string" ? row.hiredBy : null,
+          mode: row.mode,
+          contractRemainingGameSeconds: Math.max(0, Math.round(finiteNumber(row.contractRemainingGameSeconds) ?? 0)),
+          fee: Math.max(0, Math.round(finiteNumber(row.fee) ?? 0)),
+          ...(Array.isArray(row.lootCargo) ? { lootCargo: cargo, looted: row.looted === true } : {}),
+        });
+      }
+      npcContacts = incomingContacts;
+    } else if (state.full === true) {
+      npcContacts.clear();
+    }
+
+    if (Array.isArray(state.escorts)) {
+      npcEscorts = state.escorts
+        .filter((row): row is EscortSnapshot =>
+          !!row && typeof row.id === "string" && typeof row.name === "string" &&
+          (row.mode === "patrol" || row.mode === "escort" || row.mode === "raid"),
+        )
+        .map((row) => ({
+          ...row,
+          targetId: typeof row.targetId === "string" ? row.targetId : null,
+          targetName: typeof row.targetName === "string" ? row.targetName : null,
+          contractRemainingGameSeconds: Math.max(0, Math.round(row.contractRemainingGameSeconds ?? 0)),
+        }));
+    } else if (state.full === true) {
+      npcEscorts = [];
+    }
     if (state.ships && Array.isArray(state.trailReset)) {
       for (const id of state.trailReset) {
         if (typeof id === "string") trailPoints.delete(id);
@@ -6475,6 +6873,10 @@ async function start(): Promise<void> {
       seen.add(id);
       let ship = ships.get(id);
       const ownHere = ownIds.has(id);
+      const npcFlag = snapshot[9] === 1;
+      const npcKind = npcFlag ? asNpcKind(snapshot[10]) : null;
+      const contact = npcContacts.get(id);
+      const npcHired = contact ? contact.hiredBy !== null : false;
       if (!ship) {
         ship = shipPool.pop() ?? createShipView();
         ship.id = id;
@@ -6485,7 +6887,10 @@ async function start(): Promise<void> {
         ship.heading = headingRad;
         ship.motion.reset(receivedAtSeconds, x, y, headingRad);
         ship.statusKey = "";
-        paintHull(ship.hull, ownHere, navy);
+        ship.npcKind = npcKind;
+        ship.npcHired = npcHired;
+        paintHull(ship.hull, ownHere, navy, npcKind, npcHired);
+        updateShipReconMarker(ship);
         ship.ring.clear();
         ship.ring.visible = false;
         ship.flag.visible = false;
@@ -6512,6 +6917,12 @@ async function start(): Promise<void> {
       ship.navy = navy;
       ship.dockedPortId = dockedPortId;
       ship.waitingPortId = waitingPortId;
+      if (ship.npcKind !== npcKind || ship.npcHired !== npcHired) {
+        ship.npcKind = npcKind;
+        ship.npcHired = npcHired;
+        paintHull(ship.hull, ownHere, navy, npcKind, npcHired);
+        updateShipReconMarker(ship);
+      }
       const snapshotHeading = headingDeg * (Math.PI / 180);
       if (fullSnapshot) {
         ship.motion.reset(receivedAtSeconds, x, y, snapshotHeading);
@@ -6583,6 +6994,9 @@ async function start(): Promise<void> {
     safeLayer("battle bar", renderBattleBar);
     safeLayer("surrender offer", renderSurrenderOffer);
     safeLayer("status screens", renderEndScreens);
+    if (lootTargetId && !npcContacts.has(lootTargetId)) closeLootSheet();
+    if (privateerSheetId && !privateerInfo(privateerSheetId)) closePrivateerSheet();
+    refreshEscortStrip();
 
     if (Array.isArray(state.l)) lastSeen = state.l;
     drawLastSeen();
@@ -7185,6 +7599,33 @@ async function start(): Promise<void> {
   });
   boardCancel.addEventListener("click", closeBoardSheet);
   boardClose.addEventListener("click", closeBoardSheet);
+  lootCancel.addEventListener("click", closeLootSheet);
+  lootClose.addEventListener("click", closeLootSheet);
+  lootConfirm.addEventListener("click", () => {
+    if (!lootTargetId) return;
+    sendCommand({ t: "loot", target: lootTargetId, ship: selectedShipId });
+    closeLootSheet();
+  });
+  privateerClose.addEventListener("click", closePrivateerSheet);
+  escortCancel.addEventListener("click", closeEscortSheet);
+  escortClose.addEventListener("click", closeEscortSheet);
+  escortConfirm.addEventListener("click", () => {
+    if (!escortPrivateerId) return;
+    const info = privateerInfo(escortPrivateerId);
+    if (!info) return;
+    const target = escortTarget.value;
+    sendCommand({
+      t: info.hiredByMe ? "privateerMode" : "hirePrivateer",
+      ship: escortPrivateerId,
+      mode: "escort",
+      ...(target ? { target } : {}),
+    });
+    closeEscortSheet();
+  });
+  escortStripOpen.addEventListener("click", () => {
+    const first = npcEscorts[0];
+    if (first) openPrivateerSheet(first.id);
+  });
   boardConfirm.addEventListener("click", () => {
     if (!boardTargetId || !selectedShipId) return;
     sendCommand({ t: "board", ship: selectedShipId, target: boardTargetId, confirm: true });

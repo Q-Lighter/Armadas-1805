@@ -34,7 +34,7 @@ function equal(a: unknown, b: unknown): boolean {
 
 function changedFields(previous: StateMessage, current: StateMessage, includeFleet: boolean): Record<string, unknown> {
   const fields: Record<string, unknown> = {};
-  for (const key of ["m", "sel", "sp", "h", "d", "sv", "out", "go", "roster", "ports", "fleets", "groups", "chart", "l", "npcs", "trailAdds", "trailReset", "lostMarks"] as const) {
+  for (const key of ["m", "sel", "sp", "h", "d", "sv", "out", "go", "roster", "ports", "fleets", "groups", "chart", "l", "npcs", "escorts", "trailAdds", "trailReset", "lostMarks"] as const) {
     if (!equal(previous[key], current[key])) fields[key] = current[key];
   }
   if (includeFleet) fields.fleet = current.fleet;

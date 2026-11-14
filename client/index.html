@@ -130,6 +130,53 @@
       </div>
     </section>
 
+    <!-- 3H-d: loot a surrendered or abandoned neutral prize. Cargo is only
+         filled after the server marks the hull lootable. -->
+    <section class="surrender-sheet npc-sheet paper" id="loot-sheet" role="dialog" aria-labelledby="loot-title" hidden>
+      <div class="panel-head">
+        <div><p class="kicker">Prize goods</p><h2 id="loot-title">Loot</h2></div>
+        <button class="btn panel-close" id="loot-close" type="button">Close</button>
+      </div>
+      <p class="surrender-offer-detail" id="loot-detail"></p>
+      <ul class="loot-cargo" id="loot-cargo"></ul>
+      <p class="loot-free" id="loot-free"></p>
+      <p class="surrender-offer-reason" id="loot-notice" hidden></p>
+      <div class="surrender-offer-actions">
+        <button class="btn" id="loot-cancel" type="button">Cancel</button>
+        <button class="btn btn-seal" id="loot-confirm" type="button">Loot &amp; leave</button>
+      </div>
+    </section>
+
+    <!-- 3H-d: privateer contract, mode and fee. -->
+    <section class="surrender-sheet npc-sheet paper" id="privateer-sheet" role="dialog" aria-labelledby="privateer-title" hidden>
+      <div class="panel-head">
+        <div><p class="kicker">Privateer</p><h2 id="privateer-title">Privateer</h2></div>
+        <button class="btn panel-close" id="privateer-close" type="button">Close</button>
+      </div>
+      <p class="surrender-offer-detail" id="privateer-detail"></p>
+      <p class="surrender-offer-fleet" id="privateer-contract"></p>
+      <div class="npc-mode-grid" id="privateer-mode" aria-label="Privateer mode"></div>
+      <p class="surrender-offer-reason" id="privateer-notice" hidden></p>
+      <div class="surrender-offer-actions" id="privateer-actions"></div>
+    </section>
+
+    <!-- 3H-d: choose which of your ships a privateer escorts. -->
+    <section class="surrender-sheet npc-sheet paper" id="escort-sheet" role="dialog" aria-labelledby="escort-title" hidden>
+      <div class="panel-head">
+        <div><p class="kicker">Escort contract</p><h2 id="escort-title">Escort</h2></div>
+        <button class="btn panel-close" id="escort-close" type="button">Close</button>
+      </div>
+      <p class="surrender-offer-detail" id="escort-detail"></p>
+      <p class="surrender-offer-fleet" id="escort-fee"></p>
+      <label class="heading-value" for="escort-target">Ship to escort</label>
+      <select id="escort-target"></select>
+      <p class="surrender-offer-reason" id="escort-notice" hidden></p>
+      <div class="surrender-offer-actions">
+        <button class="btn" id="escort-cancel" type="button">Cancel</button>
+        <button class="btn btn-seal" id="escort-confirm" type="button">Set escort</button>
+      </div>
+    </section>
+
     <!-- A surrender always asks once more before the flag goes up. -->
     <section class="surrender-confirm paper" id="surrender-confirm" role="dialog" aria-labelledby="surrender-confirm-title" hidden>
       <p class="kicker">Battle orders</p>
@@ -452,6 +499,10 @@
 
     <p class="chart-notice" id="notice" role="status" aria-live="polite" hidden></p>
     <p class="capture-strip" id="capture-strip" role="status" aria-live="polite" hidden></p>
+    <section class="escort-strip paper" id="escort-strip" role="status" aria-live="polite" aria-label="Privateer contracts" hidden>
+      <span id="escort-strip-text"></span>
+      <button class="btn" id="escort-open" type="button">Manage</button>
+    </section>
 
     <!-- 3E: resign confirmation. The choice is final. -->
     <section class="surrender-sheet paper" id="resign-sheet" role="dialog" aria-labelledby="resign-title" hidden>

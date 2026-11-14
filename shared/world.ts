@@ -490,9 +490,19 @@ export type ShipSnapshot = [
 
 export type NpcKind = "merchant" | "whaler" | "privateer";
 
-/** Public neutral identity. Cargo is deliberately absent until it is looted. */
+/** One visible cargo line on a neutral hull that may now be looted. */
+export interface NpcLootCargoSnapshot {
+  good: GoodId;
+  tonnes: number;
+}
+
+/**
+ * Public neutral identity. Cargo is deliberately absent until the hull is
+ * abandoned or has struck, so an unboarded ship never reveals its hold.
+ */
 export interface NpcContactSnapshot {
   id: string;
+  name: string;
   kind: NpcKind;
   groupId: string;
   homePortId: string | null;
@@ -500,6 +510,20 @@ export interface NpcContactSnapshot {
   mode: "patrol" | "escort" | "raid";
   contractRemainingGameSeconds: number;
   fee: number;
+  /** Present only after surrender or abandonment. */
+  lootCargo?: NpcLootCargoSnapshot[];
+  /** True once another player has already emptied this prize. */
+  looted?: boolean;
+}
+
+/** A hired privateer that is always listed to its owner, even out of sight. */
+export interface EscortSnapshot {
+  id: string;
+  name: string;
+  mode: "patrol" | "escort" | "raid";
+  targetId: string | null;
+  targetName: string | null;
+  contractRemainingGameSeconds: number;
 }
 
 /** What a player may see of one port's trade. */
@@ -564,7 +588,7 @@ export interface NoticeMessage {
 }
 
 /** Last-seen marker: class, navy, position, age in game seconds. */
-export type LastSeenSnapshot = [string, string, number, number, number];
+export type LastSeenSnapshot = [string, string, number, number, number, NpcKind?];
 
 export type ShipStatus = "sailing" | "docked" | "waiting" | "delivery";
 
@@ -856,8 +880,10 @@ export interface StateMessage {
   go?: GameOverState;
   /** New own trail points since the last update, never another player's. */
   trailAdds?: Record<string, Array<[number, number]>>;
-  /** 3H-c: visible neutral identities, never their cargo. */
+  /** 3H-c/D: visible neutral identities; cargo only after surrender. */
   npcs?: NpcContactSnapshot[];
+  /** 3H-d: the player's hired privateers and their remaining contract time. */
+  escorts?: EscortSnapshot[];
   /** Own trails that ended or were cleared since the last update. */
   trailReset?: string[];
   /** Own lost-ship X marks, kept until the game ends. */
@@ -9030,7 +9056,9 @@ export function visibleStateFor(
   const allShips: Ship[] = [];
   for (const fleet of world.fleets.values()) allShips.push(...fleet);
   for (const fleet of world.botFleets.values()) allShips.push(...fleet);
-  allShips.push(...world.npcShips.filter((ship) => !ship.abandoned && !ship.npcClaimed));
+  // An abandoned neutral hull stays afloat and lootable, so it remains in the
+  // visible ship list; only a claimed hull has left the neutral layer.
+  allShips.push(...world.npcShips.filter((ship) => !ship.npcClaimed));
   for (const entry of world.sinkingShips) {
     if (!allShips.some((ship) => ship.id === entry.ship.id)) allShips.push(entry.ship);
   }
@@ -9067,19 +9095,22 @@ export function visibleStateFor(
       x: Number(ship.x.toFixed(2)),
       y: Number(ship.y.toFixed(2)),
       atGameSeconds: world.gameSeconds,
+      npcKind: ship.isNpc ? ship.npcKind ?? "merchant" : null,
     });
   }
 
   const lastSeen: LastSeenSnapshot[] = [];
   for (const [id, seen] of chart.seen) {
     if (visibleIds.has(id)) continue;
-    lastSeen.push([
+    const lastSeenRow: LastSeenSnapshot = [
       seen.classId,
       seen.navy,
       seen.x,
       seen.y,
       Math.max(0, Math.round(world.gameSeconds - seen.atGameSeconds)),
-    ]);
+    ];
+    if (seen.npcKind) lastSeenRow.push(seen.npcKind as NpcKind);
+    lastSeen.push(lastSeenRow);
   }
 
   // Free places are only for a port where this player already has a berth.
@@ -9471,19 +9502,53 @@ export function visibleStateFor(
 
   const npcContacts: NpcContactSnapshot[] = world.npcShips
     .filter((ship) => visibleIds.has(ship.id))
-    .map((ship) => ({
-      id: ship.id,
-      kind: ship.npcKind ?? "merchant",
-      groupId: ship.npcGroupId ?? "",
-      homePortId: ship.npcHomePortId ?? null,
-      hiredBy: ship.npcHiredBy ?? null,
-      mode: ship.npcMode ?? "patrol",
-      contractRemainingGameSeconds: Math.max(
-        0,
-        Math.round(((ship.npcContractUntilGameMs ?? 0) - world.gameMs) / 1000),
-      ),
-      fee: ship.npcFee ?? 0,
-    }));
+    .map((ship) => {
+      const lootable = ship.abandoned === true || ship.surrendered === true ||
+        ship.crew <= 0;
+      const contact: NpcContactSnapshot = {
+        id: ship.id,
+        name: ship.name,
+        kind: ship.npcKind ?? "merchant",
+        groupId: ship.npcGroupId ?? "",
+        homePortId: ship.npcHomePortId ?? null,
+        hiredBy: ship.npcHiredBy ?? null,
+        mode: ship.npcMode ?? "patrol",
+        contractRemainingGameSeconds: Math.max(
+          0,
+          Math.round(((ship.npcContractUntilGameMs ?? 0) - world.gameMs) / 1000),
+        ),
+        fee: ship.npcFee ?? 0,
+      };
+      // Cargo is a post-surrender detail. An ordinary neutral contact stays
+      // identity-only, which is what keeps an unboarded hold secret.
+      if (lootable) {
+        contact.lootCargo = TRADE_GOOD_IDS
+          .map((good) => ({ good, tonnes: Math.max(0, ship.stores.cargo[good] ?? 0) }))
+          .filter((row) => row.tonnes > 0)
+          .map((row) => ({ good: row.good, tonnes: Math.round(row.tonnes * 10) / 10 }));
+        contact.looted = ship.npcLooted === true;
+      }
+      return contact;
+    });
+
+  const escorts: EscortSnapshot[] = world.npcShips
+    .filter((ship) => ship.npcHiredBy === playerId)
+    .map((ship) => {
+      const target = ship.npcEscortTargetId
+        ? own.find((candidate) => candidate.id === ship.npcEscortTargetId)
+        : undefined;
+      return {
+        id: ship.id,
+        name: ship.name,
+        mode: ship.npcMode ?? "patrol",
+        targetId: ship.npcEscortTargetId ?? null,
+        targetName: target?.name ?? null,
+        contractRemainingGameSeconds: Math.max(
+          0,
+          Math.round(((ship.npcContractUntilGameMs ?? 0) - world.gameMs) / 1000),
+        ),
+      };
+    });
 
   const state: StateMessage = {
     t: "s",
@@ -9503,7 +9568,8 @@ export function visibleStateFor(
     fleets: includeFleet ? fleetSnapshotsFor(world, playerId) : [],
     groups: world.controlGroups.get(playerId) ?? {},
   };
-  if (npcContacts.length > 0) state.npcs = npcContacts;
+  state.npcs = npcContacts;
+  state.escorts = escorts;
   if (Object.keys(trailAdds).length > 0) state.trailAdds = trailAdds;
   if (trailReset.length > 0) state.trailReset = trailReset;
   if ((owner?.lostMarks.length ?? 0) > 0) {

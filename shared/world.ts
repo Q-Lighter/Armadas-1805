@@ -5683,7 +5683,9 @@ function stepContactFireShip(
     pushNoticeOnce(world, ownerId, ship.id, "cannotReach", "Cannot reach: target is faster");
     return true;
   }
-  ship.order = { type: "sailTo", x: target.x, y: target.y };
+  // Same predicted-intercept aim as boarding, not a plain chase.
+  const aim = boardingPredictedPoint(ship, target);
+  ship.order = { type: "sailTo", x: aim.x, y: aim.y };
   ship.route = null;
   return false;
 }

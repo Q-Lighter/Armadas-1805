@@ -7348,12 +7348,19 @@ function separateShips(world: World, dtGameSeconds: number): boolean {
         mate.speedKnots = Math.min(mate.speedKnots, cap);
       }
       if (distance > 1e-6) {
-        const away = Math.atan2(-dx, dy);
-        const turn = shortestTurnDegrees(ship.headingRad, away) * Math.PI / 180;
-        ship.headingRad += Math.max(-maxTurn, Math.min(maxTurn, turn));
-        const awayMate = Math.atan2(dx, -dy);
-        const turnMate = shortestTurnDegrees(mate.headingRad, awayMate) * Math.PI / 180;
-        mate.headingRad += Math.max(-maxTurn, Math.min(maxTurn, turnMate));
+        // A hove-to or anchored hull must not swing every tick just because a
+        // neighbour is inside the avoid band. Only steer hulls that are under
+        // way; the hard push below still protects stopped ships.
+        if (ship.speedKnots > 0.2) {
+          const away = Math.atan2(-dx, dy);
+          const turn = shortestTurnDegrees(ship.headingRad, away) * Math.PI / 180;
+          ship.headingRad += Math.max(-maxTurn, Math.min(maxTurn, turn));
+        }
+        if (mate.speedKnots > 0.2) {
+          const awayMate = Math.atan2(dx, -dy);
+          const turnMate = shortestTurnDegrees(mate.headingRad, awayMate) * Math.PI / 180;
+          mate.headingRad += Math.max(-maxTurn, Math.min(maxTurn, turnMate));
+        }
       }
       if (distance < minKm) {
         const need = (minKm + settings.fleets.separationClearanceM / 1000 - distance) / 2;

@@ -6,6 +6,7 @@
 
 import { Application, Container, Graphics, RenderTexture, Sprite, Text, Texture } from "pixi.js";
 import { settings } from "@naval/shared/settings";
+import { MotionTrack } from "@naval/shared/render-motion";
 import { MAP_HEIGHT_KM, MAP_WIDTH_KM, lonLatToMap } from "@naval/shared/map";
 import {
   blockIdForCell,
@@ -309,10 +310,6 @@ const COMPASS_POINTS = [
 function compassPoint(degrees: number): string {
   const wrapped = ((degrees % 360) + 360) % 360;
   return COMPASS_POINTS[Math.round(wrapped / 22.5) % 16] ?? "N";
-}
-
-function shortestRadians(delta: number): number {
-  return ((delta + Math.PI * 3) % (Math.PI * 2)) - Math.PI;
 }
 
 function clamp(value: number, min: number, max: number): number {
@@ -676,9 +673,7 @@ interface ShipView {
   x: number;
   y: number;
   heading: number;
-  targetX: number;
-  targetY: number;
-  targetHeading: number;
+  motion: MotionTrack;
   dockedPortId: string | null;
   waitingPortId: string | null;
   surrendered: boolean;
@@ -4635,9 +4630,7 @@ async function start(): Promise<void> {
       x: 0,
       y: 0,
       heading: 0,
-      targetX: 0,
-      targetY: 0,
-      targetHeading: 0,
+      motion: new MotionTrack(12, settings.client.renderExtrapolationMs / 1_000),
       dockedPortId: null,
       waitingPortId: null,
       surrendered: false,
@@ -5916,6 +5909,8 @@ async function start(): Promise<void> {
   function applyStateMessage(state: StateMessage): void {
     if (!Array.isArray(state.ships)) return;
     if (typeof state.tick === "number") latestTick = state.tick;
+    const receivedAtSeconds = performance.now() / 1_000;
+    const fullSnapshot = state.full === true;
     const receivedGameMs = Number(state.g);
     if (Number.isFinite(receivedGameMs)) {
       clockTargetMs = receivedGameMs;
@@ -6259,9 +6254,11 @@ async function start(): Promise<void> {
         ship = shipPool.pop() ?? createShipView();
         ship.id = id;
         ship.own = ownHere;
+        const headingRad = headingDeg * (Math.PI / 180);
         ship.x = x;
         ship.y = y;
-        ship.heading = headingDeg * (Math.PI / 180);
+        ship.heading = headingRad;
+        ship.motion.reset(receivedAtSeconds, x, y, headingRad);
         ship.statusKey = "";
         paintHull(ship.hull, ownHere, navy);
         ship.ring.clear();
@@ -6284,9 +6281,12 @@ async function start(): Promise<void> {
       ship.navy = navy;
       ship.dockedPortId = dockedPortId;
       ship.waitingPortId = waitingPortId;
-      ship.targetX = x;
-      ship.targetY = y;
-      ship.targetHeading = headingDeg * (Math.PI / 180);
+      const snapshotHeading = headingDeg * (Math.PI / 180);
+      if (fullSnapshot) {
+        ship.motion.reset(receivedAtSeconds, x, y, snapshotHeading);
+      } else {
+        ship.motion.push(receivedAtSeconds, x, y, snapshotHeading);
+      }
       const ownRow = ownIds.has(id) ? fleetShips.find((row) => row.id === id) : undefined;
       ship.surrendered = ownRow?.surrendered === true || surrenderFlags.has(id);
       ship.running = ownRow?.running === true;
@@ -7570,7 +7570,6 @@ async function start(): Promise<void> {
       refreshMap(now, true);
     }
 
-    const dt = Math.min(0.1, app.ticker.deltaMS / 1000);
     const frameGap = lastFrameAt === 0 ? 0 : now - lastFrameAt;
     lastFrameAt = now;
     if (frameGap > 0) {
@@ -7584,19 +7583,27 @@ async function start(): Promise<void> {
     flushPendingState();
     updateClockAndNight(now);
     const own = selectedShipView();
+    const renderAtSeconds = (now - settings.client.renderDelayMs) / 1_000;
 
+    // Follow the same interpolated position the hull uses, so the camera and
+    // selection ring never disagree or fight each other.
     if (view.follow && own && mode === "ship") {
-      view.x = own.x;
-      view.y = own.y;
+      const ownMotion = own.motion.sample(renderAtSeconds);
+      if (ownMotion) {
+        view.x = ownMotion.x;
+        view.y = ownMotion.y;
+      }
     }
 
-    const ease = 1 - Math.exp(-7 * dt);
     const flagScale = clamp(8 / Math.max(1, view.kmAcross), 0.65, 1.6);
     for (const ship of ships.values()) {
       safeLayer(`ship ${ship.id}`, () => {
-        ship.x += (ship.targetX - ship.x) * ease;
-        ship.y += (ship.targetY - ship.y) * ease;
-        ship.heading += shortestRadians(ship.targetHeading - ship.heading) * ease;
+        const motion = ship.motion.sample(renderAtSeconds);
+        if (motion) {
+          ship.x = motion.x;
+          ship.y = motion.y;
+          ship.heading = motion.heading;
+        }
 
         const screen = toScreen(ship.x, ship.y);
         ship.hull.position.set(screen.x, screen.y);

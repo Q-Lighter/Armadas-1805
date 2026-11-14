@@ -2997,3 +2997,62 @@ quietly tuning unrelated combat.
   The harness cannot dispatch real `PointerEvent`s; taps go through the client's
   real map-tap function instead. The second client shares one process and one
   GameRoom, not a separate device.
+
+## 3G-fix-b: smooth sailing with many ships
+
+### Server cost by commit
+
+Node proxy, two players and 10/30/60/100 ships (half in a battle zone), median
+of three seeded runs of 100 real-loop world steps. `ms` is world step time;
+`KB/s` is encoded delta bytes per player per second at 10 Hz.
+
+| Ships | 3F last | 3G-a | 3G-b | 3G-c | Part-A HEAD |
+|---|---|---|---|---|---|
+| 10 | 0.35 ms / 5.2 KB | 0.36 / 5.2 | 0.40 / 5.3 | 0.37 / 5.3 | 0.27 / 5.3 |
+| 30 | 0.52 / 10.1 | 0.50 / 10.1 | 0.51 / 10.1 | 0.51 / 10.1 | 0.50 / 10.1 |
+| 60 | 0.93 / 17.5 | 0.92 / 18.0 | 0.94 / 18.0 | 0.97 / 18.0 | 0.99 / 18.0 |
+| 100 | 1.58 / 28.0 | 1.57 / 28.0 | 1.63 / 28.0 | 1.55 / 28.0 | 1.50 / 28.0 |
+
+No commit produced a server-step or bandwidth jump. 3G-b is about 0.05 ms
+slower at 100 ships and 47 bytes per player per second larger; that is the
+fire/tow/lights bookkeeping, not the jank. The cause was client-side: every
+snapshot replaced the draw target, and the old exponential easing chased it
+(37% median / 77% p95 / 182% worst frame-step error against steady speed at
+5 Hz with jitter and a dropped packet). The separation pass also turned hove-to
+hulls by about 19 degrees in 60 seconds just because a neighbour was inside the
+80 m avoid band.
+
+### What changed
+
+- Added `shared/renderMotion.ts`, a fixed-delay (150 ms) snapshot track. The
+  client draws the position at `now - 150 ms`, interpolates between the two
+  surrounding snapshots, continues on the last velocity for at most 400 ms
+  across a dropped packet, and turns headings the short way round. The camera
+  follows the same sampled own-ship position, so it cannot fight the ring.
+- The server already uses a fixed 10 Hz world step; it was left fixed. The new
+  Draft limit is `settings.server.maxWorldStepMs = 16`.
+- Separation now steers only hulls that are under way. Stopped/hove-to ships are
+  still protected by the hard 41 m push but no longer swing every tick.
+- Tests: 5/10 Hz jitter + dropped-packet render plan for 1, 10 and 40 ships,
+  short-way 359-to-1 heading, straight sea order with and without 40 ships,
+  five hove-to ships at 60-100 m for 60 s, and a 100-ship step under 16 ms.
+
+### After
+
+- Client frame-step error: 0.0% median, 0.0% p95, 0.0% worst (from 37.3%/76.9%/
+  182.2%).
+- Hove-to heading swing in 60 s: 0.00 degrees (from 18.73 degrees); position
+  drift stays 0 m.
+- 100-ship world step after the change: 1.56 ms / 28,025 bytes per player per
+  second (Part-A HEAD: 1.50 ms / 28,026).
+
+### Checks
+
+- `npm test`: passed (471 tests).
+- `npm run build`: passed.
+- `npm run test:e2e`: passed.
+- The performance panel already exists behind `&perf=1`; it shows frame rate,
+  frame time, ping, bytes/s, snapshot age, server step time and ships drawn.
+- No browser is available in this workspace, so these are measured proxies, not
+  a visual review. The harness cannot dispatch real `PointerEvent`s and the
+  second client is a second jsdom page in the same process, not a second device.

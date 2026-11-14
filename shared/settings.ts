@@ -47,6 +47,10 @@ export const settings = {
     maxLiveEffects: 150,
     /** Draft: same-fleet ships closer than this on screen share one marker. */
     fleetGroupPx: 14,
+    /** Draw the world this far behind the newest snapshot, in milliseconds. */
+    renderDelayMs: 150,
+    /** Longest motion extrapolation across a dropped packet, in milliseconds. */
+    renderExtrapolationMs: 400,
     /** Draft: selected-ship panel refresh rate. */
     shipPanelHz: 2,
     /** Draft: Fleet card and battle-log refresh rate. */
@@ -911,6 +915,8 @@ export const settings = {
   server: {
     /** World updates per real second. Draft: 10. */
     tickHz: 10,
+    /** Draft: a 100-ship world step must stay under this many milliseconds. */
+    maxWorldStepMs: 16,
     /** Updates sent to each player per real second. Draft: 5. */
     broadcastHz: 5,
     /** Longest room code accepted from the web address. Draft: 24. */

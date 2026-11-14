@@ -261,6 +261,10 @@
     "./dom-throttle": {
       "types": "./dist/domThrottle.d.ts",
       "default": "./dist/domThrottle.js"
+    },
+    "./render-motion": {
+      "types": "./dist/renderMotion.d.ts",
+      "default": "./dist/renderMotion.js"
     }
   },
   "files": [

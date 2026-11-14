@@ -357,7 +357,7 @@ let towerWorld = worldFleet(bootRoom, alphaId).find((ship) => ship.id === tower.
 assert.equal(towerWorld.towedShipId, secondFireWorld.id, "server stores the tow");
 assert.equal(towWorld.towerShipId, tower.id, "fire ship knows its tower");
 // Sail the pair: both move at the same pair speed, tower speed less 2 knots.
-const pairTargetY = towerWorld.y - 3;
+const pairTargetY = towerWorld.y - 0.6;
 tapWorld(alpha, towerWorld.x, pairTargetY);
 advanceMs(3_000);
 towerWorld = worldFleet(bootRoom, alphaId).find((ship) => ship.id === tower.id);

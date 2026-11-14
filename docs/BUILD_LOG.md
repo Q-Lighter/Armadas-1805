@@ -3427,3 +3427,54 @@ rules, and print the balance report and simulated first hour.
 - Part A stores and reports HOOK effects only; weather, night sight, depth,
   income, healing, port log, alliances and trade-route income are not built.
 - The server, visible-state filtering and screens arrive in Parts B and C.
+
+## Session 3I-b: research and upgrades on the server
+
+**Date:** 2026-11-14
+**Branch:** main
+
+### What was built
+
+- One `NavyResearch` pool per navy in the room, shared by every teammate,
+  created for all four navies. No saving yet.
+- Orders for `research` (upgrade id and level), `fitShip` and `fitAllShips`,
+  with a notice for each rejection: unknown upgrade, `Level N first`,
+  `Not enough points`, `Not docked at your port`, `Not enough money`.
+- Test/dev orders `testResearch` with `giveUnits`, `unlockAll`, `capturePoints`
+  and `reset`; they are refused in normal rooms.
+- Points: first port discovery per navy, newly discovered 25 km blocks (spawn
+  reveal is marked known without an award), and every port capture.
+- Capture unlocks on boarding, accepted surrender, claim and port capture.
+  A port keeps the previous owner's port-upgrade levels and fortification tier.
+- Fitting keeps a one-game-day dock timer, blocks undock and sail orders while
+  it runs, charges 5% of ship price per missing level after Shipyard, and
+  new ships arrive with every unlocked ship upgrade fitted.
+- Fire ships and Hot shot gate on research levels; fortification builds stop at
+  the researched tier and use the Dutch fortification discount.
+- `visibleStateFor`: the receiving navy's points, units, levels and capture
+  points; own ships' fitted and unlocked levels, cost and disabled reason.
+  No other navy's research, and no enemy fitted levels, are sent. A captured
+  ship keeps its fittings and reveals them only to its captor.
+- ACTIVE wiring: ship speed, closest-to-wind, reload, hit chance, chain/grape
+  damage and grape range, per-ship sight, boarding strength, supplies, cargo,
+  draught, fire-ship ignition range, hot-shot fire chance, port battery hit
+  chance, ship prices, port storage, repair cost/speed, regional output and
+  port-build cost. HOOK effects stay stored and reported only.
+- `tests/research-server-3i.test.ts`: 11 tests for sharing, ordered buying,
+  rejections, fitting and dock timer, fleet fitting, new-ship fittings,
+  no-leak snapshots, discovery points, surrender unlocks, test-tool
+  restrictions, port modifiers and a 100-call effects-registry benchmark.
+
+### Checks
+
+- `npm test`: **538/538 passing**.
+- `npm run build`: passed.
+- The 100-ship world-step timing test is still sensitive to VM load; it passes
+  alone and passed in the final full run.
+
+### Broken or unfinished
+
+- No browser is available. Screens are Part C and have not been visually
+  inspected.
+- Weather, night sight, depth, income, healing, port log, alliances and route
+  income remains HOOK-only, as required.

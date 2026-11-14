@@ -141,7 +141,7 @@ export function revealCircle(
   chart: ChartState,
   centreX: number,
   centreY: number,
-  radiusKm = settings.fog.sightRangeKm,
+  radiusKm: number = settings.fog.sightRangeKm,
 ): void {
   if (chart.all) return;
 

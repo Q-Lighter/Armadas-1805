@@ -30,6 +30,7 @@ import {
   type MapPoint,
 } from "./map.js";
 import {
+  blockIdForCell,
   createChart,
   isCellDiscovered,
   requestChartResume as markChartForResume,
@@ -100,7 +101,6 @@ import { gameClockAt, GAME_HOUR_MS } from "./time.js";
 import {
   contactAttackGivenUp,
   contactIgnitionInRange,
-  fireShipsUnlocked,
   hullTooLowToWait,
   igniteRefusal,
   isTowerClass,
@@ -197,6 +197,31 @@ import {
   refillCrewPool,
   shipPrice,
 } from "./shipRules.js";
+import {
+  applyCaptureUnlocks,
+  awardDiscoveredBlocks,
+  awardPortCapture,
+  awardPortDiscovery,
+  buyResearch,
+  canBuildFortification,
+  computeResearchModifiers,
+  emptyResearch,
+  fireShipsUnlockedFor,
+  fittedAfterUpgrade,
+  fittingPlan,
+  fortificationResearchTier,
+  hotShotLevel,
+  mergeResearchLevels,
+  newShipUpgrades,
+  perShipSightKm,
+  portOutputMultiplier,
+  researchCostPoints,
+  researchTreeFor,
+  researchUnits,
+  researchUpgrade,
+  type NavyResearch,
+  type ResearchModifiers,
+} from "./research.js";
 import {
   TRADE_GOOD_IDS,
   isCargoGoodId,
@@ -326,6 +351,10 @@ export interface World {
   trailSent: Map<string, Map<string, number>>;
   /** Port battle state, by port id. Not saved yet. */
   portBattles: Map<string, PortBattle>;
+  /** 3I: one shared research pool per navy in this room. */
+  research: Map<NavyId, NavyResearch>;
+  /** Port upgrades a port had from its previous owner, by port id. */
+  portResearch: Map<string, Map<string, number>>;
   /** Ship id to the port it is attacking. */
   portAttackTargets: Map<string, string>;
   /** Real second when each port's batteries can fire again. */
@@ -678,6 +707,18 @@ export interface OwnShipSnapshot {
   debugCombat?: string;
   /** 3E: this is the player's one flagship. Own ships only. */
   isFlagship?: boolean;
+  /** 3I: fitted versus unlocked levels. Own ships only. */
+  research?: {
+    fitted: Record<string, number>;
+    unlocked: Record<string, number>;
+    dockUntilGameMs: number;
+    fitting: boolean;
+    missingLevels: number;
+    cost: number;
+    gameDays: number;
+    canFit: boolean;
+    reason: string | null;
+  };
 }
 
 /** One dotted order line for the selected ship or fleet. */
@@ -832,6 +873,13 @@ export interface StateMessage {
   portBattle: PortBattleSnapshot[];
   /** This player's money in pieces of eight. Never another player's. */
   m: number;
+  /** 3I: this player's navy research and shared pool. Never another navy's. */
+  research?: {
+    points: number;
+    units: number;
+    levels: Record<string, number>;
+    capturePoints: Record<string, number>;
+  };
   /** This player's selected ship id, if one is selectable. */
   sel: string | null;
   /** Full private detail for this player's own fleet only. */
@@ -987,6 +1035,8 @@ export function createWorld(roomCode = "main", options: WorldOptions = {}): Worl
         newPortBattle(port, { timber: 0, repairMaterials: 0 }),
       ]),
     ),
+    research: new Map(NAVY_IDS.map((id) => [id, emptyResearch()])),
+    portResearch: new Map(),
     portAttackTargets: new Map(),
     portBatteryReady: new Map(),
     captureHoldRealSeconds: settings.ports.battle.captureHoldRealSeconds,
@@ -1535,6 +1585,238 @@ function steerNeutralShip(world: World, ship: Ship, budget?: NpcPlanBudget): voi
   sendNpcToPort(world, ship, destination, budget);
 }
 
+/** 3I: the shared research pool for one navy. */
+export function researchStateForNavy(world: World, navy: NavyId): NavyResearch {
+  let state = world.research.get(navy);
+  if (!state) {
+    state = emptyResearch();
+    world.research.set(navy, state);
+  }
+  return state;
+}
+
+export function navyForPlayer(world: World, playerId: string): NavyId | null {
+  return world.playerRecords.get(playerId)?.navy ?? world.fleets.get(playerId)?.[0]?.navy ?? null;
+}
+
+export function researchStateForPlayer(world: World, playerId: string): NavyResearch | null {
+  const navy = navyForPlayer(world, playerId);
+  return navy ? researchStateForNavy(world, navy) : null;
+}
+
+export function setResearchStateForNavy(world: World, navy: NavyId, state: NavyResearch): void {
+  world.research.set(navy, state);
+}
+
+const EMPTY_RESEARCH_MODIFIERS: ResearchModifiers = computeResearchModifiers(new Map());
+
+/** Modifiers for fitted ship levels only; an unfitted ship costs nothing. */
+export function shipResearchModifiers(ship: Pick<Ship, "research">): ResearchModifiers {
+  const fitted = ship.research?.fitted;
+  if (!fitted || fitted.size === 0) return EMPTY_RESEARCH_MODIFIERS;
+  return computeResearchModifiers(fitted);
+}
+
+/** 3I: class base sight (25 km, 15 km for a fire ship) times Chronometer. */
+export function shipSightRadiusKm(ship: Pick<Ship, "classId" | "research">): number {
+  return perShipSightKm(ship.classId, shipResearchModifiers(ship));
+}
+
+/** Port upgrades include levels carried over from the port's previous owner. */
+export function portResearchLevelsFor(world: World, portId: string): Map<string, number> {
+  const battle = world.portBattles.get(portId);
+  const navy = battle?.ownerId ? navyForPlayer(world, battle.ownerId) : null;
+  const navyLevels = navy ? researchStateForNavy(world, navy).levels : new Map<string, number>();
+  return mergeResearchLevels(navyLevels, world.portResearch.get(portId));
+}
+
+export function portModifiersFor(world: World, portId: string): ResearchModifiers["port"] {
+  return computeResearchModifiers(portResearchLevelsFor(world, portId)).port;
+}
+
+/** Warehouse research increases every owned port's shared storage. */
+export function portStorageLimitFor(world: World, port: Pick<PlacedPort, "id" | "size">): number {
+  return Math.round(portStorageLimit(port) * portModifiersFor(world, port.id).storage);
+}
+
+/** A ship can fit upgrades only while docked at a port its player may use. */
+export function canFitAtDock(world: World, playerId: string, ship: Ship): boolean {
+  if (!ship.dockedPortId || ship.deliveryPortId) return false;
+  const port = world.ports.get(ship.dockedPortId);
+  return Boolean(port && portUsableForBuying(world, port, playerId));
+}
+
+/** Buy one level from the navy's shared pool, with a reason on rejection. */
+export function researchUpgradeOrder(
+  world: World,
+  playerId: string,
+  upgradeId: unknown,
+  level: unknown,
+): boolean {
+  if (world.gameOver || typeof upgradeId !== "string" || typeof level !== "number") return false;
+  const navy = navyForPlayer(world, playerId);
+  if (!navy) return false;
+  if (!researchTreeFor(navy).some((upgrade) => upgrade.id === upgradeId)) {
+    pushNotice(world, playerId, "That upgrade is not in your navy's tree.");
+    return false;
+  }
+  const state = researchStateForNavy(world, navy);
+  const result = buyResearch(state, upgradeId, level);
+  if (result.problem) {
+    pushNotice(world, playerId, result.problem);
+    return false;
+  }
+  world.research.set(navy, result.state);
+  const upgrade = researchUpgrade(upgradeId);
+  pushNotice(world, playerId, `Researched ${upgrade?.name ?? upgradeId} L${level}.`);
+  return true;
+}
+
+/** Fit every unlocked ship upgrade to one docked ship. */
+export function fitShipUpgrades(world: World, playerId: string, shipId: unknown): boolean {
+  if (world.gameOver) return false;
+  const ship = shipsForOwner(world, playerId).find((candidate) => candidate.id === shipId);
+  if (!ship) return false;
+  if (!canFitAtDock(world, playerId, ship)) {
+    pushNotice(world, playerId, "Not docked at your port");
+    return false;
+  }
+  const state = researchStateForPlayer(world, playerId);
+  const owner = world.owners.get(playerId);
+  if (!state || !owner) return false;
+  const portModifiers = ship.dockedPortId ? portModifiersFor(world, ship.dockedPortId) : undefined;
+  const plan = fittingPlan({
+    classId: ship.classId,
+    fitted: ship.research?.fitted ?? new Map(),
+    unlocked: state.levels,
+    portModifiers,
+  });
+  if (plan.missingLevels <= 0) {
+    pushNotice(world, playerId, "All unlocked upgrades are fitted");
+    return false;
+  }
+  if (owner.money < plan.cost) {
+    pushNotice(world, playerId, "Not enough money");
+    return false;
+  }
+  owner.money -= plan.cost;
+  ship.research = {
+    fitted: fittedAfterUpgrade(ship.research?.fitted ?? new Map(), plan),
+    dockUntilGameMs: Math.max(ship.research?.dockUntilGameMs ?? 0, world.gameMs + plan.gameMs),
+  };
+  pushNotice(world, playerId,
+    `Ship upgraded: ${ship.name} (${plan.missingLevels} levels, ${plan.cost} pieces, ${plan.gameDays} day).`);
+  return true;
+}
+
+/** Fit every eligible docked ship in the player's fleet. */
+export function fitAllDockedShips(world: World, playerId: string): number {
+  let fitted = 0;
+  for (const ship of shipsForOwner(world, playerId)) {
+    if (!canFitAtDock(world, playerId, ship)) continue;
+    const state = researchStateForPlayer(world, playerId);
+    if (!state) continue;
+    const plan = fittingPlan({
+      classId: ship.classId,
+      fitted: ship.research?.fitted ?? new Map(),
+      unlocked: state.levels,
+      portModifiers: ship.dockedPortId ? portModifiersFor(world, ship.dockedPortId) : undefined,
+    });
+    if (plan.missingLevels <= 0) continue;
+    if (fitShipUpgrades(world, playerId, ship.id)) fitted += 1;
+  }
+  if (fitted > 0) pushNotice(world, playerId, `Upgraded ${fitted} docked ships.`);
+  return fitted;
+}
+
+/** 3I test/dev tools: award units, unlock everything, set points, reset. */
+export function giveResearchUnits(world: World, playerId: string, units: number): number {
+  if (world.kind === "normal" || world.gameOver) return 0;
+  const navy = navyForPlayer(world, playerId);
+  const state = navy ? researchStateForNavy(world, navy) : null;
+  if (!navy || !state || !Number.isFinite(units) || units <= 0) return 0;
+  world.research.set(navy, { ...state, points: state.points + units * settings.research.pointsPerUnit });
+  return Math.floor(units);
+}
+
+export function unlockAllResearch(world: World, playerId: string): number {
+  if (world.kind === "normal" || world.gameOver) return 0;
+  const navy = navyForPlayer(world, playerId);
+  const state = navy ? researchStateForNavy(world, navy) : null;
+  if (!navy || !state) return 0;
+  const levels = new Map(state.levels);
+  for (const upgrade of researchTreeFor(navy)) levels.set(upgrade.id, upgrade.levels.length);
+  world.research.set(navy, { ...state, levels });
+  return levels.size;
+}
+
+export function setCapturePoints(world: World, playerId: string, upgradeId: string, points: number): boolean {
+  if (world.kind === "normal" || world.gameOver) return false;
+  const navy = navyForPlayer(world, playerId);
+  const state = navy ? researchStateForNavy(world, navy) : null;
+  if (!navy || !state || !Number.isInteger(points) || points < 0) return false;
+  if (!researchUpgrade(upgradeId)) return false;
+  const capturePoints = new Map(state.capturePoints);
+  capturePoints.set(upgradeId, points);
+  world.research.set(navy, { ...state, capturePoints });
+  return true;
+}
+
+export function resetNavyResearch(world: World, playerId: string): boolean {
+  if (world.kind === "normal" || world.gameOver) return false;
+  const navy = navyForPlayer(world, playerId);
+  if (!navy) return false;
+  world.research.set(navy, emptyResearch());
+  return true;
+}
+
+/** Spawn reveal marks blocks known without paying the exploration award. */
+function seedExploredBlocks(world: World, playerId: string, chart: ChartState): void {
+  if (chart.all || chart.pendingCells.length === 0) return;
+  const navy = navyForPlayer(world, playerId);
+  if (!navy) return;
+  const state = researchStateForNavy(world, navy);
+  const exploredBlocks = new Set(state.exploredBlocks);
+  for (const cell of chart.pendingCells) exploredBlocks.add(blockIdForCell(cell));
+  world.research.set(navy, { ...state, exploredBlocks });
+}
+
+/** Pay the first-time award for every map block these cells touched. */
+function awardExploredCells(world: World, playerId: string, chart: ChartState): void {
+  if (chart.all || chart.pendingCells.length === 0) return;
+  const navy = navyForPlayer(world, playerId);
+  if (!navy) return;
+  const state = researchStateForNavy(world, navy);
+  const result = awardDiscoveredBlocks(state, chart.pendingCells.map(blockIdForCell));
+  if (result.added <= 0) return;
+  world.research.set(navy, result.state);
+}
+
+/** First capture of an upgrade unlocks L1; repeats earn points to the next level. */
+function unlockResearchFromCapture(
+  world: World,
+  playerId: string,
+  captured: ReadonlyMap<string, number> | Record<string, number>,
+): void {
+  const navy = navyForPlayer(world, playerId);
+  if (!navy) return;
+  const state = researchStateForNavy(world, navy);
+  const result = applyCaptureUnlocks(state, captured);
+  if (result.unlocked.length === 0 && result.points.length === 0) return;
+  world.research.set(navy, result.state);
+  for (const entry of result.unlocked) {
+    const name = researchUpgrade(entry.id)?.name ?? entry.id;
+    pushNotice(world, playerId, entry.level === 1
+      ? `Unlocked ${name} L1 by capture`
+      : `Unlocked ${name} L${entry.level} by capture`);
+  }
+  for (const entry of result.points) {
+    if (entry.level >= 3) continue;
+    const name = researchUpgrade(entry.id)?.name ?? entry.id;
+    pushNotice(world, playerId, `Capture points ${entry.points} of ${settings.research.capturePointsPerLevel} for ${name}`);
+  }
+}
+
 /** The neutral layer's 2 Hz brain and its 30-real-minute replacement queue. */
 export function updateNpcs(world: World): void {
   if (!world.npcEnabled) return;
@@ -1835,6 +2117,14 @@ export function addPlayer(
       const chart = createChart(world.kind);
       world.charts.set(playerId, chart);
       revealCircle(chart, existing.x, existing.y);
+      seedExploredBlocks(world, playerId, chart);
+    }
+    if (!existing.research) {
+      const navy = existing.navy;
+      existing.research = {
+        fitted: newShipUpgrades(researchStateForNavy(world, navy).levels),
+        dockUntilGameMs: 0,
+      };
     }
     if (!world.playerRecords.has(playerId)) {
       world.playerRecords.set(playerId, {
@@ -1866,6 +2156,10 @@ export function addPlayer(
   ship.crew = ship.fullCrew;
   ship.damage.crew = ship.crew;
   ship.stores = fullStores(shipTypeFor(navy, classId));
+  ship.research = {
+    fitted: newShipUpgrades(researchStateForNavy(world, navy).levels),
+    dockUntilGameMs: 0,
+  };
   ship.isFlagship = true;
   world.players.set(playerId, ship);
   world.fleets.set(playerId, [ship]);
@@ -1884,6 +2178,7 @@ export function addPlayer(
   const chart = createChart(world.kind);
   world.charts.set(playerId, chart);
   revealCircle(chart, ship.x, ship.y);
+  seedExploredBlocks(world, playerId, chart);
   return ship;
 }
 
@@ -2302,10 +2597,14 @@ function shipEntry(world: World, shipId: string): { ownerId: string; ship: Ship 
 
 function ownerCanSeeShip(world: World, ownerId: string, target: Ship): boolean {
   if (target.deliveryPortId) return false;
-  return shipsForOwner(world, ownerId).some((ship) =>
-    !ship.deliveryPortId &&
-    Math.hypot(ship.x - target.x, ship.y - target.y) <= settings.fog.sightRangeKm
-  );
+  const fireShipFactor = target.classId === "fireShip"
+    ? shipResearchModifiers(target).fireShipSpot
+    : 1;
+  return shipsForOwner(world, ownerId).some((ship) => {
+    if (ship.deliveryPortId) return false;
+    return Math.hypot(ship.x - target.x, ship.y - target.y) <=
+      shipSightRadiusKm(ship) * fireShipFactor;
+  });
 }
 
 function validEngageTarget(
@@ -3055,6 +3354,9 @@ export function acceptShipSurrender(world: World, playerId: string, shipId: unkn
     handleFlagshipLoss(world, oldOwner, target, "surrendered", playerId);
   }
   target.isFlagship = false;
+  if (target.research?.fitted && target.research.fitted.size > 0) {
+    unlockResearchFromCapture(world, playerId, target.research.fitted);
+  }
   pushNotice(world, oldOwner, `Your ship ${target.name} was taken.`);
   pushNotice(world, playerId, `You accepted the surrender of the ${target.navy} ${target.classId}.`);
   pushBattleLog(world, playerId, `You accepted the surrender of the ${target.navy} ${target.classId}.`);
@@ -4685,6 +4987,7 @@ function resolveCombat(world: World): void {
     if (now < own.reloadReadyRealSeconds) continue;
     if (own.stores.ammunition <= 0) continue;
 
+    const ownResearch = shipResearchModifiers(own);
     const result = resolveFiring({
       spec: shipSpecFor(own),
       damage: target.damage,
@@ -4695,6 +4998,10 @@ function resolveCombat(world: World): void {
       ammunitionTonnes: own.stores.ammunition,
       objective: plan.objective,
       random: world.combatRandom,
+      hitChanceMultiplier: ownResearch.hitChance,
+      chainDamageMultiplier: ownResearch.chainGrape,
+      grapeDamageMultiplier: ownResearch.chainGrape,
+      grapeRangeKm: ownResearch.grapeRangeM / 1_000,
     });
     if (!result.fired) continue;
     const attackerRecord = world.playerRecords.get(plan.ownerId);
@@ -4805,6 +5112,7 @@ function resolveCombat(world: World): void {
           const friendlyEntry = shipEntry(world, hit.id);
           const friendly = friendlyEntry?.ship;
           if (friendly) {
+            const friendlyResearch = shipResearchModifiers(own);
             const friendlyResult = resolveFiring({
               spec: shipSpecFor(own),
               damage: friendly.damage,
@@ -4815,6 +5123,10 @@ function resolveCombat(world: World): void {
               ammunitionTonnes: own.stores.ammunition,
               objective: "sink",
               random: world.combatRandom,
+              hitChanceMultiplier: friendlyResearch.hitChance,
+              chainDamageMultiplier: friendlyResearch.chainGrape,
+              grapeDamageMultiplier: friendlyResearch.chainGrape,
+              grapeRangeKm: friendlyResearch.grapeRangeM / 1_000,
             });
             if (friendlyResult.fired) {
               own.stores.ammunition = Math.max(0, own.stores.ammunition - friendlyResult.ammunitionUsed);
@@ -5098,8 +5410,18 @@ export function buildPortFortification(world: World, playerId: string, portId: u
     pushNotice(world, playerId, "You do not own this port.");
     return false;
   }
-  const research = world.kind === "test" || world.kind === "dev";
-  const problem = startPortBuild(battlePort(port), state, playerId, world.gameMs, research);
+  const navy = navyForPlayer(world, playerId);
+  const levels = navy ? researchStateForNavy(world, navy).levels : new Map<string, number>();
+  const researchedTier = fortificationResearchTier(levels);
+  const allowed = canBuildFortification(researchedTier, state.tier);
+  const problem = startPortBuild(
+    battlePort(port),
+    state,
+    playerId,
+    world.gameMs,
+    allowed,
+    portModifiersFor(world, port.id).fortCost,
+  );
   if (problem) {
     pushNotice(world, playerId, problem);
     return false;
@@ -5219,6 +5541,10 @@ export function undock(world: World, playerId: string, shipId?: unknown): boolea
   const portId = ship?.dockedPortId;
   if (!ship || !portId) return false;
   const port = world.ports.get(portId);
+  if ((ship.research?.dockUntilGameMs ?? 0) > world.gameMs) {
+    pushNotice(world, playerId, "Fitting in progress: the ship must stay docked.");
+    return false;
+  }
 
   ship.dockedPortId = null;
   ship.speedKnots = 0;
@@ -5305,8 +5631,10 @@ export function buyShip(
     pushNotice(world, playerId, "This port does not sell ships.");
     return null;
   }
-  if (classId === "fireShip" && !fireShipsUnlocked(world.kind)) {
-    pushNotice(world, playerId, "Needs research");
+  const navyResearch = researchStateForPlayer(world, playerId);
+  const navyModifiers = navyResearch ? computeResearchModifiers(navyResearch.levels) : null;
+  if (classId === "fireShip" && !(navyModifiers?.fireShipUnlocked ?? false)) {
+    pushNotice(world, playerId, "Needs research: Fire ships");
     return null;
   }
   if (!portUsableForBuying(world, port, playerId)) {
@@ -5314,7 +5642,16 @@ export function buyShip(
     return null;
   }
 
-  const price = shipPrice(classId as DataShipClassId);
+  const basePrice = shipPrice(classId as DataShipClassId);
+  if (basePrice === null) {
+    pushNotice(world, playerId, "This port does not sell that ship.");
+    return null;
+  }
+  const price = Math.ceil(
+    basePrice *
+    (navyModifiers?.port.shipPrice ?? 1) *
+    (classId === "fireShip" ? (navyModifiers?.fireShipPrice ?? 1) : 1),
+  );
   const portStockSize = port.size === "S" ? "small" : port.size === "M" ? "mid" : "large";
   if (price === null || !portSellsShip(portStockSize, classId as DataShipClassId)) {
     pushNotice(world, playerId, "This port does not sell that ship.");
@@ -5349,6 +5686,10 @@ export function buyShip(
   world.nextShipId += 1;
   ship.deliveryPortId = port.id;
   ship.deliveryReadyGameMs = world.gameMs + deliveryGameMs(world.kind, ship.classId);
+  ship.research = {
+    fitted: newShipUpgrades(researchStateForPlayer(world, playerId)?.levels ?? new Map()),
+    dockUntilGameMs: 0,
+  };
   fleet.push(ship);
   pushNotice(world, playerId, `Ship ordered: ${name}.`);
   return ship;
@@ -5529,7 +5870,7 @@ export function sellGoods(
 
   const storage = usable ? portStorageFor(world, port) : null;
   const portFree = storage
-    ? Math.max(0, portStorageLimit(port) - totalGoods(storage))
+    ? Math.max(0, portStorageLimitFor(world, port) - totalGoods(storage))
     : null;
   const unitPrice = localPrice(world, port, good);
   const quote = quoteSell({
@@ -5581,7 +5922,7 @@ export function transferGoods(
   const good = rawGood;
   const storage = portStorageFor(world, port);
   const capacities = shipStoreCapacities(shipSpecFor(ship));
-  const portFree = Math.max(0, portStorageLimit(port) - totalGoods(storage));
+  const portFree = Math.max(0, portStorageLimitFor(world, port) - totalGoods(storage));
   const quote = quoteTransfer({
     direction,
     good,
@@ -5703,13 +6044,19 @@ export function repairAtPort(
     return false;
   }
   const capacities = shipStoreCapacities(shipSpecFor(ship));
-  const quote = portRepairQuote(
+  const baseQuote = portRepairQuote(
     ship.damage,
     shipSpecFor(ship),
     capacities.repairMaterials,
     localPrice(world, port, "repairMaterials"),
     rawMode,
   );
+  const repairModifiers = portModifiersFor(world, port.id);
+  const quote = {
+    ...baseQuote,
+    money: Math.ceil(baseQuote.money * repairModifiers.repairCost),
+    rateMultiplier: baseQuote.rateMultiplier * repairModifiers.repairSpeed,
+  };
   if (quote.materialsTonnes < 0.001) {
     pushNotice(world, playerId, "This ship needs no repairs.");
     return false;
@@ -5749,10 +6096,19 @@ function runProductionCycle(world: World): void {
     if (port.npc) {
       refillNpcStock(npcStockFor(world, port), port);
     } else {
+      const portNavy = world.portBattles.get(port.id)?.ownerId
+        ? navyForPlayer(world, world.portBattles.get(port.id)!.ownerId!)
+        : null;
+      const outputLevels = portNavy ? researchStateForNavy(world, portNavy).levels : new Map<string, number>();
+      const output = portProduction(port);
+      const multiplier = portOutputMultiplier(port, outputLevels);
+      if (multiplier !== 1) {
+        for (const good of Object.keys(output) as GoodId[]) output[good] *= multiplier;
+      }
       addLimitedProduction(
         portStorageFor(world, port),
-        portStorageLimit(port),
-        portProduction(port),
+        portStorageLimitFor(world, port),
+        output,
       );
     }
   }
@@ -5791,6 +6147,7 @@ function updateHunger(world: World, dtGameSeconds: number): void {
         ship.crew,
         gameDays,
         world.hungerMultiplier,
+        shipResearchModifiers(ship).supplies,
       );
       ship.stores.provisions = result.provisions;
       ship.crew = result.crew;
@@ -6537,7 +6894,7 @@ function stepContactFireShip(
   }
   const distanceM = Math.hypot(target.x - ship.x, target.y - ship.y) * 1_000;
   if (hullTooLowToWait(ship.damage.hull, shipSpecFor(ship).hull) ||
-      contactIgnitionInRange(distanceM)) {
+      contactIgnitionInRange(distanceM, shipResearchModifiers(ship).ignitionRangeM)) {
     // A contact fire ship has arrived at its target. Stop it there so the
     // burning hulk can actually pass fire to the ship it rammed; an Ignite
     // now hulk still keeps its way and drifts.
@@ -6567,8 +6924,9 @@ function updateFog(world: World): void {
     if (chart.all) continue;
     for (const ship of shipsForOwner(world, ownerId)) {
       if (ship.deliveryPortId) continue;
-      revealCircle(chart, ship.x, ship.y);
+      revealCircle(chart, ship.x, ship.y, shipSightRadiusKm(ship));
     }
+    awardExploredCells(world, ownerId, chart);
   }
 }
 
@@ -7094,6 +7452,9 @@ function takePrize(
     handleFlagshipLoss(world, oldOwner, target, "captured", acceptingOwner);
   }
   target.isFlagship = false;
+  if (target.research?.fitted && target.research.fitted.size > 0) {
+    unlockResearchFromCapture(world, acceptingOwner, target.research.fitted);
+  }
   return true;
 }
 
@@ -7550,7 +7911,7 @@ export function boardingOddsFor(
     return null;
   }
   if (!ownerCanSeeShip(world, playerId, target)) return null;
-  return boardingOdds(boardingStrength(ship.crew), boardingStrength(target.crew));
+  return boardingOdds(boardingStrength(ship.crew, { quality: shipResearchModifiers(ship).boardingStrength }), boardingStrength(target.crew));
 }
 
 /** Start the Board order: close to 60 m, then grapple. */
@@ -7746,7 +8107,7 @@ function updateAutoBoarding(world: World): void {
     const target = shipEntry(world, engagement.targetShipId)?.ship;
     if (!ship || !target || ship.autoBoard === false || ship.boardingShipId) continue;
     if (target.abandoned || target.surrendered) continue;
-    const odds = boardingOdds(boardingStrength(ship.crew), boardingStrength(target.crew));
+    const odds = boardingOdds(boardingStrength(ship.crew, { quality: shipResearchModifiers(ship).boardingStrength }), boardingStrength(target.crew));
     const percents = damagePercents(target.damage, damageCapacities(shipSpecFor(target)));
     if (autoBoardingAllowed({
       objective: "capture",
@@ -7793,7 +8154,7 @@ function beginBoarding(world: World, attacker: Ship, defender: Ship, nowRealSeco
   const result = boardingCasualties({
     attackerCrew: attacker.crew,
     defenderCrew: defender.crew,
-    attackerStrength: boardingStrength(attacker.crew),
+    attackerStrength: boardingStrength(attacker.crew, { quality: shipResearchModifiers(attacker).boardingStrength }),
     defenderStrength: boardingStrength(defender.crew),
     random: world.combatRandom,
   });
@@ -8808,6 +9169,7 @@ function stepPortBattles(world: World, dtGameSeconds: number): void {
     if (distance > settings.ports.battle.engageRangeKm + 0.05) continue;
     if (nowReal < ship.reloadReadyRealSeconds || ship.stores.ammunition <= 0) continue;
     const spec = shipSpecFor(ship);
+    const portFireResearch = shipResearchModifiers(ship);
     const result = resolveFiring({
       spec,
       damage: createShipDamage(spec),
@@ -8818,6 +9180,10 @@ function stepPortBattles(world: World, dtGameSeconds: number): void {
       ammunitionTonnes: ship.stores.ammunition,
       objective: "sink",
       random: world.combatRandom,
+      hitChanceMultiplier: portFireResearch.hitChance,
+      chainDamageMultiplier: portFireResearch.chainGrape,
+      grapeDamageMultiplier: portFireResearch.chainGrape,
+      grapeRangeKm: portFireResearch.grapeRangeM / 1_000,
     });
     if (!result.fired) continue;
     ship.stores.ammunition = Math.max(0, ship.stores.ammunition - result.ammunitionUsed);
@@ -8873,6 +9239,9 @@ function stepPortBattles(world: World, dtGameSeconds: number): void {
     if (!state || state.health <= 0) continue;
     const ready = world.portBatteryReady.get(port.id) ?? 0;
     if (nowReal < ready) continue;
+    const batteryNavy = state.ownerId ? navyForPlayer(world, state.ownerId) : null;
+    const batteryLevels = batteryNavy ? researchStateForNavy(world, batteryNavy).levels : new Map<string, number>();
+    const batteryModifiers = computeResearchModifiers(batteryLevels);
     const shots = firePortBatteries(
       state,
       battlePort(port),
@@ -8880,6 +9249,8 @@ function stepPortBattles(world: World, dtGameSeconds: number): void {
       nowReal,
       world.combatRandom,
       same,
+      batteryModifiers.hitChance,
+      hotShotLevel(batteryLevels) > 0 ? batteryModifiers.hotShotChance : 0,
     );
     if (shots.length === 0) continue;
     world.portBatteryReady.set(
@@ -8894,6 +9265,11 @@ function stepPortBattles(world: World, dtGameSeconds: number): void {
       if (!target) continue;
       target.damage.hull = Math.max(0, target.damage.hull - shot.pounds);
       target.lastAttackedRealMs = nowReal * 1000;
+      if (shot.fire && target.damage.hull > 0) {
+        target.fire = { burning: true, strength: settings.combat.fireStartStrength };
+        pushCombatEvent(world, { kind: "fireStarted", x: target.x, y: target.y, shipId: target.id });
+        if (world.players.has(target.id)) pushNotice(world, target.id, "Fire aboard");
+      }
       if (target.damage.hull <= 0) sunk.add(target.id);
       if (state.ownerId) {
         pushBattleLog(world, state.ownerId, `${port.name} hit ${target.name} for ${shot.pounds} lb.`);
@@ -8938,6 +9314,26 @@ function stepPortBattles(world: World, dtGameSeconds: number): void {
     if (!status.capturedBy) continue;
     const previousOwner = state.ownerId;
     world.portOwners.set(port.id, status.capturedBy);
+    const capturedLevels = new Map(world.portResearch.get(port.id) ?? []);
+    if (previousOwner) {
+      const previousNavy = navyForPlayer(world, previousOwner);
+      if (previousNavy) {
+        for (const [id, level] of researchStateForNavy(world, previousNavy).levels) {
+          capturedLevels.set(id, Math.max(capturedLevels.get(id) ?? 0, level));
+        }
+      }
+    }
+    if (state.tier > 0) capturedLevels.set("fortification", state.tier);
+    world.portResearch.set(port.id, capturedLevels);
+    const captorNavy = navyForPlayer(world, status.capturedBy);
+    if (captorNavy) {
+      const captorState = researchStateForNavy(world, captorNavy);
+      const award = awardPortCapture(captorState, port.id, port.size);
+      world.research.set(captorNavy, award.state);
+      pushNotice(world, status.capturedBy,
+        `Port taken: ${port.name} (+${award.awarded} research points).`);
+      unlockResearchFromCapture(world, status.capturedBy, capturedLevels);
+    }
     pushCombatEvent(world, { kind: "portCaptured", x: port.anchorage.x, y: port.anchorage.y });
     const docked = allShips(world)
       .filter(({ ship }) => ship.dockedPortId === port.id)
@@ -8965,6 +9361,9 @@ function stepPortBattles(world: World, dtGameSeconds: number): void {
         giveShipToPlayer(world, ship, status.capturedBy);
         ship.crew = ship.fullCrew;
         syncDamageCrew(ship);
+        if (ship.research?.fitted && ship.research.fitted.size > 0) {
+          unlockResearchFromCapture(world, status.capturedBy, ship.research.fitted);
+        }
       }
     }
     for (const pushed of result.pushedOut) {
@@ -9009,11 +9408,19 @@ export function visibleStateFor(
 ): StateMessage {
   const own = shipsForOwner(world, playerId);
   const ownIds = new Set(own.map((ship) => ship.id));
-  const sightSq = settings.fog.sightRangeKm ** 2;
   const activeOwn = own.filter((ship) => !ship.deliveryPortId);
-  const ownGrid = new SpatialGrid<Ship>(settings.fog.sightRangeKm);
+  const sightByOwn = new Map<Ship, number>();
+  for (const ship of activeOwn) sightByOwn.set(ship, shipSightRadiusKm(ship));
+  const maxSightKm = Math.max(settings.fog.sightRangeKm,
+    ...activeOwn.map((ship) => sightByOwn.get(ship) ?? settings.fog.sightRangeKm));
+  const sightSq = maxSightKm ** 2;
+  const ownGrid = new SpatialGrid<Ship>(maxSightKm);
   for (const ship of activeOwn) ownGrid.insert(ship);
   const clock = gameClockAt(world.gameMs);
+  const seesPoint = (x: number, y: number): boolean => activeOwn.some((ship) => {
+    const radius = sightByOwn.get(ship) ?? settings.fog.sightRangeKm;
+    return (ship.x - x) ** 2 + (ship.y - y) ** 2 <= radius ** 2;
+  });
   const nearestOwnKm = (ship: Ship): number => {
     let best = Number.POSITIVE_INFINITY;
     for (const ownShip of activeOwn) {
@@ -9022,13 +9429,22 @@ export function visibleStateFor(
     return best;
   };
   const isVisible = (ship: Ship): boolean => {
-    if (ownGrid.query(ship.x, ship.y, settings.fog.sightRangeKm).length === 0) return false;
+    if (ownGrid.query(ship.x, ship.y, maxSightKm).length === 0) return false;
+    const fireShipFactor = ship.classId === "fireShip"
+      ? shipResearchModifiers(ship).fireShipSpot
+      : 1;
+    const inside = activeOwn.some((viewer) => {
+      const radius = (sightByOwn.get(viewer) ?? settings.fog.sightRangeKm) * fireShipFactor;
+      return (viewer.x - ship.x) ** 2 + (viewer.y - ship.y) ** 2 <= radius ** 2;
+    });
+    if (!inside) return false;
     if (clock.isDay || ship.lightsOff !== true || ship.fire?.burning) return true;
     return withinNightLightsOffRange(false, true, nearestOwnKm(ship));
   };
 
   const chart = world.charts.get(playerId) ?? createChart(world.kind);
   world.charts.set(playerId, chart);
+  awardExploredCells(world, playerId, chart);
 
   // A port is found by its anchorage, not its coast. Dev rooms know them all.
   if (chart.all) {
@@ -9036,13 +9452,18 @@ export function visibleStateFor(
   } else {
     for (const port of PLACED_PORTS) {
       if (chart.foundPorts.has(port.id)) continue;
-      if (
-        activeOwn.some(
-          (ship) =>
-            (ship.x - port.anchorage.x) ** 2 + (ship.y - port.anchorage.y) ** 2 <= sightSq,
-        )
-      ) {
+      if (seesPoint(port.anchorage.x, port.anchorage.y)) {
         chart.foundPorts.add(port.id);
+        const navy = navyForPlayer(world, playerId);
+        if (navy) {
+          const state = researchStateForNavy(world, navy);
+          const award = awardPortDiscovery(state, port.id, port.size);
+          if (award.awarded > 0) {
+            world.research.set(navy, award.state);
+            pushNotice(world, playerId,
+              `Port found: ${port.name} (+${award.awarded} research points).`);
+          }
+        }
       }
     }
   }
@@ -9127,7 +9548,7 @@ export function visibleStateFor(
         ? priceList(port, world.priceState)
         : null,
       storage,
-      storageLimit: portStorageLimit(port),
+      storageLimit: portStorageLimitFor(world, port),
       npcStock: port.npc && dockedHere
         ? roundedGoods(npcStockFor(world, port))
         : null,
@@ -9151,6 +9572,8 @@ export function visibleStateFor(
 
   const owner = world.owners.get(playerId);
   const nowRealMs = combatRealSeconds(world) * 1000;
+  const researchState = researchStateForPlayer(world, playerId);
+  const unlockedLevels = researchState?.levels ?? new Map<string, number>();
   const fleet: OwnShipSnapshot[] = !includeFleet ? [] : own.map((ship) => {
     const spec = shipSpecFor(ship);
     const capacities = shipStoreCapacities(spec);
@@ -9164,6 +9587,7 @@ export function visibleStateFor(
       ship.stores.provisions,
       ship.crew,
       world.hungerMultiplier,
+      shipResearchModifiers(ship).supplies,
     );
     const normalSpeed = speedForHeading(spec, ship.headingRad);
     let portRepair: OwnShipSnapshot["portRepair"];
@@ -9255,9 +9679,45 @@ export function visibleStateFor(
       gunsBear,
       boardingStep: ship.boardingStep ?? ship.combatStep,
     });
+    const dockPortId = ship.dockedPortId;
+    const portModifiers = dockPortId ? portModifiersFor(world, dockPortId) : undefined;
+    const fitting = fittingPlan({
+      classId: ship.classId,
+      fitted: ship.research?.fitted ?? new Map(),
+      unlocked: unlockedLevels,
+      portModifiers,
+    });
+    const dockedForFitting = canFitAtDock(world, playerId, ship);
+    const fittingReason = fitting.missingLevels <= 0
+      ? "All unlocked upgrades are fitted"
+      : !dockedForFitting
+        ? "Not docked at your port"
+        : (owner?.money ?? 0) < fitting.cost
+          ? "Not enough money"
+          : null;
+    const fittedRecord: Record<string, number> = {};
+    for (const [id, level] of ship.research?.fitted ?? []) fittedRecord[id] = level;
+    const unlockedRecord: Record<string, number> = {};
+    for (const [id, level] of unlockedLevels) unlockedRecord[id] = level;
+    const dockUntilGameMs = ship.research?.dockUntilGameMs ?? 0;
+    const hasResearch = Object.keys(fittedRecord).length > 0 ||
+      Object.keys(unlockedRecord).length > 0 || dockUntilGameMs > 0;
     return {
       id: ship.id,
       name: ship.name,
+      ...(hasResearch ? {
+        research: {
+          fitted: fittedRecord,
+          unlocked: unlockedRecord,
+          dockUntilGameMs,
+          fitting: dockUntilGameMs > world.gameMs,
+          missingLevels: fitting.missingLevels,
+          cost: fitting.cost,
+          gameDays: fitting.gameDays,
+          canFit: dockedForFitting && fitting.missingLevels > 0 && (owner?.money ?? 0) >= fitting.cost,
+          reason: fittingReason,
+        },
+      } : {}),
       isFlagship: world.playerRecords.get(playerId)?.flagshipId === ship.id,
       classId: ship.classId,
       navy: ship.navy,
@@ -9360,9 +9820,7 @@ export function visibleStateFor(
 
   const visibleEvents = world.combatEvents.filter((event) => {
     if (event.id <= (chart.combatCursor ?? 0)) return false;
-    return activeOwn.some((ship) =>
-      (ship.x - event.x) ** 2 + (ship.y - event.y) ** 2 <= sightSq,
-    );
+    return seesPoint(event.x, event.y);
   });
   // Fire is the noisiest effect. Keep the first two per ship in each second;
   // the client only needs enough to read the battle, not every gun.
@@ -9609,6 +10067,19 @@ export function visibleStateFor(
   if (!includeFleet) {
     delete (state as Partial<StateMessage>).fleet;
     delete (state as Partial<StateMessage>).fleets;
+  }
+  if (researchState &&
+    (researchState.points > 0 || researchState.levels.size > 0 || researchState.capturePoints.size > 0)) {
+    const levels: Record<string, number> = {};
+    for (const [id, level] of researchState.levels) levels[id] = level;
+    const capturePoints: Record<string, number> = {};
+    for (const [id, points] of researchState.capturePoints) capturePoints[id] = points;
+    state.research = {
+      points: Number(researchState.points.toFixed(2)),
+      units: researchUnits(researchState.points),
+      levels,
+      capturePoints,
+    };
   }
   return state;
 }

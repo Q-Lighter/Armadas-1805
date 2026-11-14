@@ -12,6 +12,7 @@ import {
   buildPortFortification,
   createWorld,
   fillTestPortStock,
+  unlockAllResearch,
   finishTestPortBuild,
   setTestPortOwner,
   setTestPortHealth,
@@ -80,6 +81,8 @@ test("the port's own build and stock stay private", () => {
   const world = testWorld();
   setTestPortOwner(world, "alpha", PORT.id, "me");
   fillTestPortStock(world, PORT.id);
+  assert.equal(buildPortFortification(world, "alpha", PORT.id), false, "fortification needs research");
+  unlockAllResearch(world, "alpha");
   assert.equal(buildPortFortification(world, "alpha", PORT.id), true);
   assert.ok(world.portBattles.get(PORT.id)!.build);
   const own = visibleStateFor(world, "alpha").portBattle.find((row) => row.id === PORT.id)!;

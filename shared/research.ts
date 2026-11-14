@@ -719,3 +719,6 @@ export function researchRowsForNavy(navy: NavyId): Array<{
     })),
   }));
 }
+
+// Re-export the pure tree lookups for the server and screens.
+export { researchTreeFor, researchUpgrade } from "./data/research.js";

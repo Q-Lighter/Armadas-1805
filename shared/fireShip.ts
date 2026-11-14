@@ -90,8 +90,11 @@ export function isDaylightHour(hour: number): boolean {
 }
 
 /** Contact ignition is immediate inside this distance. */
-export function contactIgnitionInRange(distanceM: number): boolean {
-  return distanceM <= settings.ships.fireShips.igniteRangeM;
+export function contactIgnitionInRange(
+  distanceM: number,
+  rangeM: number = settings.ships.fireShips.igniteRangeM,
+): boolean {
+  return distanceM <= rangeM;
 }
 
 /** A badly shot-up fire ship lights itself once its hull is below 30%. */

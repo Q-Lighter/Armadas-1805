@@ -17,6 +17,7 @@ import {
   type ShipStores,
 } from "./trade.js";
 import { DEFAULT_STANCE, type Stance } from "./stances.js";
+import { computeResearchModifiers } from "./research.js";
 import { DEFAULT_FIGHTING_STYLE, type FightingStyle } from "./fighting.js";
 import {
   createShipDamage,
@@ -269,6 +270,11 @@ export interface Ship {
     materialsQuoted: number;
     moneyQuoted: number;
   };
+  /** 3I: levels fitted to this ship, and a fitting or delivery dock timer. */
+  research?: {
+    fitted: Map<string, number>;
+    dockUntilGameMs: number;
+  };
 }
 
 /** Normalise an angle in degrees to 0..360. */
@@ -422,6 +428,7 @@ export function createShip(
     fire: { burning: false, strength: 0 },
     prisoners: 0,
     autoBoard: true,
+    research: { fitted: new Map(), dockUntilGameMs: 0 },
   };
 }
 
@@ -455,13 +462,29 @@ export function manoeuvreStateLabel(ship: Ship): string | null {
 }
 
 /** The sailing numbers for one ship, looked up by its navy and role. */
-export function shipSpecFor(ship: Pick<Ship, "classId" | "navy">): ShipSpec {
+export function shipSpecFor(ship: Pick<Ship, "classId" | "navy"> & { research?: Ship["research"] }): ShipSpec {
   const spec = shipTypeFor(ship.navy, ship.classId);
+  const fitted = ship.research?.fitted;
+  const research = fitted && fitted.size > 0
+    ? computeResearchModifiers(fitted)
+    : null;
+  const classSpeed = research && (ship.classId === "raider" || ship.classId === "escort")
+    ? research.raiderEscortSpeed
+    : 1;
   // Draft tuning: all ships point a little closer to the wind. Keeping this
   // in the runtime spec avoids editing the historical ship table.
   return {
     ...spec,
-    closestAngleDeg: Math.max(10, spec.closestAngleDeg + settings.sailing.closestAngleAdjustDeg),
+    cruiseKnots: spec.cruiseKnots * (research?.speed ?? 1) * classSpeed,
+    topKnots: spec.topKnots * (research?.speed ?? 1) * classSpeed,
+    reloadGameMinutes: spec.reloadGameMinutes * (research?.reload ?? 1),
+    cargoTonnes: spec.cargoTonnes * (research?.cargo ?? 1),
+    draughtM: Math.max(0, spec.draughtM - (research?.draughtReductionM ?? 0)),
+    closestAngleDeg: Math.max(
+      10,
+      spec.closestAngleDeg + settings.sailing.closestAngleAdjustDeg -
+        (research?.closestToWindDeg ?? 0),
+    ),
     turn90GameMinutes: Math.max(
       0.25,
       spec.turn90GameMinutes / settings.manoeuvres.cruiseTurnRateMultiplier,

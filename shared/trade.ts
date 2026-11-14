@@ -206,8 +206,10 @@ export function provisionsDaysLeft(
   provisions: number,
   crew: number,
   hungerMultiplier: number = 1,
+  supplyMultiplier: number = 1,
 ): number {
-  const dailyUse = provisionsUsePerGameDay(crew, hungerMultiplier);
+  const dailyUse = provisionsUsePerGameDay(crew, hungerMultiplier) /
+    Math.max(1, supplyMultiplier);
   if (!(dailyUse > 0)) return Number.POSITIVE_INFINITY;
   return Math.max(0, provisions) / dailyUse;
 }
@@ -230,8 +232,9 @@ export function advanceProvisions(
   crew: number,
   gameDays: number,
   hungerMultiplier: number = 1,
+  supplyMultiplier: number = 1,
 ): ProvisionAdvance {
-  const days = Math.max(0, gameDays);
+  const days = Math.max(0, gameDays) / Math.max(1, supplyMultiplier);
   const dailyUse = provisionsUsePerGameDay(crew, hungerMultiplier);
   const need = dailyUse * days;
   const stock = Math.max(0, provisions);

@@ -85,6 +85,8 @@ export interface PortShot {
   distanceKm: number;
   hit: boolean;
   pounds: number;
+  /** 3I hot shot: the hit also started a fire. */
+  fire?: boolean;
 }
 
 const B = settings.ports.battle;
@@ -217,6 +219,8 @@ export function firePortBatteries(
   realSeconds: number,
   random: () => number,
   sameSide: (a: string, b: string) => boolean = (a, b) => a === b,
+  hitChanceMultiplier = 1,
+  hotShotChance = 0,
 ): PortShot[] {
   const aggressors = activeAggressors(state, realSeconds);
   if (aggressors.length === 0 || state.health <= 0) return [];
@@ -243,12 +247,15 @@ export function firePortBatteries(
     for (let index = 0; index < barrel.count; index += 1) {
       if (random() >= share) continue;
       const target = choices[Math.floor(random() * choices.length)]!;
+      const hit = random() < Math.min(1, hitChanceAt(target.distanceKm) * hitChanceMultiplier);
+      const fire = hit && hotShotChance > 0 && random() < hotShotChance;
       shots.push({
         shipId: target.ship.id,
         ownerId: target.ship.ownerId,
         distanceKm: target.distanceKm,
-        hit: random() < hitChanceAt(target.distanceKm),
+        hit,
         pounds: barrel.pounds,
+        ...(fire ? { fire: true } : {}),
       });
     }
   }
@@ -426,13 +433,19 @@ export function startPortBuild(
   playerId: string,
   gameMs: number,
   researchUnlocked: boolean,
+  costMultiplier = 1,
 ): BuildProblem {
   if (state.ownerId !== playerId) return "No build needed";
   if (state.tier >= 3) return "No build needed";
   if (state.build) return "Build already running";
   if (!researchUnlocked) return "Needs research";
   const target = (state.tier + 1) as 1 | 2 | 3;
-  const cost = portBuildCost(port, target);
+  const baseCost = portBuildCost(port, target);
+  const mult = Math.max(settings.research.minimumPriceMultiplier, Math.min(1, costMultiplier));
+  const cost = {
+    timber: Math.ceil(baseCost.timber * mult),
+    repairMaterials: Math.ceil(baseCost.repairMaterials * mult),
+  };
   if (state.stock.timber < cost.timber) return "Not enough timber";
   if (state.stock.repairMaterials < cost.repairMaterials) return "Not enough repair materials";
   state.stock.timber -= cost.timber;

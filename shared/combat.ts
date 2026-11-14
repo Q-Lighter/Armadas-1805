@@ -406,6 +406,12 @@ export interface FiringInput {
   objective: CombatObjective;
   random: SeededRandom;
   modifiers?: HitChanceModifiers;
+  /** 3I research: hit chance multiplier from Gunnery drill. */
+  hitChanceMultiplier?: number;
+  /** 3I research: specialist chain/grape damage and grape range. */
+  chainDamageMultiplier?: number;
+  grapeDamageMultiplier?: number;
+  grapeRangeKm?: number;
 }
 
 export interface FiringGroupResult {
@@ -466,7 +472,9 @@ export function resolveFiring(input: FiringInput): FiringResult {
   const capacities = damageCapacities(input.spec);
   const bearing = input.targetBearingRad;
   const upwind = isUpwind(bearing, input.windFromDeg ?? settings.weather.windFromDeg);
-  const chance = hitChanceAtRange(input.distanceKm, upwind, input.modifiers);
+  const chance = Math.max(0, Math.min(1,
+    hitChanceAtRange(input.distanceKm, upwind, input.modifiers) * (input.hitChanceMultiplier ?? 1),
+  ));
   if (
     chance <= 0 ||
     input.ammunitionTonnes <= 0 ||
@@ -513,10 +521,18 @@ export function resolveFiring(input: FiringInput): FiringResult {
       poundsFired += basePounds;
       if (input.random() >= chance) continue;
       const area = pickDamageArea(input.objective, input.random);
-      const shot = shotTypeForArea(area, input.distanceKm);
+      const grapeRangeKm = input.grapeRangeKm ?? COM.grapeRangeKm;
+      const shot: ShotType = area === "sails" || area === "masts"
+        ? "chain"
+        : area === "crew" && input.distanceKm <= grapeRangeKm ? "grape" : "round";
+      const shotMultiplier = shot === "chain"
+        ? input.chainDamageMultiplier ?? COM.chainDamageMultiplier
+        : shot === "grape"
+          ? input.grapeDamageMultiplier ?? COM.grapeDamageMultiplier
+          : 1;
       const delivered = basePounds *
         gunClassDamageMultiplier(group.gunClass, input.targetClass) *
-        shotDamageMultiplier(area, input.distanceKm) *
+        shotMultiplier *
         (COM.classDamageTakenMultiplier[input.targetClass] ?? 1);
       damage = applyAreaDamage(damage, capacities, area, delivered);
       areaHits[area] += 1;

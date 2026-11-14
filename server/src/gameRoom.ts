@@ -37,6 +37,13 @@ import {
   attackPort,
   buildPortFortification,
   fillTestPortStock,
+  fitAllDockedShips,
+  fitShipUpgrades,
+  giveResearchUnits,
+  researchUpgradeOrder,
+  resetNavyResearch,
+  setCapturePoints,
+  unlockAllResearch,
   finishTestPortBuild,
   setTestPortHealth,
   setTestPortOwner,
@@ -585,6 +592,10 @@ export class GameRoom {
       case "weighAnchor": return "Cannot weigh anchor now.";
       case "battleOrder": case "fleetBattleOrder": return "That battle order is not allowed.";
       case "fleetOrder": return "That fleet cannot take that order.";
+      case "research": return "Cannot research that upgrade.";
+      case "fitShip": return "Cannot upgrade that ship.";
+      case "fitAllShips": return "No docked ship can be upgraded.";
+      case "testResearch": return "Research tools are only available in test and dev rooms.";
       default: return "Order rejected.";
     }
   }
@@ -640,6 +651,10 @@ export class GameRoom {
       owner?: unknown;
       health?: unknown;
       tier?: unknown;
+      upgrade?: unknown;
+      level?: unknown;
+      units?: unknown;
+      points?: unknown;
     };
 
     if (order.t === "ping") {
@@ -762,6 +777,24 @@ export class GameRoom {
         );
       }
       this.world.routePredictions.clear();
+    } else if (order.t === "research") {
+      accepted = researchUpgradeOrder(this.world, playerId, order.upgrade, order.level);
+    } else if (order.t === "fitShip") {
+      accepted = fitShipUpgrades(this.world, playerId, order.ship);
+    } else if (order.t === "fitAllShips") {
+      accepted = fitAllDockedShips(this.world, playerId) > 0;
+    } else if (order.t === "testResearch") {
+      if (this.world.kind === "normal") {
+        reject("Research tools are only available in test and dev rooms.");
+      } else if (order.mode === "giveUnits") {
+        accepted = giveResearchUnits(this.world, playerId, typeof order.units === "number" ? order.units : 0) > 0;
+      } else if (order.mode === "unlockAll") {
+        accepted = unlockAllResearch(this.world, playerId) > 0;
+      } else if (order.mode === "capturePoints" && typeof order.upgrade === "string") {
+        accepted = setCapturePoints(this.world, playerId, order.upgrade, typeof order.points === "number" ? order.points : 0);
+      } else if (order.mode === "reset") {
+        accepted = resetNavyResearch(this.world, playerId);
+      }
     } else if (order.t === "select") {
       accepted = selectShip(this.world, playerId, order.ship);
     } else if (order.t === "buy") {

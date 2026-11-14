@@ -19,6 +19,7 @@ import {
 import {
   addPlayer,
   buyShip,
+  unlockAllResearch,
   castOffTow,
   createWorld,
   orderFireShipIgnite,
@@ -85,7 +86,7 @@ test("3G fire ship type: agreed stats, one type for every navy, crew sizing", ()
   }
 });
 
-test("3G research hook and buying: test rooms yes, normal rooms locked, NPC never", () => {
+test("3G research hook and buying: test rooms start locked, research unlocks, normal rooms locked, NPC never", () => {
   assert.equal(fireShipsUnlocked("normal"), false);
   assert.equal(fireShipsUnlocked("test"), true);
   assert.equal(fireShipsUnlocked("dev"), true);
@@ -94,12 +95,15 @@ test("3G research hook and buying: test rooms yes, normal rooms locked, NPC neve
   const world = createWorld("test-fire-buy");
   addPlayer(world, "alpha", "frigate", 50_000, "British");
   world.charts.get("alpha")!.foundPorts.add(port.id);
+  assert.equal(buyShip(world, "alpha", port.id, "fireShip", "Locked"), null);
+  assert.match(drain(world, "alpha").at(-1)!, /Needs research/);
+  unlockAllResearch(world, "alpha");
   const ship = buyShip(world, "alpha", port.id, "fireShip", "Brand");
   assert.ok(ship);
   assert.equal(ship.classId, "fireShip");
   assert.equal(ship.crew, 0);
   assert.equal(ship.fullCrew, shipTypeFor("British", "fireShip").crew);
-  assert.equal(world.owners.get("alpha")!.money, 49_500);
+  assert.equal(world.owners.get("alpha")!.money, 49_755);
 
   const normal = createWorld("main");
   addPlayer(normal, "alpha");

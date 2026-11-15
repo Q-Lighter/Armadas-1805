@@ -7,6 +7,14 @@
 
 import { settings } from "./settings.js";
 import {
+  appendRecorded,
+  buildSessionReport,
+  recordedForPlayer,
+  type RecordedData,
+  type RecordedEvent,
+  type SessionNote,
+} from "./recorder.js";
+import {
   angleOffWindDeg,
   chooseTackSide,
   createShip,
@@ -399,6 +407,12 @@ export interface World {
   charts: Map<string, ChartState>;
   /** Short messages waiting for each player; never part of the world state. */
   notices: Map<string, string[]>;
+  /** 3J-a: structured test-room events, newest last, capped by settings. */
+  recorder: RecordedEvent[];
+  /** 3J-a: saved one-line notes and their snapshots. */
+  sessionNotes: SessionNote[];
+  /** 3J-a: when the previous performance sample was taken. */
+  lastPerfSampleRealMs: number;
   /** Shared storage at every capturable port, all goods together. */
   portStorage: Map<string, GoodsAmounts>;
   /** Resource stock held by NPC merchants, by port. */
@@ -1053,6 +1067,9 @@ export function createWorld(roomCode = "main", options: WorldOptions = {}): Worl
     botFleets: new Map(),
     charts: new Map(),
     notices: new Map(),
+    recorder: [],
+    sessionNotes: [],
+    lastPerfSampleRealMs: 0,
     portStorage: startingPortStorage(),
     npcStocks: startingNpcStocks(),
     priceState: createPriceState(priceSeed),
@@ -1433,6 +1450,10 @@ function expireNpcContract(world: World, ship: Ship): void {
   ship.route = null;
   ship.order = null;
   pushNotice(world, playerId, `${ship.name}'s privateer contract has ended.`);
+  recordWorldEvent(world, "npc", `privateer contract ended: ${ship.name}`, {
+    privateTo: playerId,
+    data: { action: "contractFailed", kind: "privateer" },
+  });
 }
 
 function scheduleNpcReplacement(world: World, ship: Ship): void {
@@ -1669,6 +1690,11 @@ export function researchUpgradeOrder(
   world.research.set(navy, result.state);
   const upgrade = researchUpgrade(upgradeId);
   pushNotice(world, playerId, `Unlocked ${upgrade?.name ?? upgradeId} L${level}.`);
+  recordWorldEvent(world, "research",
+    `unlocked ${upgrade?.name ?? upgradeId} L${level} for ${state.points.toFixed(0)} points left`, {
+      privateTo: playerId,
+      data: { upgrade: upgradeId, level, cost: researchCostPoints(upgradeId, level) },
+    });
   return true;
 }
 
@@ -1706,6 +1732,11 @@ export function fitShipUpgrades(world: World, playerId: string, shipId: unknown)
   };
   pushNotice(world, playerId,
     `Ship upgraded: ${ship.name} (${plan.missingLevels} levels, ${plan.cost} pieces, ${plan.gameDays} day).`);
+  recordWorldEvent(world, "upgrade",
+    `${ship.classId} fitted ${plan.missingLevels} levels for ${plan.cost}`, {
+      privateTo: playerId,
+      data: { shipClass: ship.classId, levels: plan.missingLevels, cost: plan.cost },
+    });
   return true;
 }
 
@@ -1809,6 +1840,10 @@ function unlockResearchFromCapture(
     pushNotice(world, playerId, entry.level === 1
       ? `Unlocked ${name} L1 by capture`
       : `Unlocked ${name} L${entry.level} by capture`);
+    recordWorldEvent(world, "research", `capture unlocked ${name} L${entry.level}`, {
+      privateTo: playerId,
+      data: { upgrade: entry.id, level: entry.level, byCapture: true },
+    });
   }
   for (const entry of result.points) {
     if (entry.level >= 3) continue;
@@ -1902,6 +1937,10 @@ export function lootNpcShip(
   }
   target.npcLooted = true;
   pushNotice(world, playerId, `Looted ${Math.round(taken)} tonnes and left ${target.name} afloat.`);
+  recordWorldEvent(world, "npc", `looted ${Math.round(taken)} t from ${target.npcKind ?? "merchant"}`, {
+    privateTo: playerId,
+    data: { action: "loot", kind: target.npcKind ?? "merchant", tonnes: taken },
+  });
   return true;
 }
 
@@ -1946,6 +1985,10 @@ export function hirePrivateer(
   privateer.route = null;
   privateer.order = null;
   pushNotice(world, playerId, `${privateer.name} hired for six game days (${mode}).`);
+  recordWorldEvent(world, "npc", `hired privateer ${mode} for ${fee}`, {
+    privateTo: playerId,
+    data: { action: "contractPaid", mode, fee },
+  });
   return true;
 }
 
@@ -2261,6 +2304,11 @@ export function resetTestRoom(world: World): World {
     );
     setPlayerName(fresh, record.id, record.name);
   }
+  // The playtest record and notes survive a scenario reset; the new world
+  // otherwise starts clean.
+  fresh.recorder = world.recorder;
+  fresh.sessionNotes = world.sessionNotes;
+  fresh.lastPerfSampleRealMs = world.lastPerfSampleRealMs;
   return fresh;
 }
 
@@ -2714,6 +2762,178 @@ function pushCombatEvent(
   while (world.combatEvents.length > settings.combat.maxCombatEvents) {
     world.combatEvents.shift();
   }
+  // 3J-a: record the visible battle events once. Shots are recorded with
+  // counts and damage by their firing code, so the visual puffs are skipped.
+  if (!["fire", "hit", "miss"].includes(event.kind)) {
+    const found = event.shipId
+      ? allShips(world).find(({ ship }) => ship.id === event.shipId)
+      : undefined;
+    recordWorldEvent(world, event.kind, `${event.kind}${found ? ` ${found.ship.classId}` : ""}`, {
+      audience: playersSeeingPoint(world, event.x, event.y),
+      data: found ? {
+        shipClass: found.ship.classId,
+        navy: found.ship.navy,
+        owner: found.ownerId,
+      } : undefined,
+    });
+  }
+}
+
+export interface RecordEventOptions {
+  privateTo?: string;
+  audience?: string[];
+  data?: RecordedData;
+}
+
+/** 3J-a: append one structured event. Normal rooms record nothing. */
+export function recordWorldEvent(
+  world: World,
+  kind: string,
+  text: string,
+  options: RecordEventOptions = {},
+): RecordedEvent | null {
+  if (world.kind === "normal") return null;
+  return appendRecorded(world.recorder, {
+    realMs: Date.now(),
+    gameMs: world.gameMs,
+    kind,
+    text: text.length > 180 ? `${text.slice(0, 177)}...` : text,
+    privateTo: options.privateTo,
+    audience: options.audience,
+    data: options.data,
+  });
+}
+
+/** Players with a ship whose own sight reaches this point. */
+export function playersSeeingPoint(
+  world: World,
+  x: number,
+  y: number,
+  include: string[] = [],
+): string[] {
+  const found = new Set(include);
+  for (const [playerId, fleet] of world.fleets) {
+    for (const ship of fleet) {
+      if (ship.deliveryPortId) continue;
+      const sight = shipSightRadiusKm(ship);
+      if (Math.hypot(ship.x - x, ship.y - y) <= sight) {
+        found.add(playerId);
+        break;
+      }
+    }
+  }
+  return [...found];
+}
+
+/** 3J-a: save a one-line note with the requested playtest snapshot. */
+export function recordSessionNote(
+  world: World,
+  playerId: string,
+  rawText: unknown,
+  meta: { zoomKm?: unknown; layout?: unknown } = {},
+): SessionNote | null {
+  if (world.kind === "normal" || typeof rawText !== "string") return null;
+  const text = rawText.replace(/\s+/g, " ").trim().slice(0, 240);
+  if (!text) return null;
+  const own = shipsForOwner(world, playerId);
+  const selectedId = world.owners.get(playerId)?.selectedShipId;
+  const selected = own.find((ship) => ship.id === selectedId) ?? own[0] ?? null;
+  const parts: string[] = [];
+  if (selected) {
+    const state = manoeuvreStateLabel(selected) ?? "sailing";
+    const readout = `${state} ${selected.order?.type ?? "no order"} ${selected.battleOrder ?? ""}`.trim();
+    const reloadLeft = Math.max(0,
+      (selected.reloadReadyRealSeconds ?? 0) - combatRealSeconds(world));
+    const firing = selected.stores.ammunition <= 0
+      ? "no ammunition"
+      : reloadLeft > 0
+        ? `reloading ${reloadLeft.toFixed(1)}s`
+        : "ready to fire";
+    const manoeuvre = selected.manoeuvre
+      ? `${selected.manoeuvre.kind}/${selected.manoeuvre.phase}${selected.manoeuvre.missed ? " missed" : ""}`
+      : "none";
+    parts.push(`ship ${selected.classId} ${selected.name}: ${readout}`);
+    parts.push(`step ${selected.order?.type ?? "idle"}, firing ${firing}, manoeuvre ${manoeuvre}`);
+    parts.push(`speed ${selected.speedKnots.toFixed(1)}kn crew ${selected.crew}/${selected.fullCrew}`);
+  } else {
+    parts.push("ship none");
+  }
+  const nearby = allShips(world)
+    .filter(({ ship }) => ship.id !== selected?.id && !ship.deliveryPortId)
+    .map(({ ship }) => ({
+      ship,
+      distanceKm: selected ? Math.hypot(ship.x - selected.x, ship.y - selected.y) : 0,
+      bearingDeg: selected
+        ? ((Math.atan2(ship.x - selected.x, ship.y - selected.y) * 180) / Math.PI + 360) % 360
+        : 0,
+    }))
+    .sort((a, b) => a.distanceKm - b.distanceKm)
+    .slice(0, 10);
+  parts.push(`near: ${nearby.map(({ ship, distanceKm, bearingDeg }) =>
+    `${ship.classId}/${ship.navy} ${distanceKm.toFixed(1)}km ${Math.round(bearingDeg)}deg ${ship.order?.type ?? "idle"}`,
+  ).join(" | ")}`);
+  parts.push(`last: ${world.recorder.slice(-30).map((event) => event.kind).join(",")}`);
+  const zoom = typeof meta.zoomKm === "number" && Number.isFinite(meta.zoomKm)
+    ? Math.round(meta.zoomKm)
+    : 0;
+  const layout = typeof meta.layout === "string" ? meta.layout.slice(0, 20) : "unknown";
+  parts.push(`zoom ${zoom}km layout ${layout}`);
+  const lastPerf = [...world.recorder].reverse().find((event) => event.kind === "perf");
+  if (lastPerf) parts.push(`perf ${lastPerf.text}`);
+  const note: SessionNote = {
+    text,
+    realMs: Date.now(),
+    gameMs: world.gameMs,
+    snapshot: parts.join(" · "),
+    ownerId: playerId,
+  };
+  world.sessionNotes.push(note);
+  while (world.sessionNotes.length > 200) world.sessionNotes.shift();
+  recordWorldEvent(world, "note", text, { privateTo: playerId });
+  return note;
+}
+
+/** 3J-a: the on-demand report for one player, already audience-filtered. */
+export function sessionReportFor(
+  world: World,
+  playerId: string,
+  meta: {
+    buildId?: unknown;
+    layout?: unknown;
+    width?: unknown;
+    height?: unknown;
+    seed?: unknown;
+    scenario?: unknown;
+  } = {},
+): string {
+  const buildId = typeof meta.buildId === "string" ? meta.buildId : "unknown";
+  const layout = typeof meta.layout === "string" ? meta.layout : "unknown";
+  const width = typeof meta.width === "number" ? meta.width : 0;
+  const height = typeof meta.height === "number" ? meta.height : 0;
+  const seed = typeof meta.seed === "number" || typeof meta.seed === "string" ? meta.seed : null;
+  const events = recordedForPlayer(world.recorder, playerId);
+  const allPlayers = [...world.playerRecords.values()].map((record) => ({
+    id: record.id,
+    name: record.name,
+    navy: record.navy,
+  }));
+  const me = allPlayers.find((record) => record.id === playerId);
+  const players = me ? [me, ...allPlayers.filter((record) => record.id !== playerId)] : allPlayers;
+  const notes = world.sessionNotes.filter((note) => !note.ownerId || note.ownerId === playerId);
+  return buildSessionReport({
+    buildId,
+    roomCode: world.roomCode,
+    roomKind: world.kind,
+    dateIso: new Date().toISOString(),
+    players,
+    layout,
+    width,
+    height,
+    events,
+    notes,
+    scenario: typeof meta.scenario === "string" ? meta.scenario : null,
+    seed,
+  });
 }
 
 /** Short private battle-log lines, never another player's ship detail. */
@@ -3221,6 +3441,10 @@ export function startShipRun(world: World, ownerId: string, ship: Ship): boolean
   ship.route = null;
   setRunSteering(world, ship);
   pushBattleLog(world, ownerId, `Your ${ship.name} is running.`);
+  recordWorldEvent(world, "run", `${ship.classId} attempted to run`, {
+    privateTo: ownerId,
+    data: { shipClass: ship.classId, enemies: enemies.size },
+  });
   return true;
 }
 
@@ -3239,6 +3463,10 @@ export function startShipSurrender(world: World, ownerId: string, ship: Ship): b
     pushBattleLog(world, ownerId, `Your ${ship.name} surrendered.`);
     pushNotice(world, ownerId, `${ship.name} has surrendered.`);
   }
+  recordWorldEvent(world, "surrender", `${ship.classId} struck colours`, {
+    audience: playersSeeingPoint(world, ship.x, ship.y, [ownerId]),
+    data: { shipClass: ship.classId, owner: ownerId, navy: ship.navy },
+  });
   for (const [playerId] of world.players) {
     if (playerId === ownerId) continue;
     if (!ownerCanSeeShip(world, playerId, ship)) continue;
@@ -3360,6 +3588,11 @@ export function acceptShipSurrender(world: World, playerId: string, shipId: unkn
   pushNotice(world, oldOwner, `Your ship ${target.name} was taken.`);
   pushNotice(world, playerId, `You accepted the surrender of the ${target.navy} ${target.classId}.`);
   pushBattleLog(world, playerId, `You accepted the surrender of the ${target.navy} ${target.classId}.`);
+  recordWorldEvent(world, "surrenderAccepted",
+    `${target.classId} accepted from ${oldOwner}`, {
+      audience: playersSeeingPoint(world, target.x, target.y, [playerId, oldOwner]),
+      data: { shipClass: target.classId, from: oldOwner, to: playerId },
+    });
   return true;
 }
 
@@ -3551,6 +3784,10 @@ function updateRuns(world: World): void {
         holdPosition(ship);
         if (world.players.has(ownerId)) pushNotice(world, ownerId, "Escaped.");
         pushBattleLog(world, ownerId, `Your ${ship.name} escaped.`);
+        recordWorldEvent(world, "escape", `${ship.classId} escaped`, {
+          privateTo: ownerId,
+          data: { shipClass: ship.classId },
+        });
         if (queued) applyShipSpecialOrder(world, ownerId, ship.id, queued);
       }
     }
@@ -4901,6 +5138,21 @@ function removeSunkShips(world: World, sunkIds: Set<string>): void {
         clearTow(tower, tow);
       }
       if (world.players.has(ownerId)) pushNotice(world, ownerId, `Ship sunk: ${ship.name}.`);
+      const lastFight = [...world.recorder].reverse().find((event) =>
+        event.kind === "shot" &&
+        (event.data?.attacker === ship.id || event.data?.targetShipId === ship.id));
+      recordWorldEvent(world, "sink",
+        `${ship.classId} ${ship.navy} sank, ${Math.max(0, Math.round(ship.fullCrew - (ship.capturedCrew ?? 0)))} crew lost`,
+        {
+          audience: playersSeeingPoint(world, ship.x, ship.y, [ownerId]),
+          data: {
+            owner: ownerId,
+            shipClass: ship.classId,
+            navy: ship.navy,
+            crewLost: Math.max(0, Math.round(ship.fullCrew - (ship.capturedCrew ?? 0))),
+            fightId: String(lastFight?.data?.fightId ?? ""),
+          },
+        });
       if (!world.sinkingShips.some((entry) => entry.ship.id === ship.id)) {
         const nowMs = combatRealSeconds(world) * 1000;
         world.sinkingShips.push({ ship, ownerId, startedRealMs: nowMs, state: startSinking(nowMs) });
@@ -5025,6 +5277,19 @@ function resolveCombat(world: World): void {
     // the battle and still warns the target. Only the damage log needs a hit.
     if (firstOwnExchange) {
       pushNoticeOnce(world, plan.ownerId, own.id, "battle", "Battle begun.");
+      recordWorldEvent(world, "battleStart",
+        `${own.classId} ${own.navy} engaged ${target.classId} ${target.navy}`,
+        {
+          audience: playersSeeingPoint(world, target.x, target.y, [
+            plan.ownerId,
+            ...(targetEntry ? [targetEntry.ownerId] : []),
+          ]),
+          data: {
+            fightId: `${own.id}>${target.id}`,
+            myClass: own.classId,
+            theirClass: target.classId,
+          },
+        });
     }
     if (targetEntry) {
       if (firstTargetExchange) {
@@ -5041,6 +5306,33 @@ function resolveCombat(world: World): void {
       crewPercent(own.damage, damageCapacities(shipSpecFor(own))),
     );
 
+    recordWorldEvent(world, "shot",
+      `${own.classId} fired ${result.gunsFired}, hit ${result.hits}, missed ${result.misses}`,
+      {
+        audience: playersSeeingPoint(world, target.x, target.y, [
+          plan.ownerId,
+          ...(targetEntry ? [targetEntry.ownerId] : []),
+        ]),
+        data: {
+          fightId: `${own.id}>${target.id}`,
+          attacker: plan.ownerId,
+          attackerClass: own.classId,
+          attackerNavy: own.navy,
+          target: targetEntry?.ownerId ?? "npc",
+          targetShipId: target.id,
+          targetClass: target.classId,
+          shots: result.gunsFired,
+          hits: result.hits,
+          misses: result.misses,
+          hull: result.damageByArea.hull ?? 0,
+          sails: result.damageByArea.sails ?? 0,
+          masts: result.damageByArea.masts ?? 0,
+          rudder: result.damageByArea.rudder ?? 0,
+          guns: result.damageByArea.guns ?? 0,
+          crew: result.damageByArea.crew ?? 0,
+          pounds: result.pounds,
+        },
+      });
     const firstGroup = result.groups[0];
     pushCombatEvent(world, {
       kind: "fire",
@@ -5156,6 +5448,15 @@ function resolveCombat(world: World): void {
     }
     if (result.sunk) {
       sunk.add(target.id);
+      recordWorldEvent(world, "battleEnd",
+        `${target.classId} sunk after ${result.hits} hits`,
+        {
+          audience: playersSeeingPoint(world, target.x, target.y, [
+            plan.ownerId,
+            ...(targetEntry ? [targetEntry.ownerId] : []),
+          ]),
+          data: { fightId: `${own.id}>${target.id}`, result: "sunk" },
+        });
       pushCombatEvent(world, { kind: "sunk", x: target.x, y: target.y, shipId: target.id });
       pushBattleLog(world, plan.ownerId, `Your ${own.name} sank the ${target.name}.`);
       if (targetEntry) pushBattleLog(world, targetEntry.ownerId, `The ${own.name} sank your ${target.name}.`);
@@ -6729,6 +7030,11 @@ function igniteFireShip(
   towerForTow(world, ship);
   pushNoticeOnce(world, ownerId, ship.id, "ignited", "Fire ship ignited");
   pushBattleLog(world, ownerId, `${ship.name} was set alight.`);
+  recordWorldEvent(world, "fireShipIgnite",
+    `fire ship ignited (${mode}${targetId ? ` at ${targetId}` : ""})`, {
+      audience: playersSeeingPoint(world, ship.x, ship.y, [ownerId]),
+      data: { mode, shipClass: ship.classId },
+    });
   pushCombatEvent(world, { kind: "fireStarted", x: ship.x, y: ship.y, shipId: ship.id });
 }
 
@@ -6946,6 +7252,10 @@ function autoAnchorShip(world: World, ownerId: string, ship: Ship, reason: strin
   ship.formationStation = false;
   ship.idleSinceGameMs = undefined;
   if (world.players.has(ownerId)) pushNoticeOnce(world, ownerId, ship.id, "autoAnchor", `${ship.name}: ${reason}`);
+  recordWorldEvent(world, "sailing", `${ship.classId}: ${reason}`, {
+    privateTo: ownerId,
+    data: { action: "anchor", reason },
+  });
 }
 
 /** Reset the idle clock and anchor a ship that has waited long enough. */
@@ -7042,6 +7352,10 @@ function updateCoastSafety(world: World, windFromDeg: number): void {
       if (world.players.has(ownerId)) {
         pushNoticeOnce(world, ownerId, ship.id, "coastSafety", "Coast ahead: standing off.");
       }
+      recordWorldEvent(world, "sailing", `${ship.classId}: coast avoidance`, {
+        privateTo: ownerId,
+        data: { action: "coastAvoidance" },
+      });
     }
   }
 }
@@ -7089,6 +7403,10 @@ function updateStuckRoutes(world: World): void {
       if (world.players.has(ownerId)) {
         pushNotice(world, ownerId, `${ship.name}: no progress; trying a new tack.`);
       }
+      recordWorldEvent(world, "sailing", `${ship.classId}: stuck, trying a new tack`, {
+        privateTo: ownerId,
+        data: { action: "stuck" },
+      });
     }
     if (idleGameSeconds >= settings.manoeuvres.stuckClearGameMinutes * 60) {
       ship.order = null;
@@ -8398,6 +8716,26 @@ function updateBoarding(world: World, nowRealSeconds: number, windFromDeg: numbe
       pushNotice(world, fight.attackerOwnerId, `Your boarding of ${defender.name} failed.`);
       pushBattleLog(world, fight.attackerOwnerId, `Your ${attacker.name} lost the boarding of ${defender.name}.`);
     }
+    const odds = boardingOdds(
+      boardingStrength(attacker.crew, { quality: shipResearchModifiers(attacker).boardingStrength }),
+      boardingStrength(defender.crew),
+    );
+    recordWorldEvent(world, "boarding",
+      `${attacker.classId} vs ${defender.classId}: ${fight.winner}, ` +
+      `odds ${Math.round(odds * 20) * 5}%, losses ${fight.attackerLost}/${fight.defenderLost}`, {
+        audience: playersSeeingPoint(world, defender.x, defender.y, [
+          fight.attackerOwnerId,
+          fight.defenderOwnerId,
+        ]),
+        data: {
+          attackerClass: attacker.classId,
+          defenderClass: defender.classId,
+          odds: Math.round(odds * 20) * 5,
+          result: fight.winner,
+          attackerLost: fight.attackerLost,
+          defenderLost: fight.defenderLost,
+        },
+      });
     pushCombatEvent(world, { kind: "boarding", x: defender.x, y: defender.y, shipId: defender.id });
     clearBoarding(world, attacker);
     clearBoarding(world, defender);
@@ -8539,6 +8877,10 @@ function abandonNow(world: World, ownerId: string, ship: Ship): void {
     pushNotice(world, ownerId, `Your ship ${ship.name} was abandoned`);
     pushBattleLog(world, ownerId, `Your ship ${ship.name} was abandoned.`);
   }
+  recordWorldEvent(world, "abandonment", `${ship.classId} abandoned`, {
+    audience: playersSeeingPoint(world, ship.x, ship.y, [ownerId]),
+    data: { shipClass: ship.classId, owner: ownerId },
+  });
   removeFromOwner(world, ownerId, ship.id);
   for (const [shipId, engagement] of [...world.engagements]) {
     if (shipId === ship.id || engagement.targetShipId === ship.id) clearEngagement(world, shipId);
@@ -8675,6 +9017,14 @@ function updateFires(world: World, dtGameSeconds: number): void {
       });
       if (chance <= 0 || world.combatRandom() >= chance) continue;
       target.ship.fire = { burning: true, strength: settings.combat.fireStartStrength };
+      recordWorldEvent(world, "fireSpread",
+        `fire spread ${source.ship.classId} to ${target.ship.classId}`, {
+          audience: playersSeeingPoint(world, target.ship.x, target.ship.y, [
+            source.ownerId,
+            ...(target.ownerId ? [target.ownerId] : []),
+          ]),
+          data: { shipClass: target.ship.classId },
+        });
       pushCombatEvent(world, {
         kind: "fireStarted", x: target.ship.x, y: target.ship.y, shipId: target.ship.id,
       });
@@ -9194,6 +9544,16 @@ function stepPortBattles(world: World, dtGameSeconds: number): void {
       damagePort(state, battlePort(port), entry!.ownerId, result.pounds, nowReal);
       pushCombatEvent(world, { kind: "portHit", x: port.anchorage.x, y: port.anchorage.y });
       pushBattleLog(world, entry!.ownerId, `Your ships hit ${port.name}: ${Math.round(result.pounds)} lb landed.`);
+      recordWorldEvent(world, "portAttack",
+        `${port.name}: ${Math.round(result.pounds)} lb, health ${Math.round(state.health)}`, {
+          audience: playersSeeingPoint(world, port.anchorage.x, port.anchorage.y, [entry!.ownerId]),
+          data: {
+            port: port.id,
+            pounds: result.pounds,
+            health: state.health,
+            tier: state.tier,
+          },
+        });
       if (state.ownerId) {
         pushNoticeOnce(world, state.ownerId, port.id, "portAttack", `Port ${port.name} is under attack`);
       }
@@ -9335,6 +9695,15 @@ function stepPortBattles(world: World, dtGameSeconds: number): void {
       unlockResearchFromCapture(world, status.capturedBy, capturedLevels);
     }
     pushCombatEvent(world, { kind: "portCaptured", x: port.anchorage.x, y: port.anchorage.y });
+    recordWorldEvent(world, "portCaptured",
+      `${port.name} captured by ${status.capturedBy} after ${Math.round(state.capture?.seconds ?? 0)}s hold`, {
+        audience: playersSeeingPoint(world, port.anchorage.x, port.anchorage.y, [status.capturedBy]),
+        data: {
+          port: port.id,
+          tier: state.tier,
+          holdSeconds: Math.round(state.capture?.seconds ?? 0),
+        },
+      });
     const docked = allShips(world)
       .filter(({ ship }) => ship.dockedPortId === port.id)
       .map(({ ownerId, ship }) => ({

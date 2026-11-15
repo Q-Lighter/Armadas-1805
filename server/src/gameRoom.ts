@@ -12,7 +12,10 @@ import {
   acceptShipSurrender,
   giveSpareShips,
   resetTestRoom,
+  recordSessionNote,
+  recordWorldEvent,
   resignPlayer,
+  sessionReportFor,
   setPlayerName,
   sinkPlayerFlagship,
   boardingOddsFor,
@@ -115,6 +118,10 @@ export class GameRoom {
   private world: World = createWorld("main", { npcs: true });
   private readonly sockets = new PlayerSessions<WebSocket>();
   private ticks = 0;
+  private lastPerfSampleMs = Date.now();
+  private lastSnapshotMs = 0;
+  private lastStepMs = 0;
+  private sentBytesSincePerf = 0;
   private readonly metrics = new LoadMetrics();
   private readonly streams = new Map<string, {
     seq: number;
@@ -426,7 +433,9 @@ export class GameRoom {
 
     const stepStarted = performance.now();
     stepWorld(this.world, gameSecondsPerTick);
-    this.metrics.noteWorldStep(performance.now() - stepStarted, now);
+    this.lastStepMs = performance.now() - stepStarted;
+    this.metrics.noteWorldStep(this.lastStepMs, now);
+    this.samplePerformance(now);
     this.ticks += 1;
     const regular = this.ticks % broadcastEvery === 0;
     const battleEvery = Math.max(
@@ -507,6 +516,35 @@ export class GameRoom {
     }
   }
 
+  /** 3J: one cheap sample every 5 real seconds, inside test and dev rooms only. */
+  private samplePerformance(now: number): void {
+    if (this.world.kind === "normal") {
+      this.sentBytesSincePerf = 0;
+      this.lastPerfSampleMs = now;
+      return;
+    }
+    const windowMs = now - this.lastPerfSampleMs;
+    if (windowMs < settings.testing.perfSampleRealSeconds * 1000) return;
+    const seconds = Math.max(0.001, windowMs / 1000);
+    const players = this.sockets.size;
+    const bytesPerPlayer = players > 0 ? this.sentBytesSincePerf / players / seconds : 0;
+    const snapshotAge = this.lastSnapshotMs > 0 ? Math.max(0, now - this.lastSnapshotMs) : -1;
+    recordWorldEvent(this.world, "perf",
+      `step ${this.lastStepMs.toFixed(1)}ms, ${Math.round(bytesPerPlayer)} B/player/s, ` +
+      `snapshot ${Math.round(snapshotAge)}ms`, {
+        audience: [...this.sockets.entries()].map(([id]) => id),
+        data: {
+          stepMs: this.lastStepMs,
+          bytesPerPlayerSecond: bytesPerPlayer,
+          snapshotAgeMs: snapshotAge,
+          players,
+          clientFrameMs: -1,
+        },
+      });
+    this.lastPerfSampleMs = now;
+    this.sentBytesSincePerf = 0;
+  }
+
   private sendState(playerId: string, socket: WebSocket, forceFull = false): void {
     try {
       const now = Date.now();
@@ -540,7 +578,9 @@ export class GameRoom {
       state.seq = stream.seq;
       if (forceFull || stream.forceFull || stream.base === null) {
         state.full = true;
-        socket.send(JSON.stringify(state));
+        const payload = JSON.stringify(state);
+        this.sentBytesSincePerf += payload.length;
+        socket.send(payload);
         stream.base = state;
         stream.fullAt = now;
         stream.fleetAt = now;
@@ -548,16 +588,20 @@ export class GameRoom {
       } else {
         const delta = buildStateDelta(stream.base, state, stream.seq, includeFleet);
         const binary = encodeStateDelta(delta);
+        this.sentBytesSincePerf += binary.byteLength;
         socket.send(binary);
         stream.base = state;
       }
       if (includeFleet) stream.fleetAt = now;
+      this.lastSnapshotMs = now;
 
       // Notices are short events, not world state, so they travel separately.
       const notice = takeNotice(this.world, playerId);
       if (notice) {
         const message: NoticeMessage = { t: "n", text: notice };
-        socket.send(JSON.stringify(message));
+        const payload = JSON.stringify(message);
+        this.sentBytesSincePerf += payload.length;
+        socket.send(payload);
       }
     } catch {
       // A dead socket is dropped. Test and dev rooms remove its ship after
@@ -655,6 +699,15 @@ export class GameRoom {
       level?: unknown;
       units?: unknown;
       points?: unknown;
+      text?: unknown;
+      zoom?: unknown;
+      layout?: unknown;
+      width?: unknown;
+      height?: unknown;
+      build?: unknown;
+      seed?: unknown;
+      scenario?: unknown;
+      where?: unknown;
     };
 
     if (order.t === "ping") {
@@ -677,6 +730,65 @@ export class GameRoom {
         if (stream) stream.forceFull = true;
         this.sendState(playerId, socket, true);
       }
+      return;
+    }
+
+    const testOnly = this.world.kind !== "normal";
+    const socket = this.sockets.get(playerId);
+    const ack = (ok: boolean, text?: string): void => {
+      if (typeof order.id === "string" && order.id.length <= 80) {
+        socket?.send(JSON.stringify({ t: "ack", id: order.id, ok, text }));
+      }
+    };
+    if (order.t === "sessionReport") {
+      if (!testOnly) {
+        ack(false, "Test tools are removed in normal rooms.");
+        return;
+      }
+      const text = sessionReportFor(this.world, playerId, {
+        buildId: order.build,
+        layout: order.layout,
+        width: order.width,
+        height: order.height,
+        seed: order.seed,
+        scenario: order.scenario,
+      });
+      socket?.send(JSON.stringify({ t: "sessionReport", text }));
+      ack(true);
+      return;
+    }
+    if (order.t === "clearRecorder") {
+      if (!testOnly) {
+        ack(false, "Test tools are removed in normal rooms.");
+        return;
+      }
+      this.world.recorder.length = 0;
+      this.world.sessionNotes.length = 0;
+      recordWorldEvent(this.world, "tools", `recorder cleared by ${playerId}`);
+      ack(true);
+      return;
+    }
+    if (order.t === "sessionNote") {
+      if (!testOnly) {
+        ack(false, "Test tools are removed in normal rooms.");
+        return;
+      }
+      const note = recordSessionNote(this.world, playerId, order.text, {
+        zoomKm: order.zoom,
+        layout: order.layout,
+      });
+      ack(note !== null, note ? undefined : "Note was empty.");
+      return;
+    }
+    if (order.t === "clientError") {
+      if (testOnly) {
+        recordWorldEvent(this.world, "clientError",
+          String(order.text ?? "client error").slice(0, 180), {
+            privateTo: playerId,
+            data: { where: typeof order.where === "string" ? order.where : "client" },
+          });
+      }
+      ack(true);
       return;
     }
 
@@ -910,6 +1022,14 @@ export class GameRoom {
       const latest = this.world.notices.get(playerId)?.at(-1);
       if (latest && latest !== beforeNotice) reason = latest;
       reason ??= this.orderReason(order.t);
+    }
+    if (this.world.kind !== "normal" && typeof order.t === "string" &&
+        order.t !== "ping" && order.t !== "focus" && order.t !== "resync") {
+      recordWorldEvent(this.world, "order",
+        `${order.t}: ${accepted ? "accepted" : reason ?? "rejected"}`, {
+          privateTo: playerId,
+          data: { type: order.t, accepted, reason: reason ?? "" },
+        });
     }
     if (typeof order.id === "string" && order.id.length <= 80) {
       this.sockets.get(playerId)?.send(JSON.stringify({

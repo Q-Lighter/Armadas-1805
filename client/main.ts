@@ -279,12 +279,15 @@ function errorText(error: unknown): string {
 }
 
 const clientErrorLog: Array<{ at: number; text: string }> = [];
+const pendingClientErrors: Array<{ text: string; where: string }> = [];
 
 /** Report a client failure to the readable banner, console and debug log. */
 function reportClientError(error: unknown, where: string): void {
   const message = errorText(error);
   clientErrorLog.push({ at: Date.now(), text: `${message} (${where})` });
   if (clientErrorLog.length > 10) clientErrorLog.shift();
+  pendingClientErrors.push({ text: message.slice(0, 180), where });
+  while (pendingClientErrors.length > 5) pendingClientErrors.shift();
   const reporter = (window as ArmadasErrorWindow).reportArmadasError;
   if (reporter) {
     reporter(message, where);
@@ -1054,6 +1057,18 @@ async function start(): Promise<void> {
   const testToolsButton = element<HTMLButtonElement>("test-tools-btn");
   const testTools = element<HTMLElement>("test-tools");
   const testToolsClose = element<HTMLButtonElement>("test-tools-close");
+  const testReportButton = element<HTMLButtonElement>("test-report");
+  const testReportCopy = element<HTMLButtonElement>("test-report-copy");
+  const testReportDownload = element<HTMLButtonElement>("test-report-download");
+  const testReportText = element<HTMLElement>("test-report-text");
+  const testClearRecorder = element<HTMLButtonElement>("test-clear-recorder");
+  const testNoteButton = element<HTMLButtonElement>("test-note");
+  const testNoteToggle = element<HTMLInputElement>("test-note-toggle");
+  const noteFab = element<HTMLButtonElement>("note-fab");
+  const noteSheet = element<HTMLElement>("note-sheet");
+  const noteForm = element<HTMLFormElement>("note-form");
+  const noteText = element<HTMLInputElement>("note-text");
+  const noteCancel = element<HTMLButtonElement>("note-cancel");
   const testEnemyClass = element<HTMLSelectElement>("test-enemy-class");
   const testEnemyNavy = element<HTMLSelectElement>("test-enemy-navy");
   const testEnemyCount = element<HTMLInputElement>("test-enemy-count");
@@ -3154,6 +3169,19 @@ async function start(): Promise<void> {
       bestDistance = distance;
     }
     return best;
+  }
+
+  function flushClientErrors(): void {
+    if (!socket || socket.readyState !== WebSocket.OPEN) return;
+    while (pendingClientErrors.length > 0) {
+      const next = pendingClientErrors.shift();
+      if (!next) break;
+      try {
+        socket.send(JSON.stringify({ t: "clientError", text: next.text, where: next.where }));
+      } catch {
+        // Reporting a client error must never cause another one.
+      }
+    }
   }
 
   function sendCommand(message: Record<string, unknown>): boolean {
@@ -6672,6 +6700,7 @@ async function start(): Promise<void> {
       return;
     }
     if (typeof event.data === "string") noteInbound(event.data.length, 1);
+    flushClientErrors();
     let message: unknown;
     try {
       message = JSON.parse(String(event.data));
@@ -6703,6 +6732,16 @@ async function start(): Promise<void> {
         const odds = Math.max(0, Math.min(100, Math.round(reply.odds)));
         boardOdds.textContent = `Odds: about ${odds}%`;
         boardConfirm.disabled = false;
+      }
+      return;
+    }
+    if (type === "sessionReport") {
+      const text = (message as { text?: unknown }).text;
+      if (typeof text === "string") {
+        testReportText.textContent = text;
+        testReportText.hidden = false;
+        testReportCopy.disabled = false;
+        testReportDownload.disabled = false;
       }
       return;
     }
@@ -8568,6 +8607,7 @@ async function start(): Promise<void> {
 
   function closeTestTools(): void {
     testTools.hidden = true;
+    refreshNoteFab();
     scheduleScreenLayout();
   }
 
@@ -8592,6 +8632,7 @@ async function start(): Promise<void> {
     closeDamagePanel();
     closeTestTools();
     testTools.hidden = false;
+    refreshNoteFab();
     refreshTestInvite();
     scheduleScreenLayout();
   });
@@ -8662,6 +8703,110 @@ async function start(): Promise<void> {
     sendCommand({ t: "testWind", deg, knots });
     showNotice(`Wind set to ${((deg % 360) + 360) % 360}° at ${knots} knots.`);
   });
+  function layoutModeName(): string {
+    return isPhoneLayout() ? "phone" : "desktop";
+  }
+
+  function sessionReportMeta(): Record<string, unknown> {
+    return {
+      build: pageBuildId || buildCommit || "unknown",
+      layout: layoutModeName(),
+      width: Math.round(window.innerWidth),
+      height: Math.round(window.innerHeight),
+      zoom: view.kmAcross,
+    };
+  }
+
+  function copyPlainText(text: string): void {
+    const done = (): void => showNotice("Copied.");
+    if (navigator.clipboard?.writeText) {
+      void navigator.clipboard.writeText(text).then(done).catch(() => {
+        const area = document.createElement("textarea");
+        area.value = text;
+        area.setAttribute("readonly", "");
+        area.style.position = "fixed";
+        area.style.opacity = "0";
+        document.body.appendChild(area);
+        area.select();
+        document.execCommand("copy");
+        area.remove();
+        done();
+      });
+      return;
+    }
+    const area = document.createElement("textarea");
+    area.value = text;
+    area.setAttribute("readonly", "");
+    area.style.position = "fixed";
+    area.style.opacity = "0";
+    document.body.appendChild(area);
+    area.select();
+    document.execCommand("copy");
+    area.remove();
+    done();
+  }
+
+  testReportButton.addEventListener("click", () => {
+    if (!sendCommand({ t: "sessionReport", ...sessionReportMeta() })) return;
+    testReportText.textContent = "Building the report…";
+    testReportText.hidden = false;
+  });
+  testReportCopy.addEventListener("click", () => {
+    if (testReportText.textContent) copyPlainText(testReportText.textContent);
+  });
+  testReportDownload.addEventListener("click", () => {
+    const text = testReportText.textContent ?? "";
+    if (!text) return;
+    const blob = new Blob([text], { type: "text/plain;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `armadas-session-${pageBuildId || "report"}.txt`;
+    link.click();
+    window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+  });
+  testClearRecorder.addEventListener("click", () => {
+    sendCommand({ t: "clearRecorder" });
+    testReportText.textContent = "";
+    testReportText.hidden = true;
+    testReportCopy.disabled = true;
+    testReportDownload.disabled = true;
+    showNotice("Recorder cleared.");
+  });
+  function refreshNoteFab(): void {
+    noteFab.hidden = !testNoteToggle.checked || !noteSheet.hidden || !testTools.hidden;
+  }
+  function openNoteSheet(): void {
+    noteSheet.hidden = false;
+    noteFab.hidden = true;
+    noteText.value = "";
+    window.setTimeout(() => noteText.focus(), 0);
+    scheduleScreenLayout();
+  }
+  function closeNoteSheet(): void {
+    noteSheet.hidden = true;
+    refreshNoteFab();
+    scheduleScreenLayout();
+  }
+  testNoteButton.addEventListener("click", openNoteSheet);
+  noteFab.addEventListener("click", openNoteSheet);
+  noteCancel.addEventListener("click", closeNoteSheet);
+  noteForm.addEventListener("submit", (event) => {
+    event.preventDefault();
+    const text = noteText.value.trim();
+    if (!text) return;
+    if (!sendCommand({
+      t: "sessionNote",
+      text,
+      zoom: view.kmAcross,
+      layout: layoutModeName(),
+    })) return;
+    noteText.value = "";
+    closeNoteSheet();
+    showNotice("Note recorded.");
+  });
+  testNoteToggle.addEventListener("change", refreshNoteFab);
+  refreshNoteFab();
   testResetRoom.addEventListener("click", () => {
     sendCommand({ t: "resetRoom" });
     showNotice("Reset room requested.");

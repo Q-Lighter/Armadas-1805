@@ -529,6 +529,22 @@
         <p class="perf-title">Performance <span id="perf-visible-state">off</span></p>
         <pre id="perf-lines"></pre>
       </div>
+      <div class="test-report">
+        <h3>Session report</h3>
+        <p class="test-report-note">Test tools, removed before release. The recorder is on demand only.</p>
+        <div class="test-report-actions">
+          <button class="btn btn-seal" id="test-report" type="button">Session report</button>
+          <button class="btn" id="test-report-copy" type="button" disabled>Copy</button>
+          <button class="btn" id="test-report-download" type="button" disabled>Download .txt</button>
+          <button class="btn" id="test-clear-recorder" type="button">Clear recorder</button>
+          <button class="btn" id="test-note" type="button">Note</button>
+          <label class="test-inline test-note-toggle">
+            <input id="test-note-toggle" type="checkbox" />
+            Show note button
+          </label>
+        </div>
+        <pre class="test-report-text" id="test-report-text" hidden></pre>
+      </div>
       <div class="test-tools-actions">
         <button class="btn btn-seal" id="test-spawn" type="button">Spawn enemies</button>
         <label class="test-inline">Anchored fleet stance
@@ -560,6 +576,23 @@
         <button class="btn btn-seal" id="test-copy-link" type="button">Copy link</button>
         <p class="test-invite-note">No QR code: the game has no QR library and I did not add a dependency for one.</p>
       </div>
+    </section>
+
+    <button class="note-fab paper" id="note-fab" type="button" aria-label="Add a session note" hidden>N</button>
+    <section class="note-sheet paper" id="note-sheet" role="dialog" aria-labelledby="note-title" hidden>
+      <form id="note-form">
+        <div class="panel-head">
+          <div>
+            <p class="kicker">Test tools, removed before release</p>
+            <h2 id="note-title">Session note</h2>
+          </div>
+          <button class="btn panel-close" id="note-cancel" type="button">Cancel</button>
+        </div>
+        <label class="note-label">One line
+          <input id="note-text" type="text" maxlength="160" autocomplete="off" />
+        </label>
+        <button class="btn btn-seal" id="note-save" type="submit">Save note</button>
+      </form>
     </section>
 
     <p class="chart-notice" id="notice" role="status" aria-live="polite" hidden></p>

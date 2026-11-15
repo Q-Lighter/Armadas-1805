@@ -30,6 +30,10 @@
       "types": "./dist/world.d.ts",
       "default": "./dist/world.js"
     },
+    "./recorder": {
+      "types": "./dist/recorder.d.ts",
+      "default": "./dist/recorder.js"
+    },
     "./land": {
       "types": "./dist/land.d.ts",
       "default": "./dist/land.js"

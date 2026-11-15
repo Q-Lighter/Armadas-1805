@@ -1154,6 +1154,12 @@ export const settings = {
     dummyRunHullShare: 0.5,
     /** A dummy with `surrenders` strikes below this hull share. Draft: 30%. */
     dummySurrenderHullShare: 0.3,
+    /** 3J-a: structured events kept for the on-demand session report. */
+    recorderLimit: 3_000,
+    /** 3J-a: real seconds between performance samples. */
+    perfSampleRealSeconds: 5,
+    /** 3J-a: most recent errors and rejected orders listed in a report. */
+    reportErrorLimit: 30,
   },
 
   /** 3H-b2: look ahead on a fixed cadence and stand off a closing coast. */

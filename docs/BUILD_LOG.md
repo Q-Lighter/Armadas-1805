@@ -3530,3 +3530,41 @@ rules, and print the balance report and simulated first hour.
 - Weather, night sight, depth, income, healing, port log, alliances, route
   income and the other HOOK systems are still store-only, as required.
 - No screenshot or real click-through was possible in this environment.
+
+## Session 3J-a: event recorder and session report
+
+**Date:** 2026-11-15
+**Branch:** main
+
+### What was built
+
+- A test/dev-only recorder in `shared/recorder.ts`: a 3,000-event ring buffer
+  with real and game time, plus an on-demand plain-text report under 20 KB.
+  Normal rooms record nothing.
+- Server instrumentation for accepted and rejected orders, battle start and
+  end, shots with class/hits/damage by area, boardings with odds and
+  casualties, surrenders and accepts, runs and escapes, sinkings and
+  abandonments, fires (start, spread, out, fire-ship ignition), friendly fire,
+  port attacks and captures, NPC loot and privateer contracts, research and
+  fitting, coast avoidance, stuck recovery and anchoring, client errors and a
+  five-second performance sample. Events carry an explicit owner or audience;
+  a report only prints what that player saw or owned.
+- Developer sheet: Session report with Copy and Download .txt, Clear recorder,
+  a Note button and a saved one-line note snapshot. The small floating `N`
+  button appears only when `Show note button` is on and never when a sheet is
+  open. The report panel scrolls and every target is 44 px.
+- `tests/recorder-3j.test.ts`: cap, report size with 3,000 events, private-data
+  filtering, note snapshot, normal-room silence and the Developer-sheet
+  controls.
+
+### Checks
+
+- `npm test`: **552/552 passing** (serial command inside `npm test`).
+- `npm run build`: passed (`Build OK -> dist/index.html`).
+- No browser is available; copy/download and the floating button were checked
+  as markup and handlers, not clicked.
+
+### Broken or unfinished
+
+- Scenario results are empty until Part B; the section is already reserved.
+- The client frame time is recorded as unknown (no reliable source yet).

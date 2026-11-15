@@ -3978,3 +3978,59 @@ body {
     align-items: start;
   }
 }
+
+/* 3J-fix-c1/c2: armed order banner, controls sheet and first-use hints. */
+.armed-order {
+  position: fixed;
+  z-index: 62;
+  left: 50%;
+  top: calc(env(safe-area-inset-top, 0px) + 64px);
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  max-width: min(520px, calc(100vw - 24px));
+  padding: 8px 10px;
+}
+.armed-order[hidden] { display: none; }
+.armed-order p {
+  margin: 0;
+  font-size: 0.85rem;
+  line-height: 1.25;
+}
+.armed-order .btn { min-height: 44px; min-width: 44px; }
+
+.controls-hint {
+  position: fixed;
+  z-index: 61;
+  left: 50%;
+  bottom: calc(env(safe-area-inset-bottom, 0px) + 76px);
+  transform: translateX(-50%);
+  width: min(480px, calc(100vw - 24px));
+  max-height: 42vh;
+  overflow: auto;
+  padding: 10px 12px;
+}
+.controls-hint[hidden] { display: none; }
+.controls-hint p { margin: 0 0 8px; font-size: 0.85rem; line-height: 1.35; }
+.controls-hint-actions { display: flex; gap: 8px; }
+.controls-hint-actions .btn { min-height: 44px; flex: 1; }
+
+.controls-help {
+  max-height: 48vh;
+  overflow: auto;
+  border-top: 1px solid rgba(60, 42, 24, 0.25);
+  margin-top: 10px;
+  padding-top: 8px;
+}
+.controls-help[hidden] { display: none; }
+.controls-help h3 { margin: 0 0 6px; }
+.controls-help p { margin: 0 0 7px; font-size: 0.82rem; line-height: 1.35; }
+
+/* The action bar grows to seven controls; keep every target at least 44 px. */
+@media (max-width: 640px) {
+  .action-bar { flex-wrap: wrap; }
+  .action-bar .action-button { flex: 1 1 44px; min-width: 44px; min-height: 44px; }
+}
+.undo-chip { top: calc(env(safe-area-inset-top, 0px) + 128px); padding: 6px; }
+.undo-chip .btn { min-height: 44px; }

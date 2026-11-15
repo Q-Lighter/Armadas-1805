@@ -261,6 +261,59 @@ spawnTestFireShips(bootRoom.world, "downwind", 2);
 const downwindFleet = worldFleet(bootRoom, "downwind").filter((ship) => ship.classId === "fireShip");
 assert.equal(downwindFleet.length, 2, "second fleet spawned");
 
+// ---- 3J-fix-c1: select-then-act, Orders list, sea palette, Undo, groups ---
+
+advanceMs(500);
+// The Orders button opens every command group. No hold is involved.
+clickButton(alpha, "Orders");
+assert.equal(alpha.document.getElementById("order-menu").hidden, false, "Orders list opened");
+for (const label of ["Sail", "Attack ship: Sink", "Follow", "Ignite on contact"]) {
+  assert.ok(buttonByText(alpha, label), `Orders list has ${label}`);
+}
+alpha.document.getElementById("order-menu-close").click();
+assert.equal(alpha.document.getElementById("order-menu").hidden, true, "Orders list closes");
+
+// Select a frigate, tap the sea, and use the five-second Undo chip.
+const controlShip = fleet.find((ship) => ship.classId === "frigate");
+assert.ok(controlShip, "a frigate is available for the controls test");
+tapWorld(alpha, controlShip.x, controlShip.y);
+advanceMs(200);
+assert.equal(alpha.window.__armadaTest.selectedShipId(), controlShip.id, "ship selected by tap");
+tapWorld(alpha, controlShip.x + 2, controlShip.y);
+advanceMs(300);
+assert.equal(alpha.document.getElementById("undo-sail").hidden, false, "Undo chip appeared after Sail");
+clickButton(alpha, "Undo sail");
+assert.equal(alpha.document.getElementById("undo-chip").hidden, true, "Undo chip cleared");
+
+// Tap-to-sail off opens the palette; a hold is not part of this path.
+alpha.document.getElementById("tap-btn").click();
+assert.equal(alpha.document.getElementById("tap-btn").getAttribute("aria-pressed"), "false", "Tap is off");
+tapWorld(alpha, controlShip.x + 10, controlShip.y + 10);
+advanceMs(200);
+assert.equal(alpha.document.getElementById("order-menu").hidden, false, "sea tap opens order palette with Tap off");
+assert.ok(buttonByText(alpha, "Sail here"), "palette has Sail here");
+alpha.document.getElementById("order-menu-close").click();
+alpha.document.getElementById("tap-btn").click();
+
+// Select all and save/recall a control group with one tap.
+clickButton(alpha, "Select all");
+advanceMs(300);
+assert.match(alpha.document.getElementById("fleet-selected-count").textContent ?? "", /[2-9]|[1-9][0-9]+ selected/, "Select all selected several ships");
+clickButton(alpha, "Save group");
+advanceMs(500);
+const groupChip = [...alpha.document.querySelectorAll("#group-bar button")]
+  .find((button) => /^1 ·/.test((button.textContent ?? "").trim()));
+assert.ok(groupChip, "numbered control group exists");
+groupChip.click();
+advanceMs(200);
+assert.match(alpha.document.getElementById("fleet-selected-count").textContent ?? "", /selected/, "group recalled on one tap");
+alpha.window.__armadaTest.openOrders(controlShip.x, controlShip.y);
+alpha.document.getElementById("order-menu-close")?.click();
+if (alpha.document.getElementById("multi-btn").getAttribute("aria-pressed") === "true") {
+  alpha.document.getElementById("multi-btn").click();
+}
+advanceMs(200);
+
 // ---- a. Ignite now: the hulk must remain drawn and then sink ------------
 
 const fire = fleet.find((ship) => ship.classId === "fireShip");

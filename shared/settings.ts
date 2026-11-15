@@ -37,12 +37,6 @@ export const settings = {
     graphicsFailureWindowMs: 60_000,
     /** This many losses shows the tap-to-reload notice. */
     graphicsFailureLimit: 3,
-    /** Press-and-hold time that sends one move order when tap-to-sail is off. */
-    tapHoldMs: 500,
-    /** Screen radius of the hold-to-sail progress ring. */
-    tapHoldRingPx: 24,
-    /** Stroke width of the hold-to-sail progress ring. */
-    tapHoldRingWidthPx: 3,
     /** Draft: live combat effects kept before the oldest is dropped. */
     maxLiveEffects: 150,
     /** Draft: same-fleet ships closer than this on screen share one marker. */

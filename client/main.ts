@@ -102,6 +102,14 @@ import { runDrawLayer } from "@naval/shared/draw-layer";
 import { applyStateDelta, decodeStateDelta, newestStateWithEvents } from "@naval/shared/state-delta";
 import { DomThrottle } from "@naval/shared/dom-throttle";
 import { selectVisibleEffects } from "@naval/shared/effect-budget";
+import {
+  CONTROL_HINTS,
+  CONTROL_GROUP_NAMES,
+  CONTROL_ORDERS,
+  controlHintAt,
+  controlOrdersInGroup,
+  type ControlOrder,
+} from "@naval/shared/controls-3j";
 import { groupFleetMarkers } from "@naval/shared/fleet-markers";
 import {
   qualityFeatures,
@@ -844,6 +852,23 @@ async function start(): Promise<void> {
   const orderMenuWhere = element<HTMLElement>("order-menu-where");
   const orderMenuActions = element<HTMLElement>("order-menu-actions");
   const orderMenuClose = element<HTMLButtonElement>("order-menu-close");
+  const ordersListBtn = element<HTMLButtonElement>("orders-list-btn");
+  const backToShipBtn = element<HTMLButtonElement>("back-to-ship-btn");
+  const armedOrderBar = element<HTMLElement>("armed-order");
+  const armedOrderText = element<HTMLElement>("armed-order-text");
+  const armedOrderCancel = element<HTMLButtonElement>("armed-order-cancel");
+  const undoSailButton = element<HTMLButtonElement>("undo-sail");
+  const undoChip = element<HTMLElement>("undo-chip");
+  const attackNearestBtn = element<HTMLButtonElement>("attack-nearest-btn");
+  const controlsHelpBtn = element<HTMLButtonElement>("controls-help-btn");
+  const controlsHelp = element<HTMLElement>("controls-help");
+  const controlsHint = element<HTMLElement>("controls-hint");
+  const controlsHintText = element<HTMLElement>("controls-hint-text");
+  const controlsHintNext = element<HTMLButtonElement>("controls-hint-next");
+  const controlsHintClose = element<HTMLButtonElement>("controls-hint-close");
+  const fleetSelectNearby = element<HTMLButtonElement>("fleet-select-nearby");
+  const fleetSelectFrigate = element<HTMLButtonElement>("fleet-select-frigate");
+  const fleetSelectLine = element<HTMLButtonElement>("fleet-select-line");
   const headingSheet = element<HTMLElement>("heading-sheet");
   const headingDegrees = element<HTMLInputElement>("heading-degrees");
   const headingDial = element<HTMLInputElement>("heading-dial");
@@ -1201,7 +1226,7 @@ async function start(): Promise<void> {
   let layoutApplyFrame = 0;
   const UNPLACED_LAYOUT_IDS = new Set([
     "capture-strip", "escort-strip", "charting", "version-notice",
-    "client-error", "quality-note", "data-saver-note", "layout-debug-layer",
+    "client-error", "quality-note", "data-saver-note", "armed-order", "undo-chip", "controls-hint", "layout-debug-layer",
   ]);
   const chartDebug = query.get("chartdebug") === "1";
   let perfVisible = query.get("perf") === "1";
@@ -1365,9 +1390,6 @@ async function start(): Promise<void> {
   routeLayer.addChild(trailInk, routeInk, routeLabels);
   routeLayer.visible = false;
 
-  // Screen-space progress ring for the press-and-hold order gesture.
-  const holdRing = new Graphics();
-  holdRing.visible = false;
   const headingPreviewInk = new Graphics();
   routeLayer.addChild(headingPreviewInk);
 
@@ -1427,7 +1449,6 @@ async function start(): Promise<void> {
     liveHalo,
     liveMapLayer,
     liveMask,
-    holdRing,
     selectionBoxInk,
     routeLayer,
     combatRangeInk,
@@ -1493,6 +1514,9 @@ async function start(): Promise<void> {
   let queueOrders = false;
   let orderMenuPoint: { x: number; y: number } | null = null;
   let orderMenuTarget: { kind: "ship" | "port"; id: string } | null = null;
+  let armedOrder: ControlOrder | null = null;
+  let undoSail: { at: number; timer: number; ids: string[]; previous: Array<{ id: string; x: number; y: number }> } | null = null;
+  let controlsHintStage = 0;
   let pendingPatrolFrom: { x: number; y: number } | null = null;
   let pendingPatrolFleetId: string | null = null;
   let pendingRendezvous = false;
@@ -1503,9 +1527,6 @@ async function start(): Promise<void> {
   let boxStart = { x: 0, y: 0 };
   let boxCurrent = { x: 0, y: 0 };
   let boxDragged = false;
-  let groupHoldTimer = 0;
-  let groupHoldSlot = 0;
-  let groupHoldFired = false;
   let damageShipId: string | null = null;
   let battleLogKey = "";
   let selectedEnemyId: string | null = null;
@@ -1649,13 +1670,6 @@ async function start(): Promise<void> {
   const tapStorage = browserStorage("localStorage");
   let tapToSail = readTapToSail(tapStorage);
   let moveArmed = false;
-  let holdPointerId: number | null = null;
-  let holdStartAt = 0;
-  let holdAt = { x: 0, y: 0 };
-  let holdTimer = 0;
-  let holdFrame = 0;
-  let holdActive = false;
-  let holdSent = false;
   let suspectSegments = 0;
   let noticeTimer = 0;
   let noticeHideTimer = 0;
@@ -3491,7 +3505,14 @@ async function start(): Promise<void> {
   function renderGroupBar(): void {
     groupBar.replaceChildren();
     const slots = Object.keys(controlGroups).map(Number).filter((slot) => slot >= 1 && slot <= 9).sort();
-    groupBar.hidden = slots.length === 0;
+    groupBar.hidden = false;
+    const save = document.createElement("button");
+    save.type = "button";
+    save.className = "group-chip group-save";
+    save.textContent = "Save group";
+    save.title = "Save the selected ships as a numbered control group";
+    save.addEventListener("click", saveNextControlGroup);
+    groupBar.append(save);
     for (const slot of slots) {
       const count = controlGroups[slot]?.length ?? 0;
       if (count === 0) continue;
@@ -3500,34 +3521,24 @@ async function start(): Promise<void> {
       button.className = "group-chip";
       button.textContent = `${slot} · ${count}`;
       button.setAttribute("aria-label", `Select control group ${slot}, ${count} ships`);
-      button.addEventListener("pointerdown", () => {
-        groupHoldSlot = slot;
-        groupHoldFired = false;
-        window.clearTimeout(groupHoldTimer);
-        groupHoldTimer = window.setTimeout(() => {
-          if (groupHoldSlot !== slot) return;
-          groupHoldFired = true;
-          saveControlGroup(slot);
-        }, 650);
-      });
-      const stopHold = (): void => {
-        window.clearTimeout(groupHoldTimer);
-        groupHoldTimer = 0;
-      };
-      button.addEventListener("pointerup", stopHold);
-      button.addEventListener("pointercancel", stopHold);
-      button.addEventListener("pointerleave", stopHold);
-      button.addEventListener("click", () => {
-        stopHold();
-        if (groupHoldFired) {
-          groupHoldFired = false;
-          return;
-        }
-        selectControlGroup(slot);
-      });
+      button.addEventListener("click", () => selectControlGroup(slot));
       groupBar.append(button);
     }
-    groupBar.hidden = groupBar.childElementCount === 0;
+  }
+
+  function saveNextControlGroup(): void {
+    let slot = 0;
+    for (let candidate = 1; candidate <= 9; candidate += 1) {
+      if (!controlGroups[candidate] || controlGroups[candidate]!.length === 0) {
+        slot = candidate;
+        break;
+      }
+    }
+    if (slot === 0) {
+      showNotice("All nine control groups are in use.");
+      return;
+    }
+    saveControlGroup(slot);
   }
 
   function sendFleetOrder(fleetId: string, order: FleetOrder): void {
@@ -3658,9 +3669,18 @@ async function start(): Promise<void> {
           selectedFleetId = fleet.id;
           updateMultiUi();
         });
+        const pick = document.createElement("input");
+        pick.type = "checkbox";
+        pick.className = "fleet-member-pick";
+        pick.dataset.fleetPick = member.id;
+        pick.checked = selectedShipIds.has(member.id);
+        pick.setAttribute("aria-label", `Select ${memberShip?.name ?? member.id}`);
+        pick.addEventListener("click", (event) => event.stopPropagation());
+        pick.addEventListener("change", () => toggleGroupShip(member.id));
         const state = document.createElement("span");
         state.className = "fleet-member-state";
         state.textContent = fleetMemberStateText(member.state);
+        item.prepend(pick);
         item.append(memberName, state);
         if (member.state === "detached") {
           const rejoin = document.createElement("button");
@@ -3739,6 +3759,372 @@ async function start(): Promise<void> {
 
       card.append(head, selects, stationLine, stationReasons, members, actions);
       fleetCards.append(card);
+    }
+  }
+
+
+  function selectedSailPoint(): { id: string; x: number; y: number }[] {
+    const points: Array<{ id: string; x: number; y: number }> = [];
+    for (const id of groupShipIds()) {
+      const ship = shipById(id);
+      if (!ship) continue;
+      const route = Array.isArray(ship.route) ? ship.route : [];
+      const last = route.at(-1);
+      const px = Array.isArray(last) ? Number(last[0]) : Number((last as { x?: number } | undefined)?.x);
+      const py = Array.isArray(last) ? Number(last[1]) : Number((last as { y?: number } | undefined)?.y);
+      if (Number.isFinite(px) && Number.isFinite(py)) {
+        points.push({ id, x: px, y: py });
+      }
+    }
+    return points;
+  }
+
+  function clearUndoSail(): void {
+    if (undoSail) window.clearTimeout(undoSail.timer);
+    undoSail = null;
+    undoChip.hidden = true;
+  }
+
+  function showUndoSail(previous: Array<{ id: string; x: number; y: number }>, ids: string[]): void {
+    clearUndoSail();
+    undoSail = {
+      at: performance.now(),
+      timer: window.setTimeout(() => clearUndoSail(), 5_000),
+      ids: [...ids],
+      previous,
+    };
+    undoChip.hidden = false;
+  }
+
+  function undoLastSail(): void {
+    const saved = undoSail;
+    clearUndoSail();
+    if (!saved) return;
+    if (saved.previous.length === 0) {
+      for (const id of saved.ids) sendCommand({ t: "shipOrder", ship: id, order: { type: "hold" } });
+      showNotice("Sail cancelled.");
+      return;
+    }
+    for (const point of saved.previous) {
+      const ship = shipById(point.id);
+      if (!ship) continue;
+      sendCommand({ t: "o", x: point.x, y: point.y, ship: point.id });
+    }
+    showNotice("Sail undone.");
+  }
+
+  function setArmedOrder(order: ControlOrder | null): void {
+    armedOrder = order;
+    armedOrderBar.hidden = !order;
+    if (order) {
+      armedOrderText.textContent = `${order.label}: tap a target.`;
+      showNotice(`${order.label} armed. Tap its target, or Cancel.`);
+    } else {
+      armedOrderText.textContent = "Order armed";
+    }
+  }
+
+  function cancelArmedOrder(): void {
+    setArmedOrder(null);
+  }
+
+  function nearestEnemyShip(): ShipView | null {
+    const own = selectedFleetShip();
+    if (!own) return null;
+    let best: ShipView | null = null;
+    let bestDistance = Number.POSITIVE_INFINITY;
+    for (const ship of ships.values()) {
+      if (ship.own || ship.sinking) continue;
+      const distance = Math.hypot(ship.x - own.x, ship.y - own.y);
+      if (distance < bestDistance) {
+        best = ship;
+        bestDistance = distance;
+      }
+    }
+    return best;
+  }
+
+  function refreshAttackNearest(): void {
+    const enemy = nearestEnemyShip();
+    attackNearestBtn.hidden = !enemy;
+    attackNearestBtn.disabled = !enemy;
+    attackNearestBtn.title = enemy
+      ? "Attack the nearest enemy in sight"
+      : "No enemy in sight";
+  }
+
+  function openOrdersList(): void {
+    orderMenuPoint = null;
+    orderMenuTarget = null;
+    orderMenuTitle.textContent = "Orders";
+    orderMenuWhere.textContent = "Pick an order, then tap its target. Cancel is always at the bottom.";
+    orderMenuActions.replaceChildren();
+    const nearest = nearestEnemyShip();
+    if (nearest) {
+      const quick = document.createElement("button");
+      quick.type = "button";
+      quick.className = "btn btn-seal";
+      quick.textContent = "Attack nearest enemy";
+      quick.addEventListener("click", () => {
+        closeOrderMenu();
+        runControlOrder(controlOrderById("attackSink"), { targetId: nearest.id });
+      });
+      orderMenuActions.append(quick);
+    }
+    for (const group of CONTROL_GROUP_NAMES) {
+      const heading = document.createElement("p");
+      heading.className = "order-menu-group";
+      heading.textContent = group;
+      orderMenuActions.append(heading);
+      for (const order of controlOrdersInGroup(group)) {
+        const button = document.createElement("button");
+        button.type = "button";
+        button.className = "btn";
+        button.textContent = order.label;
+        button.dataset.orderId = order.id;
+        button.addEventListener("click", () => {
+          closeOrderMenu();
+          if (order.target === "none") runControlOrder(order, {});
+          else setArmedOrder(order);
+        });
+        orderMenuActions.append(button);
+      }
+    }
+    const close = document.createElement("button");
+    close.type = "button";
+    close.className = "btn";
+    close.textContent = "Cancel";
+    close.addEventListener("click", closeOrderMenu);
+    orderMenuActions.append(close);
+    openOrderMenuPanel();
+  }
+
+  function controlOrderById(id: string): ControlOrder {
+    return CONTROL_ORDERS.find((order) => order.id === id) ?? CONTROL_ORDERS[0]!;
+  }
+
+  function openOrderMenuPanel(): void {
+    const layout = responsiveFleetLayout(window.innerWidth, window.innerHeight);
+    if (layout.bottomSheet) {
+      orderMenu.style.left = "";
+      orderMenu.style.top = "";
+      orderMenu.style.bottom = "";
+      orderMenu.style.transform = "";
+    } else {
+      orderMenu.style.left = "12px";
+      orderMenu.style.top = "76px";
+      orderMenu.style.bottom = "auto";
+      orderMenu.style.transform = "none";
+    }
+    orderMenu.hidden = false;
+  }
+
+  function runControlOrder(
+    order: ControlOrder,
+    target: { point?: { x: number; y: number }; targetId?: string; portId?: string },
+  ): void {
+    const ids = groupShipIds();
+    if (ids.length === 0 && !["sail", "heading", "fitUpgrades"].includes(order.id)) {
+      showNotice("Select one of your ships first.");
+      return;
+    }
+    switch (order.id) {
+      case "sail":
+        if (target.point) sendOrder(target.point.x, target.point.y);
+        break;
+      case "sailToPort":
+        if (target.portId) sendPortOrder(target.portId);
+        break;
+      case "heading":
+        openHeading(null);
+        break;
+      case "patrol":
+        if (target.point) beginPatrol(selectedFleetIds()[0] ?? null, target.point);
+        else beginPatrol(selectedFleetIds()[0] ?? null, null);
+        break;
+      case "rendezvous":
+        if (target.point) {
+          for (const fleetId of selectedFleetIds()) {
+            const fleet = fleetById(fleetId);
+            sendFleetOrder(fleetId, {
+              type: "rendezvous",
+              point: target.point,
+              memberIds: fleet?.members.map((member) => member.id) ?? [],
+            });
+          }
+          if (selectedFleetIds().length === 0) {
+            for (const id of ids) sendCommand({ t: "o", x: target.point.x, y: target.point.y, ship: id });
+          }
+          showNotice("Rendezvous ordered.");
+        } else {
+          pendingRendezvous = true;
+          showNotice("Tap the chart to place the rendezvous point.");
+        }
+        break;
+      case "hold":
+        sendSelectedSpecial({ type: "hold" });
+        break;
+      case "anchor":
+        sendAnchor("dropAnchor");
+        break;
+      case "weighAnchor":
+        sendAnchor("weighAnchor");
+        break;
+      case "returnPort":
+        sendSelectedSpecial({ type: "returnToPort" });
+        break;
+      case "attackSink":
+      case "attackCapture":
+        if (target.targetId) {
+          sendSelectedSpecial({
+            type: "engage",
+            shipId: target.targetId,
+            objective: order.id === "attackSink" ? "sink" : "capture",
+          });
+          showNotice(order.id === "attackSink" ? "Attack to sink ordered." : "Attack to capture ordered.");
+        }
+        break;
+      case "loot":
+        if (target.targetId) openLootSheet(target.targetId);
+        break;
+      case "board":
+        if (target.targetId) openBoardSheet(target.targetId);
+        break;
+      case "attackPort":
+        if (target.portId) sendPortAttack(target.portId);
+        break;
+      case "run":
+        for (const id of ids) {
+          sendCommand({ t: "battleOrder", ship: id, order: "run" });
+        }
+        for (const fleetId of selectedFleetIds()) sendCommand({ t: "fleetBattleOrder", fleet: fleetId, order: "run" });
+        break;
+      case "surrender":
+        if (selectedShipId) openSurrenderConfirm(selectedShipId);
+        break;
+      case "follow":
+      case "escort":
+        if (target.targetId) sendSelectedSpecial({ type: order.id as "follow" | "escort", shipId: target.targetId });
+        break;
+      case "tow":
+        fireActionShipId = selectedShipId || null;
+        fireTargetId = null;
+        fireActionMode = "towPick";
+        renderFireShipActions();
+        showNotice("Tow: tap one of your fire ships within 300 m.");
+        break;
+      case "castOff":
+        if (selectedShipId) sendCommand({ t: "castOff", ship: selectedShipId });
+        break;
+      case "crewTransfer":
+        if (target.targetId) openCrewSheet(target.targetId);
+        break;
+      case "claim":
+        if (target.targetId) openCrewSheet(target.targetId, true);
+        break;
+      case "igniteNow":
+        if (selectedShipId) {
+          if (window.confirm("Set this fire ship alight? The crew will escape and the ship is consumed.")) {
+            sendCommand({ t: "igniteFireShip", ship: selectedShipId, mode: "now" });
+          }
+        }
+        break;
+      case "igniteContact":
+        fireActionShipId = selectedShipId || null;
+        fireTargetId = null;
+        fireActionMode = "ignitePick";
+        renderFireShipActions();
+        showNotice("Ignite on contact: tap an enemy ship on the map.");
+        break;
+      case "lights": {
+        const row = selectedFleetShip();
+        if (row) sendCommand({ t: "lights", ship: row.id, on: row.lightsOn === false });
+        break;
+      }
+      case "fitUpgrades":
+        if (selectedShipId) sendCommand({ t: "fitShip", ship: selectedShipId });
+        break;
+    }
+  }
+
+  function handleArmedOrderTap(screenX: number, screenY: number): boolean {
+    const order = armedOrder;
+    if (!order) return false;
+    const point = toWorld(screenX, screenY);
+    const own = shipAt(screenX, screenY);
+    const foreign = anyShipAt(screenX, screenY);
+    const port = portAt(screenX, screenY);
+    if (order.target === "sea") {
+      setArmedOrder(null);
+      runControlOrder(order, { point });
+      return true;
+    }
+    if (order.target === "port") {
+      if (!port) return true;
+      setArmedOrder(null);
+      runControlOrder(order, { portId: port.id });
+      return true;
+    }
+    if (order.target === "own") {
+      if (!own) return true;
+      setArmedOrder(null);
+      runControlOrder(order, { targetId: own.id });
+      return true;
+    }
+    if (order.target === "enemy" || order.target === "ship") {
+      if (!foreign) return true;
+      if (order.target === "enemy" && foreign.own) return true;
+      setArmedOrder(null);
+      if (order.id === "claim" && !foreign.abandoned) {
+        showNotice("Only an abandoned ship can be claimed.");
+        return true;
+      }
+      runControlOrder(order, { targetId: foreign.id });
+      return true;
+    }
+    return false;
+  }
+
+  function selectShips(predicate: (ship: OwnShipSnapshot) => boolean, label: string): void {
+    const ids = fleetShips
+      .filter((ship) => ship.status !== "delivery" && predicate(ship))
+      .map((ship) => ship.id);
+    if (ids.length === 0) {
+      showNotice(`No ships match ${label}.`);
+      return;
+    }
+    selectedShipIds.clear();
+    for (const id of ids) selectedShipIds.add(id);
+    selectedShipId = ids[0]!;
+    selectedFleetId = fleetOfShip(selectedShipId)?.id ?? null;
+    multiSelect = true;
+    updateMultiUi();
+    drawSelectedRoute();
+  }
+
+  function showControlHint(): void {
+    let seen = false;
+    try {
+      seen = window.localStorage.getItem("armada-controls-hint-seen") === "1";
+    } catch {
+      // A blocked store may show the hint again; it is never blocking.
+    }
+    const stage = controlHintAt(controlsHintStage);
+    if (seen || !stage) {
+      controlsHint.hidden = true;
+      return;
+    }
+    controlsHintText.textContent = `${stage.index + 1}/${stage.total} · ${stage.text}`;
+    controlsHint.hidden = false;
+    controlsHintNext.hidden = stage.index >= stage.total - 1;
+  }
+
+  function dismissControlHints(): void {
+    controlsHint.hidden = true;
+    try {
+      window.localStorage.setItem("armada-controls-hint-seen", "1");
+    } catch {
+      // The hint is still dismissed for this page.
     }
   }
 
@@ -5636,6 +6022,7 @@ async function start(): Promise<void> {
       }
     }
     researchUnitsSeen = researchUnits;
+    refreshAttackNearest();
   }
 
   function updateJourneyUi(row: ReturnType<typeof selectedFleetShip>): void {
@@ -6267,6 +6654,7 @@ async function start(): Promise<void> {
         "enemy", enemy.id, enemy.navy, enemy.classId, enemy.npcKind ?? "",
         enemy.abandoned ? "abandoned" : "", enemy.surrendered ? "surrendered" : "",
         contact?.hiredBy ?? "", contact?.mode ?? "", contact?.looted ? "looted" : "",
+        selectedFleetShip()?.classId ?? "",
       ].join("|");
       if (key === battleBarKey) return;
       battleBarKey = key;
@@ -6296,6 +6684,47 @@ async function start(): Promise<void> {
         button.textContent = item.label;
         button.addEventListener("click", npcAction(item.id));
         battleBarActions.append(button);
+      }
+      if (!enemy.npcKind && !hiredByMe) {
+        for (const [label, objective] of [["Attack: Sink", "sink"], ["Attack: Capture", "capture"]] as const) {
+          const button = document.createElement("button");
+          button.type = "button";
+          button.className = objective === "sink" ? "btn btn-seal" : "btn";
+          button.textContent = label;
+          button.addEventListener("click", () => {
+            sendSelectedSpecial({ type: "engage", shipId: enemy.id, objective });
+          });
+          battleBarActions.append(button);
+        }
+        const board = document.createElement("button");
+        board.type = "button";
+        board.className = "btn";
+        board.textContent = "Board";
+        board.addEventListener("click", () => openBoardSheet(enemy.id));
+        battleBarActions.append(board);
+      }
+      if (enemy.abandoned || enemy.surrendered) {
+        const loot = document.createElement("button");
+        loot.type = "button";
+        loot.className = "btn btn-seal";
+        loot.textContent = "Loot";
+        loot.addEventListener("click", () => openLootSheet(enemy.id));
+        battleBarActions.append(loot);
+      }
+      if (selectedFleetShip()?.classId === "fireShip") {
+        const ignite = document.createElement("button");
+        ignite.type = "button";
+        ignite.className = "btn";
+        ignite.textContent = "Ignite on contact";
+        ignite.addEventListener("click", () => {
+          const fire = selectedFleetShip();
+          if (!fire) return;
+          fireActionShipId = fire.id;
+          fireTargetId = enemy.id;
+          fireActionMode = "igniteConfirm";
+          renderFireShipActions();
+        });
+        battleBarActions.append(ignite);
       }
       battleBar.hidden = false;
       document.body.classList.add("has-battle-bar");
@@ -7536,6 +7965,7 @@ async function start(): Promise<void> {
   function sendOrder(x: number, y: number): void {
     const ids = groupShipIds();
     if (ids.length === 0) return;
+    const previousSail = selectedSailPoint();
     target = { x, y };
     const screen = toScreen(x, y);
     marker.position.set(screen.x, screen.y);
@@ -7546,6 +7976,7 @@ async function start(): Promise<void> {
       for (const fleetId of fleets) {
         sendFleetOrder(fleetId, { type: "goTo", x, y });
       }
+      showUndoSail(previousSail, ids);
       return;
     }
 
@@ -7566,6 +7997,7 @@ async function start(): Promise<void> {
         ship: ids[index]!,
       });
     }
+    showUndoSail(previousSail, ids);
   }
 
   // ---- Chart mode and scale ----------------------------------------------
@@ -7656,7 +8088,7 @@ async function start(): Promise<void> {
     tapModeLabel.textContent = tapToSail ? "On" : "Off";
     tapButton.title = tapToSail
       ? "A quick tap on the sea sends a move order"
-      : "Press and hold the sea, or use Move, to send an order";
+      : "Tap the sea to open the order palette, or use Move";
     moveButton.hidden = false;
     moveButton.disabled = tapToSail;
     moveButton.title = tapToSail
@@ -7671,71 +8103,8 @@ async function start(): Promise<void> {
     refreshTapUi();
   }
 
-  function drawHoldRing(progress: number): void {
-    const radius = settings.client.tapHoldRingPx;
-    const width = settings.client.tapHoldRingWidthPx;
-    holdRing.clear();
-    holdRing
-      .circle(holdAt.x, holdAt.y, radius)
-      .stroke({ width: 1, color: INK_COLOR, alpha: 0.35 });
-    if (progress <= 0) return;
-    holdRing
-      .arc(
-        holdAt.x,
-        holdAt.y,
-        radius,
-        -Math.PI / 2,
-        -Math.PI / 2 + Math.PI * 2 * Math.min(1, progress),
-      )
-      .stroke({ width, color: 0x8c1d1d, alpha: 0.95, cap: "round" });
-  }
-
-  function cancelTapHold(): void {
-    window.clearTimeout(holdTimer);
-    holdTimer = 0;
-    if (holdFrame) cancelAnimationFrame(holdFrame);
-    holdFrame = 0;
-    holdActive = false;
-    holdPointerId = null;
-    holdRing.clear();
-    holdRing.visible = false;
-  }
-
-  function finishTapHold(): void {
-    if (!holdActive) return;
-    holdActive = false;
-    holdSent = true;
-    drawHoldRing(1);
-    openOrderMenu(holdAt.x, holdAt.y);
-    window.clearTimeout(holdTimer);
-    holdTimer = 0;
-  }
-
-  function beginTapHold(event: PointerEvent): void {
-    if (pointers.size !== 1) return;
-    const rect = app.canvas.getBoundingClientRect();
-    const screenX = event.clientX - rect.left;
-    const screenY = event.clientY - rect.top;
-
-    cancelTapHold();
-    holdPointerId = event.pointerId;
-    holdStartAt = performance.now();
-    holdAt = { x: screenX, y: screenY };
-    holdActive = true;
-    holdSent = false;
-    holdRing.visible = true;
-    drawHoldRing(0);
-
-    const animate = (): void => {
-      if (!holdActive) return;
-      drawHoldRing((performance.now() - holdStartAt) / settings.client.tapHoldMs);
-      holdFrame = requestAnimationFrame(animate);
-    };
-    holdFrame = requestAnimationFrame(animate);
-    holdTimer = window.setTimeout(finishTapHold, settings.client.tapHoldMs);
-  }
-
   function mapTapAction(screenX: number, screenY: number): void {
+    if (handleArmedOrderTap(screenX, screenY)) return;
     if (handleFireTargetTap(screenX, screenY)) return;
     const ownShip = shipAt(screenX, screenY);
     const portHit = portAt(screenX, screenY);
@@ -7809,16 +8178,19 @@ async function start(): Promise<void> {
 
     selectedEnemyId = null;
     if (activeDockPanel === "target") activeDockPanel = "ship";
-    const decision = resolveTap({ tapToSail, moveArmed, heldMs: 0 });
+    const decision = resolveTap({ tapToSail, moveArmed });
     moveArmed = decision.moveArmed;
     refreshTapUi();
     if (!decision.sendOrder) {
+      // 3J-fix-c1: Tap-to-sail off. A short tap drops a point marker and opens
+      // the order palette next to it. No hold is involved.
       closePortPanel();
       closeTradePanel();
       closeFleetPanel();
       closeShipyardPanel();
       closeHirePanel();
       knownPortsPanel.hidden = true;
+      openOrderMenu(screenX, screenY);
       return;
     }
     sendOrder(worldPoint.x, worldPoint.y);
@@ -7861,12 +8233,10 @@ async function start(): Promise<void> {
       dragDistance = 0;
       downAt = performance.now();
       multiTouch = false;
-      beginTapHold(event);
       const rect = app.canvas.getBoundingClientRect();
       const sx = event.clientX - rect.left;
       const sy = event.clientY - rect.top;
       if (multiSelect && !shipAt(sx, sy) && !portAt(sx, sy)) {
-        cancelTapHold();
         boxPointer = event.pointerId;
         boxStart = { x: sx, y: sy };
         boxCurrent = { x: sx, y: sy };
@@ -7875,7 +8245,6 @@ async function start(): Promise<void> {
     }
     if (pointers.size === 2) {
       multiTouch = true;
-      cancelTapHold();
       const [a, b] = [...pointers.values()];
       if (a && b) pinchStartDistance = Math.hypot(a.x - b.x, a.y - b.y);
       pinchStartKm = view.kmAcross;
@@ -7912,14 +8281,6 @@ async function start(): Promise<void> {
     const dy = next.y - previous.y;
     dragDistance += Math.hypot(dx, dy);
 
-    if (
-      holdActive &&
-      holdPointerId === event.pointerId &&
-      Math.hypot(event.clientX - holdAt.x, event.clientY - holdAt.y) > 8
-    ) {
-      cancelTapHold();
-    }
-
     if (dragDistance > 6) {
       view.x -= dx / scale();
       view.y -= dy / scale();
@@ -7929,9 +8290,6 @@ async function start(): Promise<void> {
 
   function endPointer(event: PointerEvent): void {
     const wasSingle = pointers.size === 1;
-    const wasHeld = holdSent;
-    cancelTapHold();
-    holdSent = false;
     pointers.delete(event.pointerId);
 
     if (boxPointer === event.pointerId) {
@@ -7949,7 +8307,8 @@ async function start(): Promise<void> {
     }
 
     if (!wasSingle || multiTouch || dragDistance >= 10) return;
-    if (wasHeld) return;
+    // 3J-fix-c1: a long press is just a long tap. It must not open a menu or
+    // send an order. Only a short completed tap acts.
     if (performance.now() - downAt >= 600) return;
 
     const rect = app.canvas.getBoundingClientRect();
@@ -7958,8 +8317,6 @@ async function start(): Promise<void> {
 
   app.canvas.addEventListener("pointerup", endPointer);
   app.canvas.addEventListener("pointercancel", (event) => {
-    cancelTapHold();
-    holdSent = false;
     pointers.delete(event.pointerId);
   });
 
@@ -7975,7 +8332,6 @@ async function start(): Promise<void> {
   tapButton.addEventListener("click", () => {
     tapToSail = !tapToSail;
     writeTapToSail(tapStorage, tapToSail);
-    if (tapToSail) cancelTapHold();
     if (!tapToSail) disarmMove();
     refreshTapUi();
   });
@@ -8012,13 +8368,18 @@ async function start(): Promise<void> {
   });
 
   fleetSelectAll.addEventListener("click", () => {
-    selectedShipIds.clear();
-    for (const ship of fleetShips) {
-      if (ship.status !== "delivery") selectedShipIds.add(ship.id);
-    }
-    multiSelect = selectedShipIds.size > 0;
-    updateMultiUi();
+    selectShips(() => true, "the whole fleet");
   });
+  fleetSelectNearby.addEventListener("click", () => {
+    const from = selectedFleetShip();
+    if (!from) {
+      showNotice("Select a ship to choose what is nearby.");
+      return;
+    }
+    selectShips((ship) => Math.hypot(ship.x - from.x, ship.y - from.y) <= 5, "ships within 5 km");
+  });
+  fleetSelectFrigate.addEventListener("click", () => selectShips((ship) => ship.classId === "frigate", "frigates"));
+  fleetSelectLine.addEventListener("click", () => selectShips((ship) => ship.classId === "line", "line ships"));
 
   fleetClear.addEventListener("click", () => {
     selectedShipIds.clear();
@@ -8621,10 +8982,67 @@ async function start(): Promise<void> {
     scheduleScreenLayout();
   });
   ordersButton.addEventListener("click", () => {
-    ordersOpen = !ordersOpen;
-    ordersSheet.hidden = !ordersOpen;
-    ordersButton.setAttribute("aria-expanded", String(ordersOpen));
-    scheduleScreenLayout();
+    ordersOpen = false;
+    ordersSheet.hidden = true;
+    openOrdersList();
+  });
+  ordersListBtn.addEventListener("click", openOrdersList);
+  armedOrderCancel.addEventListener("click", cancelArmedOrder);
+  undoSailButton.addEventListener("click", undoLastSail);
+  backToShipBtn.addEventListener("click", () => {
+    const row = selectedFleetShip();
+    if (!row) {
+      showNotice("Select one of your ships first.");
+      return;
+    }
+    if (mode === "chart") setMode("ship");
+    view.x = row.x;
+    view.y = row.y;
+    setFollow(true);
+    refreshMap(performance.now(), true);
+  });
+  controlsHelpBtn.addEventListener("click", () => {
+    controlsHelp.hidden = !controlsHelp.hidden;
+    controlsHelpBtn.setAttribute("aria-expanded", String(!controlsHelp.hidden));
+  });
+  controlsHintNext.addEventListener("click", () => {
+    controlsHintStage = Math.min(CONTROL_HINTS.length - 1, controlsHintStage + 1);
+    showControlHint();
+  });
+  controlsHintClose.addEventListener("click", dismissControlHints);
+  attackNearestBtn.addEventListener("click", () => {
+    const enemy = nearestEnemyShip();
+    if (!enemy) {
+      showNotice("No enemy in sight.");
+      return;
+    }
+    runControlOrder(controlOrderById("attackSink"), { targetId: enemy.id });
+  });
+  window.addEventListener("keydown", (event) => {
+    const target = event.target as HTMLElement | null;
+    if (target && /^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName)) return;
+    if (event.key === "Escape") {
+      if (armedOrder) cancelArmedOrder();
+      else closeOrderMenu();
+      return;
+    }
+    if (event.key === "h" || event.key === "H") {
+      runControlOrder(controlOrderById("hold"), {});
+    } else if (event.key === "a" || event.key === "A") {
+      const enemy = nearestEnemyShip();
+      if (enemy) runControlOrder(controlOrderById("attackSink"), { targetId: enemy.id });
+    } else if (event.key === "f" || event.key === "F") {
+      if (selectedFleetId) selectWholeFleet(selectedFleetId);
+    } else if (event.key === " ") {
+      event.preventDefault();
+      backToShipBtn.click();
+    } else if (event.key === "+" || event.key === "=") {
+      zoomTo(view.kmAcross / 1.2);
+    } else if (event.key === "-") {
+      zoomTo(view.kmAcross * 1.2);
+    } else if (/^[1-9]$/.test(event.key)) {
+      selectControlGroup(Number(event.key));
+    }
   });
   queueButton.addEventListener("click", () => {
     if (!selectedFleetId) {
@@ -9507,6 +9925,7 @@ async function start(): Promise<void> {
   });
   scheduleScreenLayout();
   scheduleLayoutAudit();
+  showControlHint();
   // A narrow read-only surface for the real-client jsdom harness. It exposes
   // only what the player already sees and never touches server state.
   type ArmadaTestWindow = Window & {

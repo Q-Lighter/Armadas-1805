@@ -1,8 +1,6 @@
 // Tap-to-sail is a client preference. The server never reads it: this module
 // only decides whether a completed map tap is allowed to send a move order.
 
-import { settings } from "./settings.js";
-
 export const TAP_TO_SAIL_KEY = "armadas.tapToSail";
 
 export interface TapPreferenceStorage {
@@ -40,18 +38,15 @@ export interface TapDecision {
 }
 
 /**
- * Resolve one completed sea tap. A hold that reached the threshold counts once;
- * an armed Move button is spent by the order it produces.
+ * Resolve one completed sea tap. There is no hold path: a tap either sends a
+ * move order because Tap-to-sail is on, spends an armed Move, or opens the
+ * order palette. Holding changes nothing.
  */
 export function resolveTap(input: {
   tapToSail: boolean;
   moveArmed: boolean;
-  heldMs: number;
 }): TapDecision {
-  const sendOrder =
-    input.tapToSail ||
-    input.moveArmed ||
-    input.heldMs >= settings.client.tapHoldMs;
+  const sendOrder = input.tapToSail || input.moveArmed;
   return {
     sendOrder,
     moveArmed: sendOrder ? false : input.moveArmed,

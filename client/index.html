@@ -89,7 +89,37 @@
         <span class="action-icon" aria-hidden="true">☰</span>
         <span class="action-label">Queue</span>
       </button>
+      <button class="btn action-button" id="orders-list-btn" type="button">
+        <span class="action-icon" aria-hidden="true">▤</span>
+        <span class="action-label">Orders</span>
+      </button>
+      <button class="btn action-button" id="back-to-ship-btn" type="button" title="Centre the camera on the selected ship">
+        <span class="action-icon" aria-hidden="true">↺</span>
+        <span class="action-label">Back</span>
+      </button>
+      <button class="btn action-button btn-seal" id="attack-nearest-btn" type="button" hidden title="No enemy in sight">
+        <span class="action-icon" aria-hidden="true">⚔</span>
+        <span class="action-label">Nearest</span>
+      </button>
     </nav>
+
+    <!-- 3J-fix-c1: what is armed, and one tap to cancel it. -->
+    <section class="armed-order paper" id="armed-order" aria-live="polite" hidden>
+      <p id="armed-order-text">Order armed</p>
+      <button class="btn" id="armed-order-cancel" type="button">Cancel</button>
+    </section>
+    <section class="armed-order undo-chip paper" id="undo-chip" hidden>
+      <button class="btn btn-seal" id="undo-sail" type="button">Undo sail</button>
+    </section>
+
+    <!-- 3J-fix-c2: five first-use hints. Never modal and always dismissable. -->
+    <aside class="controls-hint paper" id="controls-hint" aria-live="polite" hidden>
+      <p id="controls-hint-text"></p>
+      <div class="controls-hint-actions">
+        <button class="btn" id="controls-hint-next" type="button">Next</button>
+        <button class="btn" id="controls-hint-close" type="button">Dismiss</button>
+      </div>
+    </aside>
 
     <!-- One dock frame. The existing panels are placed inside its body by the
          pure screen-layout plan; the tabs switch which panel is visible. -->
@@ -446,6 +476,7 @@
         <button class="btn" id="borders-btn" type="button" aria-pressed="false" hidden>Show borders</button>
         <button class="btn" id="flagship-pennant-btn" type="button" aria-pressed="false">Show flagship pennant on the map</button>
         <button class="btn" id="route-line-btn" type="button" aria-pressed="true">Show route line: On</button>
+        <button class="btn" id="controls-help-btn" type="button" aria-expanded="false" aria-controls="controls-help">Controls</button>
         <button class="btn" id="test-tools-btn" type="button" hidden>Test tools</button>
         <button class="btn btn-seal" id="resign-btn" type="button">Resign</button>
       </div>
@@ -474,6 +505,16 @@
         <button class="btn size-option network-option" type="button" data-network="saver" aria-pressed="false">Data saver</button>
         <button class="btn size-option network-option" type="button" data-network="full" aria-pressed="false">Full</button>
       </div>
+      <section class="controls-help" id="controls-help" hidden aria-labelledby="controls-help-title">
+        <h3 id="controls-help-title">Controls</h3>
+        <p><strong>Tap</strong> a ship to select it; tap it again for its sheet; double-tap for its fleet.</p>
+        <p><strong>Tap the sea</strong> to sail there when Tap is on. When Tap is off, a palette opens: Sail, Heading, Patrol, Rendezvous, Hold, Anchor.</p>
+        <p><strong>Orders</strong> lists every order. Pick one, then tap its target. The armed banner cancels it.</p>
+        <p><strong>Enemy</strong> tap shows Attack: Sink, Attack: Capture, Loot, Board. One tap starts it.</p>
+        <p><strong>Bulk:</strong> Select all, Select nearby, class chips, or drag a box in Multi. Save group keeps the selection; 1–9 recall it.</p>
+        <p><strong>Camera:</strong> drag to pan, pinch or wheel to zoom, Follow and Back to ship. Esc cancels an armed order.</p>
+        <p><strong>Desktop:</strong> H hold, A attack nearest, F select fleet, Space centre, +/− zoom, 1–9 groups.</p>
+      </section>
       <details class="debug-info" id="debug-info" hidden>
         <summary>Debug info</summary>
         <p class="fog-debug" id="fog-debug" hidden></p>
@@ -887,6 +928,9 @@
         <button class="btn" id="fleet-queue" type="button" aria-pressed="false">Queue off</button>
         <button class="btn" id="fleet-save-group" type="button">Save group</button>
         <button class="btn" id="fleet-select-all" type="button">Select all</button>
+        <button class="btn" id="fleet-select-nearby" type="button">Select nearby</button>
+        <button class="btn" id="fleet-select-frigate" type="button">All frigates</button>
+        <button class="btn" id="fleet-select-line" type="button">All line ships</button>
         <button class="btn" id="fleet-undock" type="button">Undock selected</button>
         <button class="btn" id="fleet-upgrade-all" type="button">Upgrade all docked ships</button>
         <button class="btn" id="fleet-clear" type="button">Clear</button>

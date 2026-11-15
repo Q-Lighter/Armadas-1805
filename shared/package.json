@@ -74,6 +74,10 @@
       "types": "./dist/netRate.d.ts",
       "default": "./dist/netRate.js"
     },
+    "./controls-3j": {
+      "types": "./dist/controls3j.d.ts",
+      "default": "./dist/controls3j.js"
+    },
     "./time": {
       "types": "./dist/time.d.ts",
       "default": "./dist/time.js"

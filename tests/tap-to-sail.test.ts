@@ -4,7 +4,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { settings } from "@naval/shared/settings";
 import {
   readTapToSail,
   resolveTap,
@@ -33,36 +32,34 @@ test("tap-to-sail is on for a new player and survives a reload", () => {
   assert.equal(readTapToSail(first), true);
 });
 
-test("a quick sea tap sends no order when tap-to-sail is off", () => {
+test("tap-to-sail off sends no order and opens the palette instead", () => {
   assert.deepEqual(
-    resolveTap({ tapToSail: false, moveArmed: false, heldMs: 120 }),
+    resolveTap({ tapToSail: false, moveArmed: false }),
     { sendOrder: false, moveArmed: false },
   );
 });
 
-test("a half-second hold sends one order when tap-to-sail is off", () => {
+test("there is no hold path: holding adds no order", () => {
+  // The client never passes a duration. The resolver only sees the tap and
+  // cannot turn a long press into an order.
   assert.deepEqual(
-    resolveTap({
-      tapToSail: false,
-      moveArmed: false,
-      heldMs: settings.client.tapHoldMs,
-    }),
-    { sendOrder: true, moveArmed: false },
+    resolveTap({ tapToSail: false, moveArmed: false }),
+    { sendOrder: false, moveArmed: false },
   );
 });
 
 test("the Move button arms exactly one order", () => {
-  const first = resolveTap({ tapToSail: false, moveArmed: true, heldMs: 0 });
+  const first = resolveTap({ tapToSail: false, moveArmed: true });
   assert.deepEqual(first, { sendOrder: true, moveArmed: false });
   assert.deepEqual(
-    resolveTap({ tapToSail: false, moveArmed: first.moveArmed, heldMs: 0 }),
+    resolveTap({ tapToSail: false, moveArmed: first.moveArmed }),
     { sendOrder: false, moveArmed: false },
   );
 });
 
 test("tap-to-sail on keeps the ordinary quick tap", () => {
   assert.deepEqual(
-    resolveTap({ tapToSail: true, moveArmed: false, heldMs: 0 }),
+    resolveTap({ tapToSail: true, moveArmed: false }),
     { sendOrder: true, moveArmed: false },
   );
 });

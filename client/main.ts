@@ -3569,6 +3569,11 @@ async function start(): Promise<void> {
       const card = document.createElement("section");
       card.className = "fleet-card";
       card.dataset.fleetCard = fleet.id;
+      card.addEventListener("click", (event) => {
+        const target = event.target as HTMLElement | null;
+        if (target?.closest("input, button, select, textarea")) return;
+        selectWholeFleet(fleet.id);
+      });
 
       const head = document.createElement("div");
       head.className = "fleet-card-head";
@@ -3846,7 +3851,7 @@ async function start(): Promise<void> {
 
   function refreshAttackNearest(): void {
     const enemy = nearestEnemyShip();
-    attackNearestBtn.hidden = !enemy;
+    attackNearestBtn.hidden = false;
     attackNearestBtn.disabled = !enemy;
     attackNearestBtn.title = enemy
       ? "Attack the nearest enemy in sight"
@@ -9033,6 +9038,14 @@ async function start(): Promise<void> {
       if (enemy) runControlOrder(controlOrderById("attackSink"), { targetId: enemy.id });
     } else if (event.key === "f" || event.key === "F") {
       if (selectedFleetId) selectWholeFleet(selectedFleetId);
+    } else if (event.key === "o" || event.key === "O") {
+      openOrdersList();
+    } else if (event.key === "u" || event.key === "U") {
+      undoLastSail();
+    } else if (event.key === "?") {
+      controlsHelp.hidden = false;
+      controlsHelpBtn.setAttribute("aria-expanded", "true");
+      showMenuPanel();
     } else if (event.key === " ") {
       event.preventDefault();
       backToShipBtn.click();

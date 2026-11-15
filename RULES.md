@@ -26,6 +26,17 @@ Read this file at the start of every prompt, then follow it for the whole sessio
 
 - The game must run in a browser on a phone, a Chromebook and a PC, and resize without looking broken.
 
+## Controls
+
+- No action is press-and-hold. A tap selects, a second tap opens the selection's sheet, and a double tap selects its fleet. A long press does nothing anywhere: sea, ship or port.
+- The context strip on a phone and the dock on a desktop show the actions for the current selection. Enemy ships show Attack: Sink, Attack: Capture, Loot and Board. A fire ship adds Ignite on contact.
+- Every other order is verb then target. The Orders list groups Move, Fight, Support and Special; picking one arms it, the armed-order banner names it, and the next tap chooses its target. Cancel is always present.
+- With Tap-to-sail on, a sea tap sends a Sail order at once and shows an Undo sail chip for five seconds. With it off, the same tap drops a point marker and opens a palette: Sail here, Heading and distance, Patrol, Rendezvous, Hold, Anchor and Cancel.
+- Bulk selection has Select all, Select nearby, class chips (frigates, line ships), Fleet panel checkboxes and the Multi box drag. Make fleet is one tap. Save group stores the selection in a numbered slot; a numbered button recalls it in one tap.
+- The camera pans by drag, zooms by pinch or wheel, follows the selected ship and has Back to ship. Desktop extras: Esc cancels, H holds, A attacks the nearest enemy, F selects the fleet, O opens Orders, U undoes a sail, Space centres, +/− zooms and 1–9 recalls groups.
+- Every action gives a readable accepted or rejected notice. Disabled actions stay visible with the reason. Sheets stay open until closed, scroll on short screens and keep 44 px targets with no overlaps.
+- Menu, Controls is the same cheat sheet in the game. Five first-use hints explain selection, the sea palette, Orders, enemy actions and bulk selection; each is dismissable and never blocks the map.
+
 ## Temporary load test
 
 - The built-in load-test mode (`bots=` and all `TEMP-DEBUG` bot code) is

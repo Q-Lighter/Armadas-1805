@@ -264,12 +264,27 @@ assert.equal(downwindFleet.length, 2, "second fleet spawned");
 // ---- 3J-fix-c1: select-then-act, Orders list, sea palette, Undo, groups ---
 
 advanceMs(500);
+// The first-use hint is visible, dismissable and not in the way of the map.
+assert.equal(alpha.document.getElementById("controls-hint").hidden, false, "first-use hint is visible");
+alpha.document.getElementById("controls-hint-close").click();
+assert.equal(alpha.document.getElementById("controls-hint").hidden, true, "first-use hint is dismissed");
+// The cheat sheet lives in Menu, Controls.
+alpha.document.getElementById("controls-help-btn").click();
+assert.equal(alpha.document.getElementById("controls-help").hidden, false, "Controls cheat sheet opens");
+alpha.document.getElementById("controls-help-btn").click();
+
 // The Orders button opens every command group. No hold is involved.
 clickButton(alpha, "Orders");
 assert.equal(alpha.document.getElementById("order-menu").hidden, false, "Orders list opened");
 for (const label of ["Sail", "Attack ship: Sink", "Follow", "Ignite on contact"]) {
   assert.ok(buttonByText(alpha, label), `Orders list has ${label}`);
 }
+const headingOrder = [...alpha.document.querySelectorAll("#order-menu-actions button")]
+  .find((button) => (button.textContent ?? "").trim() === "Heading and distance");
+assert.ok(headingOrder, "Orders list has Heading and distance");
+headingOrder.click();
+assert.equal(alpha.document.getElementById("heading-sheet").hidden, false, "Heading and distance opens");
+alpha.document.getElementById("heading-cancel").click();
 alpha.document.getElementById("order-menu-close").click();
 assert.equal(alpha.document.getElementById("order-menu").hidden, true, "Orders list closes");
 

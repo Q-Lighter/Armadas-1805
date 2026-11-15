@@ -3708,3 +3708,55 @@ The 10 v 10 benchmark is 20 ships in one zone. The larger 100-ship zone proxy st
 
 - No browser or socket harness ran here. The byte and frame numbers are Node proxies; no real WebSocket compression ratio was measured.
 - There is still no particle container: smoke, splashes and fire are one reused Graphics layer, which avoids per-frame Graphics allocation. That is the current drawing path.
+
+## Session 3J-fix-c: control scheme and controls help
+
+**Date:** 2026-11-15
+**Branch:** main
+**Commits:** `0133ede` (c1 control scheme), the c2 commit that follows this entry
+
+### What was asked
+
+Remove every press-and-hold path, make every order select-then-act or verb-then-target, keep every order within three or four taps, add bulk selection, one-tap control groups, fight shortcuts, camera controls, five first-use hints and a Menu, Controls cheat sheet.
+
+### Scheme
+
+- A tap selects a ship; a second tap opens its sheet; a double tap selects its fleet. A fleet card tap selects the fleet.
+- The context strip shows the actions for the selection. Enemy ships show Attack: Sink, Attack: Capture, Loot and Board; a selected fire ship adds Ignite on contact.
+- The Orders list has Move, Fight, Support and Special groups. Choosing an order arms it; the armed banner names it; the next tap picks the target. Cancel is always in the banner.
+- Tap-to-sail on: a sea tap sails at once and shows Undo sail for five seconds. Tap-to-sail off: a sea tap drops a marker and opens Sail here, Heading and distance, Patrol, Rendezvous, Hold, Anchor, Cancel.
+- Bulk selection: Select all, Select nearby, class chips, Fleet panel checkboxes, the existing Multi box drag, one-tap Make fleet, Save group and one-tap 1–9 recall.
+- Camera: drag pan, pinch or wheel zoom, Follow and Back to ship. Desktop: Esc, H, A, F, O, U, Space, +/− and 1–9. Menu, Controls lists the same cheat sheet; five one-time hints are dismissable.
+- Every new target is at least 44 px, the banner, hint and Orders sheet scroll on short screens, and no hold timer remains in the client, settings or tap resolver.
+
+### Tap counts (main flows)
+
+| Flow | Taps | Path |
+| --- | ---: | --- |
+| Attack an enemy ship | 2 | select ship, Attack: Sink |
+| Sail with Undo | 3 | select ship, tap sea, Undo sail |
+| Board | 2 | tap enemy, Board |
+| Select all / class chips | 1 | bulk button |
+| Recall a control group | 1 | numbered group button |
+| Claim an abandoned ship | 2 | tap wreck, Claim |
+| Fleet plus formation | 3–4 | select fleet, preset, then tap enemy / objective |
+| Tow or Cast off | 3–4 | select ship, Orders, order, tap friendly target |
+| Patrol or Rendezvous | 3–4 | Orders, order, tap sea |
+| Heading and distance | 3–4 | Orders, Heading, set and send |
+
+### Checks
+
+- `npm test`: 578/578 passing, including the new control catalogue, no-hold static checks and five-viewport layout contract. The full suite ran again after the final edits.
+- `npm run build`: passing (`Build OK`).
+- `npm run test:e2e`: passing, including the new Orders list, Undo, sea palette, Select all and one-tap group recall checks in the real jsdom client against the real in-memory room.
+- Static tests prove there is no `tapHold`, `holdTimer`, `groupHold` or `longPress` path and no timer started from `pointerdown`.
+- No browser or headless Chromium is available. No real screen, pinch, wheel, clipboard or download test ran; layout is checked by the pure viewport contract and the existing 3I layout tests, not by watching pixels.
+
+### Kept
+
+- Tap-to-sail On/Off, route line, the queue toggle with numbered waypoints, the quality governor, data saver and every earlier test and feature.
+
+### Broken or unfinished
+
+- A real long-press touch cannot be dispatched in the jsdom harness. The static no-timer check and the removed hold code cover the same path.
+- NPC-port Hire privateers and Escort jobs remain unbuilt; the port panel keeps its existing attack, sail and info actions.

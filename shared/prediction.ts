@@ -2,7 +2,7 @@
 // real ship. A job can be advanced a little each server tick so the client
 // keeps the old line until the new one is complete.
 
-import { routeLookAheadPoint } from "./route.js";
+import { RouteCursor } from "./route.js";
 import { settings } from "./settings.js";
 import {
   shipSpecFor,
@@ -34,6 +34,7 @@ export interface PredictionJob {
   route: ShipRoute;
   windFromDeg: number;
   spec: ShipSpec;
+  cursor: RouteCursor;
 }
 
 function cloneShip(ship: Ship): Ship {
@@ -134,6 +135,7 @@ export function createPredictionJob(
     route,
     windFromDeg,
     spec: shipSpecFor(ghost),
+    cursor: new RouteCursor(route.curve && route.curve.length > 1 ? route.curve : route.waypoints),
   };
 }
 
@@ -141,8 +143,7 @@ function nextAim(job: PredictionJob): { x: number; y: number } | null {
   const { ghost, route } = job;
   if (Math.hypot(ghost.x - route.goal.x, ghost.y - route.goal.y) <=
     settings.sailing.arrivalRadiusKm) return null;
-  const path = route.curve && route.curve.length > 1 ? route.curve : route.waypoints;
-  const aim = routeLookAheadPoint(path, ghost, settings.route.steerLookAheadKm);
+  const aim = job.cursor.lookAhead(ghost, settings.route.steerLookAheadKm);
   if (!aim || Math.hypot(aim.x - ghost.x, aim.y - ghost.y) <
     settings.sailing.minOrderDistanceKm) return null;
   return aim;
@@ -182,10 +183,22 @@ export function advancePredictionJob(
           settings.route.predictionStepGameSeconds,
           settings.route.predictionCoarseStepGameSeconds,
         );
-    stepShip(job.ghost, step, job.windFromDeg, undefined, undefined, undefined, undefined, false, {
-      spec: job.spec,
-      performance: performanceData,
-    });
+    // The ghost follows look-ahead points, not the final destination. Use the
+    // same close-approach radius as the live helm so its dots do not stop at
+    // every 4 km packet.
+    stepShip(
+      job.ghost,
+      step,
+      job.windFromDeg,
+      undefined,
+      undefined,
+      settings.sailing.closeApproachKm,
+      undefined,
+      false,
+      { spec: job.spec, performance: performanceData },
+      undefined,
+      false,
+    );
     job.elapsed += step;
     job.steps += 1;
     stepsThisCall += 1;

@@ -3624,3 +3624,38 @@ rules, and print the balance report and simulated first hour.
   and surrender events go into the NPC table. Port attack rows include hull
   lost, and a silenced port records how long it took from the first hit.
 - Re-ran `npm test`: 563/563 passing. `npm run build`: passed.
+
+## Session 3J-fix-a: smooth movement restored
+
+**Date:** 2026-11-15
+**Branch:** main
+
+### What was asked
+
+Measure movement in the real loop on the last 3F, 3G-fix-b, 3H-b1, 3H-b2, 3I-b and HEAD commits; fix the slow, blocky motion; add dead reckoning and damped corrections; measure client smoothness at 5 and 10 Hz; add performance-panel readouts; and keep every earlier test.
+
+### Measurements
+
+The server speed did **not** regress. On temporary worktrees, a frigate reaching leg averaged 8.16 knots at 3F and at HEAD; a line ship closed-hauled at 3.76 knots at both. The 20 km legs finished in the same number of ticks. The first measured change was steering: 3H-b1 introduced manoeuvre phases, and a close-hauled line ship's 99th-percentile heading step rose from 0 to 16.2 degrees.
+
+The visible stutter was a route-look-ahead stop. `startRouteLeg` gives the helm a moving pure-pursuit point, but it inherited the route destination's 4 km arrival radius. Every time that point came within 4 km, `stepShip` cleared the order and zeroed speed for one tick. In a 20 km frigate leg this happened 8 times in every commit measured. Instant speed recovery hid most of it; the 3H steering made the stops more visible.
+
+### Fixed
+
+- A look-ahead arrival no longer stops the ship. The final route arrival still stops it.
+- Speed is rate-limited only through sail-shortening and manoeuvre transitions, so those no longer halve or double speed in one tick.
+- `MotionTrack` now dead-reckons from the newest snapshot for up to 400 ms, including heading turn rate, and blends each new authoritative position with a critically damped correction. The camera uses the same smoothed point.
+- The performance panel adds my ship's average and maximum drawn step in pixels, snapshot interval average and maximum, interpolation buffer and snapshot age, and dead-reckoning correction in pixels.
+- Route prediction uses the same close-approach radius and keeps way on; its ghost path is capped at the send limit and its 3-second step cuts prediction time under the existing 2 ms test.
+
+### Checks
+
+- `npm test`: 567/567 passing.
+- `npm run build`: passing.
+- The 20 km frigate run now has 1 zero-speed tick (the final arrival) instead of 8; average speed is 8.38 knots, within 3% of the old commit.
+- Client feed test at 5 Hz with jitter, 5% loss and 1 m position rounding: average drawn step 1.00x expected and no freeze over 100 ms.
+- Open-sea steady speed is the table cruise value for every class: flagship 6, line 7, frigate 9, escort 8, raider 8.5, trade 5 and fire ship 4 knots.
+
+### Broken or unfinished
+
+- No browser is available in this workspace, so the panel and smoothing were not watched on a screen. The numbers come from the render-plan feed test and the real world loop.

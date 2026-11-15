@@ -1625,6 +1625,9 @@ async function start(): Promise<void> {
   let lastShipsDrawnText = "";
   let lastFrameAt = 0;
   const frameDurations: Array<{ at: number; ms: number }> = [];
+  // 3J-fix-a: screen-space movement of the drawn ships, sampled every frame.
+  const drawnSteps: Array<{ at: number; own: number; otherMax: number }> = [];
+  const lastDrawnPositions = new Map<string, { x: number; y: number }>();
   let lastStateReceivedAt = 0;
   let latestTick = 0;
   let cachedState: StateMessage | null = null;
@@ -5283,7 +5286,11 @@ async function start(): Promise<void> {
       x: 0,
       y: 0,
       heading: 0,
-      motion: new MotionTrack(12, settings.client.renderExtrapolationMs / 1_000),
+      motion: new MotionTrack(
+        12,
+        settings.client.renderExtrapolationMs / 1_000,
+        settings.client.renderCorrectionRate,
+      ),
       dockedPortId: null,
       waitingPortId: null,
       surrendered: false,
@@ -6609,11 +6616,32 @@ async function start(): Promise<void> {
       ? ((domLast.count - domFirst.count) * 1000) / (domLast.at - domFirst.at)
       : 0;
     const snapshotAge = lastStateReceivedAt === 0 ? "—" : `${Math.round(now - lastStateReceivedAt)} ms`;
+    const recentSteps = drawnSteps.filter((sample) => sample.at >= now - 5_000);
+    const ownSteps = recentSteps.map((sample) => sample.own).filter((step) => step > 0);
+    const otherMax = recentSteps.reduce((worst, sample) => Math.max(worst, sample.otherMax), 0);
+    const ownAvgStep = ownSteps.length > 0
+      ? ownSteps.reduce((sum, step) => sum + step, 0) / ownSteps.length
+      : 0;
+    const ownMaxStep = ownSteps.reduce((worst, step) => Math.max(worst, step), 0);
+    const snapshotTimes = receivedAt.filter((at) => at >= now - 5_000);
+    const intervals = snapshotTimes.slice(1).map((at, index) => at - snapshotTimes[index]!);
+    const intervalAvg = intervals.length > 0
+      ? intervals.reduce((sum, ms) => sum + ms, 0) / intervals.length
+      : 0;
+    const intervalMax = intervals.reduce((worst, ms) => Math.max(worst, ms), 0);
+    const ownView = ships.get(ownId) ?? selectedShipView();
+    const ownSnapshotAge = ownView
+      ? ownView.motion.snapshotAgeMs(performance.now() / 1_000)
+      : 0;
+    const correctionPx = ownView ? ownView.motion.lastCorrectionKm * scale() : 0;
     perfLines.textContent = [
       `FPS ${fps.toFixed(1)} · frame ${averageFrame.toFixed(1)} avg / ${worstFrame.toFixed(1)} worst ms (5 s)`,
       `Objects ${app.stage.children.length + fleetGroupActive.length} · effects ${combatFx.length} · DOM ${domRate.toFixed(0)}/s`,
       `Ping ${pingMs > 0 ? `${Math.round(pingMs)} ms` : "—"} · in ${(inboundBytes / 1024).toFixed(1)} KB/s · ${inboundMessages.toFixed(1)} msg/s`,
       `Snapshot age ${snapshotAge} · queued ${pendingStateMessages.length} · server step ${serverWorldMs.toFixed(2)} ms`,
+      `Drawn step mine ${ownAvgStep.toFixed(1)} avg / ${ownMaxStep.toFixed(1)} max px · others max ${otherMax.toFixed(1)} px`,
+      `Snapshots ${intervalAvg.toFixed(0)} avg / ${intervalMax.toFixed(0)} max ms · buffer ${settings.client.renderDelayMs} ms · age ${Math.round(ownSnapshotAge)} ms`,
+      `Dead reckoning correction ${correctionPx.toFixed(1)} px`,
       `Resolution ${app.renderer.resolution.toFixed(2)}x · quality ${qualityLabel()} · sending ${pendingOrders.size}`,
     ].join("\n");
   }
@@ -9194,6 +9222,19 @@ async function start(): Promise<void> {
         }
 
         const screen = toScreen(ship.x, ship.y);
+        const lastDrawn = lastDrawnPositions.get(ship.id);
+        if (lastDrawn && mode === "ship") {
+          const stepPx = Math.hypot(screen.x - lastDrawn.x, screen.y - lastDrawn.y);
+          const prior = drawnSteps[drawnSteps.length - 1];
+          if (ship.id === ownId) {
+            drawnSteps.push({ at: now, own: stepPx, otherMax: prior?.at === now ? prior.otherMax : 0 });
+          } else if (prior?.at === now) {
+            prior.otherMax = Math.max(prior.otherMax, stepPx);
+          } else if (stepPx > 0.01) {
+            drawnSteps.push({ at: now, own: 0, otherMax: stepPx });
+          }
+        }
+        lastDrawnPositions.set(ship.id, { x: screen.x, y: screen.y });
         ship.hull.position.set(screen.x, screen.y);
         ship.hull.rotation = ship.heading;
         ship.ring.position.set(screen.x, screen.y);
@@ -9260,6 +9301,7 @@ async function start(): Promise<void> {
       });
     }
 
+    while (drawnSteps.length > 1_200) drawnSteps.shift();
     safeLayer("fleet groups", drawFleetGroups);
     const drawnShips = [...ships.values()].filter(
       (ship) => ship.hull.visible && ship.hull.parent === fleetLayer,

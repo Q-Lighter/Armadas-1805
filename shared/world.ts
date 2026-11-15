@@ -99,6 +99,7 @@ import {
   advancePredictionJob,
   createPredictionJob,
   jobPath,
+  predictionSendPoints,
   type PredictionJob,
 } from "./prediction.js";
 import { recordJourneys, simplifyTrail, startJourney, stopJourney, stopAllJourneys } from "./journey.js";
@@ -4917,6 +4918,7 @@ function startRouteLeg(ship: Ship): "sailing" | "arrived" | "blocked" {
     // Reaching the last point of a partial plan is not arriving at the
     // destination; say so and leave the ship available for a new order.
     ship.arrived = !partial;
+    if (!partial) ship.speedKnots = 0;
     return "arrived";
   }
   const path = route.curve && route.curve.length > 1 ? route.curve : route.waypoints;
@@ -7855,6 +7857,9 @@ function stepOwnerShip(
             settings.manoeuvres.warpRangeKm),
       };
     })(),
+    // A look-ahead point is not the destination. Reaching it must not stop the
+    // ship; startRouteLeg immediately supplies the next point.
+    !(ship.helmTarget && ship.route),
   );
   resolveMovement(world, ownerId, ship, fromX, fromY);
 
@@ -9619,7 +9624,7 @@ function refreshOnePrediction(world: World, playerId: string, ship: Ship, windFr
     advancePredictionJob(activeJob, settings.route.predictionBudgetMs, 500);
     // The first line has no old path to show; draw the growing job instead.
     if (!activeJob.done && cached && cached.points.length <= 1) {
-      cached.points = activeJob.points.map((point) => ({ ...point }));
+      cached.points = predictionSendPoints(activeJob.points);
     }
     if (activeJob.done) {
       const path = jobPath(activeJob);
@@ -9657,7 +9662,7 @@ function refreshOnePrediction(world: World, playerId: string, ship: Ship, windFr
   // Keep the old points visible while the replacement job runs.
   const job = createPredictionJob(ship, route, windFromDeg);
   world.routePredictions.set(ship.id, {
-    points: cached?.points?.length ? cached.points : job.points.map((point) => ({ ...point })),
+    points: cached?.points?.length ? cached.points : predictionSendPoints(job.points),
     routeTick: route.plannedTick,
     windFromDeg: cached?.windFromDeg ?? windFromDeg,
     windSpeedKnots: cached?.windSpeedKnots ?? world.windSpeedKnots,
@@ -9682,7 +9687,7 @@ function refreshOnePrediction(world: World, playerId: string, ship: Ship, windFr
     delete entry.job;
     if (!path.reached) pushNotice(world, playerId, "No route to that point.");
   } else if (entry.points.length <= 1) {
-    entry.points = job.points.map((point) => ({ ...point }));
+    entry.points = predictionSendPoints(job.points);
   }
 }
 

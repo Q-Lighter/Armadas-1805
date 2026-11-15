@@ -46,7 +46,7 @@ for (const hz of [5, 10]) {
       while (nextSnapshot < snapshots.length && snapshots[nextSnapshot]!.time <= time / 1_000) {
         const sample = snapshots[nextSnapshot]!;
         for (let index = 0; index < tracks.length; index += 1) {
-          tracks[index]!.push(sample.time, sample.x, sample.y + index * 20, sample.heading);
+          tracks[index]!.push(sample.time, sample.x, sample.y + index * 0.020, sample.heading);
         }
         nextSnapshot += 1;
       }
@@ -82,4 +82,63 @@ test("the short-way heading turn never spins 359° to 1°", () => {
   assert.ok(middle);
   assert.ok(Math.abs(shortestAngleDelta(middle.heading, 359 * Math.PI / 180)) < 0.05);
   assert.ok(Math.abs(shortestAngleDelta(middle.heading, 1 * Math.PI / 180)) < 0.05);
+});
+
+// 3J-fix-a: a jittered 5 Hz feed with 5% packet loss, 40 ships and 1 m
+// quantised positions must still be drawn at the frame rate without a hop.
+test("dead reckoning draws a jittered 5 Hz feed without visible hops", () => {
+  // Kilometres, the unit every MotionTrack caller uses.
+  const speed = 0.010;
+  const frame = FRAME_SECONDS;
+  const expected = speed * frame;
+  const quantise = (value: number) => Math.round(value);
+  const snapshots: Array<{ time: number; x: number; y: number; heading: number }> = [];
+  for (let index = 0; index < 120; index += 1) {
+    if (index % 20 === 7) continue;
+    const time = index / 5 + (((index * 37) % 9) - 4) * 0.004;
+    snapshots.push({
+      time,
+      x: Math.round((0.100 + speed * time) * 1_000) / 1_000,
+      y: 0.200,
+      heading: (359 + time * 3) * Math.PI / 180,
+    });
+  }
+  const tracks = Array.from({ length: 40 }, () => new MotionTrack(12, 0.4));
+  const previous = new Array<{ x: number; y: number; heading: number } | null>(40).fill(null);
+  const steps: number[] = [];
+  let longestStillMs = 0;
+  let stillSince = 0;
+  let next = 0;
+  for (let time = 1; time < 20; time += frame) {
+    while (next < snapshots.length && snapshots[next]!.time <= time - 0.04) {
+      const sample = snapshots[next]!;
+      for (let index = 0; index < tracks.length; index += 1) {
+        tracks[index]!.push(sample.time, sample.x, sample.y + index * 20, sample.heading);
+      }
+      next += 1;
+    }
+    for (let index = 0; index < tracks.length; index += 1) {
+      const motion = tracks[index]!.sample(time);
+      assert.ok(motion);
+      const before = previous[index];
+      if (before) {
+        const step = Math.hypot(motion.x - before.x, motion.y - before.y);
+        if (index === 0) steps.push(step);
+        if (step < expected * 0.01) {
+          if (stillSince === 0) stillSince = time;
+          longestStillMs = Math.max(longestStillMs, (time - stillSince) * 1_000);
+        } else {
+          stillSince = 0;
+        }
+      }
+      previous[index] = { ...motion };
+    }
+  }
+  const average = steps.reduce((sum, step) => sum + step, 0) / Math.max(1, steps.length);
+  assert.ok(average <= expected * 1.5,
+    `average drawn step ${average.toFixed(4)} m vs ${expected.toFixed(4)} m`);
+  assert.ok(longestStillMs <= 100, `ships froze for ${longestStillMs.toFixed(0)} ms`);
+  const corrections = tracks[0]!.lastCorrectionKm;
+  assert.ok(Number.isFinite(corrections) && corrections < 0.01,
+    `correction ${corrections} km should stay below 10 m`);
 });

@@ -925,3 +925,69 @@ export function nearestSeaPoint(
   }
   return null;
 }
+
+/**
+ * A forward-moving cursor over one route polyline. A predicted ghost follows
+ * the same path from start to finish, so it does not need to rescan and
+ * re-measure every segment on every one of its thousands of steps.
+ */
+export class RouteCursor {
+  private readonly lengths: number[] = [0];
+  private readonly total: number;
+  private index = 0;
+
+  constructor(private readonly points: readonly MapPoint[]) {
+    let total = 0;
+    for (let index = 1; index < points.length; index += 1) {
+      total += distance(points[index - 1]!, points[index]!);
+      this.lengths.push(total);
+    }
+    this.total = total;
+  }
+
+  /** Nearest point on the route, then a look-ahead distance along it. */
+  lookAhead(position: MapPoint, lookAheadKm: number): MapPoint | null {
+    if (this.points.length === 0) return null;
+    if (this.points.length === 1) return { ...this.points[0]! };
+    if (this.total < 1e-9) return { ...this.points[this.points.length - 1]! };
+
+    const first = Math.max(0, this.index - 3);
+    const last = Math.min(this.points.length - 2, this.index + 40);
+    let bestDistance = Number.POSITIVE_INFINITY;
+    let bestAt = this.lengths[first]!;
+    let bestIndex = first;
+    const scan = (from: number, to: number): void => {
+      for (let index = from; index <= to; index += 1) {
+        const a = this.points[index]!;
+        const b = this.points[index + 1]!;
+        const dx = b.x - a.x;
+        const dy = b.y - a.y;
+        const segment = dx * dx + dy * dy;
+        const t = segment > 1e-12
+          ? Math.max(0, Math.min(1, ((position.x - a.x) * dx + (position.y - a.y) * dy) / segment))
+          : 0;
+        const d = Math.hypot(position.x - (a.x + dx * t), position.y - (a.y + dy * t));
+        if (d < bestDistance) {
+          bestDistance = d;
+          bestAt = this.lengths[index]! + Math.sqrt(segment) * t;
+          bestIndex = index;
+        }
+      }
+    };
+    scan(first, last);
+    // Only pay for a full scan if the local window was not near the ship.
+    if (bestDistance > 8) scan(0, this.points.length - 2);
+    this.index = bestIndex;
+
+    const want = Math.min(this.total, bestAt + Math.max(0, lookAheadKm));
+    let index = bestIndex;
+    while (index + 1 < this.points.length && this.lengths[index + 1]! < want) index += 1;
+    const a = this.points[index]!;
+    const b = this.points[index + 1] ?? a;
+    const segment = this.lengths[index + 1]! - this.lengths[index]!;
+    const t = segment > 1e-9
+      ? Math.max(0, Math.min(1, (want - this.lengths[index]!) / segment))
+      : 0;
+    return { x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t };
+  }
+}

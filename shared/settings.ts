@@ -47,10 +47,12 @@ export const settings = {
     maxLiveEffects: 150,
     /** Draft: same-fleet ships closer than this on screen share one marker. */
     fleetGroupPx: 14,
-    /** Draw the world this far behind the newest snapshot, in milliseconds. */
-    renderDelayMs: 150,
+    /** Draw from the newest snapshot, dead reckoning between packets. Draft: 0. */
+    renderDelayMs: 0,
     /** Longest motion extrapolation across a dropped packet, in milliseconds. */
     renderExtrapolationMs: 400,
+    /** Critically damped correction rate for a late packet, per second. Draft: 9. */
+    renderCorrectionRate: 9,
     /** Draft: selected-ship panel refresh rate. */
     shipPanelHz: 2,
     /** Draft: Fleet card and battle-log refresh rate. */
@@ -386,6 +388,9 @@ export const settings = {
     /** A tack is allowed to turn at least this fast, so it finishes in about
      *  the manoeuvre time below. Draft: 6 degrees per game second. */
     tackTurnDegPerGameSecond: 6,
+    /** How quickly a ship's speed may change, in knots per game second. This
+     *  smooths sail shortening and manoeuvre transitions. Draft: 0.12. */
+    speedChangeKnotsPerGameSecond: 0.12,
     /** Time a tack is allowed to take. Draft: 20 game seconds. */
     tackManoeuvreGameSeconds: 20,
     /** Every ship's closest-to-wind angle is reduced by this much. Draft: 9
@@ -738,7 +743,7 @@ export const settings = {
     /** Look-ahead distance when steering along a smooth route curve. */
     steerLookAheadKm: 6,
     /** Predicted path is sampled in this many game seconds. Draft: 2. */
-    predictionStepGameSeconds: 2,
+    predictionStepGameSeconds: 3,
     /** Fine two-second steps cover this many game minutes. Draft: 60. */
     predictionFineGameMinutes: 60,
     /** After the fine window, use this coarser game-second step. Draft: 10. */

@@ -706,6 +706,7 @@ export function stepShip(
   legacyTack: boolean = false,
   precomputed?: { spec: ShipSpec; performance: ShipPerformance },
   manoeuvreContext?: StepManoeuvreContext,
+  stopOnArrival = true,
 ): void {
   if (!(dtGameSeconds > 0) || !Number.isFinite(dtGameSeconds)) return;
 
@@ -744,8 +745,9 @@ export function stepShip(
   const distanceKm = Math.hypot(dx, dy);
 
   if (distanceKm <= arrivalRadiusKm) {
-    // Arrived: stop exactly here. Never keep circling a near target.
-    ship.speedKnots = 0;
+    // Arrived: stop exactly here. Never keep circling a near target. A route
+    // look-ahead point passes stopOnArrival=false and keeps its way on.
+    if (stopOnArrival) ship.speedKnots = 0;
     ship.order = null;
     ship.tackLine = undefined;
     ship.arrived = true;
@@ -776,6 +778,7 @@ export function stepShip(
         Boolean(manoeuvreContext.narrowChannel),
       )
     : 1;
+  const wasShortened = ship.shortenedSail === true;
   ship.shortenedSail = shortenedShare < 1;
   if (
     manoeuvreContext &&
@@ -836,24 +839,44 @@ export function stepShip(
 
   // A ship with no effective sail drifts downwind. Otherwise the effective
   // sail product and the loaded cargo hold reduce the normal speed.
+  let targetSpeed: number;
   if (performance.driftSpeedKnots > 0) {
-    ship.speedKnots = performance.driftSpeedKnots;
+    targetSpeed = performance.driftSpeedKnots;
   } else {
-    ship.speedKnots = speedForHeading(spec, ship.headingRad, windFromDeg) *
+    targetSpeed = speedForHeading(spec, ship.headingRad, windFromDeg) *
       performance.speedFactor *
       cargoSpeedMultiplier(ship.stores, spec.cargoTonnes);
   }
   if (manoeuvre?.speedKnots !== undefined) {
-    ship.speedKnots = manoeuvre.speedKnots;
+    targetSpeed = manoeuvre.speedKnots;
   } else if (manoeuvre) {
-    ship.speedKnots *= manoeuvre.speedShare;
+    targetSpeed *= manoeuvre.speedShare;
   }
-  ship.speedKnots *= shortenedShare;
+  targetSpeed *= shortenedShare;
   if (ship.boardingPowerKnots !== undefined) {
-    ship.speedKnots = ship.boardingPowerKnots;
+    targetSpeed = ship.boardingPowerKnots;
   } else if (ship.stationSpeedLimit !== undefined) {
-    ship.speedKnots = Math.min(ship.speedKnots, ship.stationSpeedLimit);
+    targetSpeed = Math.min(targetSpeed, ship.stationSpeedLimit);
   }
+
+  // 3J-fix-a: sails and the rudder take a moment to answer. A rate limit keeps
+  // sail shortening and manoeuvre transitions from stepping the speed in one
+  // tick. The steady speed is unchanged, so open-sea passages keep their pace.
+  const maxSpeedChange = settings.sailing.speedChangeKnotsPerGameSecond * dtGameSeconds;
+  const easing = Boolean(manoeuvre) || ship.shortenedSail || wasShortened;
+  if (easing && ship.speedKnots > 0.05) {
+    const speedChange = Math.max(
+      -maxSpeedChange,
+      Math.min(maxSpeedChange, targetSpeed - ship.speedKnots),
+    );
+    ship.speedKnots += speedChange;
+  } else {
+    // Normal acceleration and station keeping stay immediate. Only the sail
+    // and manoeuvre transitions, which used to halve or double speed in one
+    // tick, are eased.
+    ship.speedKnots = targetSpeed;
+  }
+
   const travelSign = manoeuvre?.travelSign ?? 1;
   const travelKm = travelSign * ship.speedKnots * KM_PER_HOUR_PER_KNOT * (dtGameSeconds / 3600);
   ship.x += Math.sin(ship.headingRad) * travelKm;

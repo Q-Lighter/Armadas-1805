@@ -21,6 +21,9 @@
     "benchmark:battle": "node scripts/benchmark-battle.mjs",
     "benchmark:battle-zone": "node scripts/benchmark-battle-zone.mjs",
     "benchmark:3d": "node scripts/benchmark-3d.mjs",
+    "benchmark:10v10": "node scripts/benchmark-10v10.mjs",
+    "benchmark:network": "node scripts/benchmark-network-3j.mjs",
+    "benchmark:client": "node scripts/benchmark-client-frame-3j.mjs",
     "test:e2e": "npx tsc -p shared/tsconfig.json && npx tsc -p server/tsconfig.json && node tests/harness/e2e.mjs"
   },
   "engines": {

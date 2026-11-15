@@ -1250,6 +1250,29 @@ export const settings = {
     battleZoneRadiusKm: 3,
     /** Receive samples used by the performance panel. Draft: 5 s. */
     performanceWindowSeconds: 5,
+    /** Ships farther than this from the camera may update slowly. Draft: 5 km. */
+    farEntityKm: 5,
+    /** Far ships update at this many updates a second. Draft: 2. */
+    farEntityHz: 2,
+    /** Data saver sends far ships once a second. Draft: 1. */
+    farEntitySaverHz: 1,
+    /** Data saver battle-zone rate. Draft: 7 Hz. */
+    dataSaverBattleHz: 7,
+    /** A laggy link for this long switches data saver on. Draft: 5 s. */
+    poorForSeconds: 5,
+    /** A good link for this long switches it off. Draft: 15 s. */
+    recoverAfterSeconds: 15,
+    /** Poor-connection thresholds. Draft: 250 ms ping, 400 ms snapshot age. */
+    poorPingMs: 250,
+    poorSnapshotAgeMs: 400,
+    /** Battle-log text only needs to refresh this often. Draft: 1 s. */
+    battleLogSeconds: 1,
+    /** Own-ship route/path detail refreshes less often than damage. Draft: 1 s. */
+    fleetRouteSeconds: 1,
+    /** Keep each update's combat event list bounded. Draft: 24 newest. */
+    maxCombatEventsPerMessage: 24,
+    /** Data saver keeps fewer combat effects. Draft: 8 newest. */
+    dataSaverEffectEvents: 8,
   },
 
   /** Fog of war and the chart's private map blocks. */

@@ -70,6 +70,10 @@
       "types": "./dist/roomLoop.d.ts",
       "default": "./dist/roomLoop.js"
     },
+    "./net-rate": {
+      "types": "./dist/netRate.d.ts",
+      "default": "./dist/netRate.js"
+    },
     "./time": {
       "types": "./dist/time.d.ts",
       "default": "./dist/time.js"

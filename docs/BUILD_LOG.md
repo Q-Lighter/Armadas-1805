@@ -3659,3 +3659,52 @@ The visible stutter was a route-look-ahead stop. `startRouteLeg` gives the helm 
 ### Broken or unfinished
 
 - No browser is available in this workspace, so the panel and smoothing were not watched on a screen. The numbers come from the render-plan feed test and the real world loop.
+
+## Session 3J-fix-b: network and drawing optimisation
+
+**Date:** 2026-11-15
+**Branch:** main
+
+### What was asked
+
+Make a 10 v 10 battle fit 30 KB/s per player at 10 Hz and 40 ships in sight fit 15 KB/s at 5 Hz, keep a 100-ship server world step under 3 ms, keep a stubbed client frame under 4 ms for 20 firing ships, add a poor-connection data saver, and keep every earlier feature and test.
+
+### Before and after
+
+| Measure | Before | After | Target |
+| --- | ---: | ---: | ---: |
+| 10 v 10 delta, 10 Hz, per player | 62,627 B/s | 17,027 B/s | 30 KB/s (30,720 B/s) |
+| 40 ships in sight, normal sailing, per player | 263,629 B/s raw full state | 3,411 B/s delta | 15 KB/s (15,360 B/s) |
+| 100-ship world step, Node proxy | 2.32 ms | 2.17 ms | under 3 ms |
+| Synthetic client frame, 20 firing ships | not recorded separately | 0.99 ms | under 4 ms |
+
+The 10 v 10 benchmark is 20 ships in one zone. The larger 100-ship zone proxy still reports its own separately; the client benchmark runs the real render plan, fire plan and state-delta update and counts drawing commands instead of calling Pixi.
+
+### Network changes
+
+- `shared/netRate.ts` owns the rates: battle 10 Hz normal, 7 Hz in data saver; far ships (over 5 km from the camera focus) 2 Hz normal, 1 Hz in data saver; full detail never holds them.
+- Own-ship fleet detail is now a field-level patch. Static class, capacity and upgrade fields stay on the client. Damage and ammunition still refresh at 2 Hz. Routes and predicted paths refresh at 1 Hz.
+- The battle log refreshes at 1 Hz instead of every tick.
+- Quantised positions are zigzag varints, delta-coded from the previous ship; heading and speed are signed deltas. Empty flag and event lists are omitted until they change, and a list that becomes empty is sent once so the client clears it.
+- Combat events are capped at 24 per update (8 in data saver).
+- A successful order acknowledgement triggers an immediate state with fleet detail, so the ship readout catches up without waiting for the half-second panel period.
+- Cloudflare Workers supports WebSocket compression by default from compatibility date 2023-08-15; this project uses 2026-11-02, so browsers negotiate `permessage-deflate` without Worker code. The numbers above are uncompressed bytes and do not depend on compression.
+
+### Poor connection and drawing
+
+- The client measures ping and snapshot age. Five bad seconds (over 250 ms or over 400 ms) switch data saver on; fifteen good seconds switch it off. The note reads "Poor connection: data saver on".
+- Menu → Network: Auto, Data saver, Full. The choice is remembered in local storage.
+- Data saver also cuts the live effect limit and the per-message event cap.
+- Existing culling, pooled ship/fleet views, the shared combat-ink graphics, the quality governor and the effects cap are kept. The render resolution is still the last thing reduced.
+
+### Checks
+
+- `npm test`: 573/573 passing (six new network tests).
+- `npm run build`: passing.
+- Data saver tests cover both switching directions and manual override.
+- No lost ships or fleet detail: the fleet patch test rebuilds the same fleet as the full state.
+
+### Broken or unfinished
+
+- No browser or socket harness ran here. The byte and frame numbers are Node proxies; no real WebSocket compression ratio was measured.
+- There is still no particle container: smoke, splashes and fire are one reused Graphics layer, which avoids per-frame Graphics allocation. That is the current drawing path.

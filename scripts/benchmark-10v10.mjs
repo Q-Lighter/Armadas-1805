@@ -119,7 +119,7 @@ const deltaStreams = new Map();
 for (const id of ["blue", "red"]) {
   const full = visibleStateFor(world, id);
   full.seq = 1;
-  deltaStreams.set(id, { seq: 1, base: full, fleetAt: 0 });
+  deltaStreams.set(id, { seq: 1, base: full, fleetAt: 0, routeAt: 0, logAt: 0 });
 }
 let deltaBytes = 0;
 let deltaMessages = 0;
@@ -128,16 +128,26 @@ for (let step = 0; step < settings.server.tickHz; step += 1) {
   for (const id of ["blue", "red"]) {
     const stream = deltaStreams.get(id);
     const includeFleet = step % Math.max(1, Math.round(settings.network.fleetDetailSeconds * settings.server.tickHz)) === 0;
+    const includeRoutes = step % Math.max(1, Math.round(settings.network.fleetRouteSeconds * settings.server.tickHz)) === 0;
+    const includeLog = step % Math.max(1, Math.round(settings.network.battleLogSeconds * settings.server.tickHz)) === 0;
     const current = visibleStateFor(world, id, undefined, undefined, includeFleet);
+    if (!includeFleet && stream.base.fleet) current.fleet = stream.base.fleet;
+    if (!includeLog) current.log = stream.base.log;
+    // The server caps each update's combat event list (3J-fix-b).
+    if ((current.events?.length ?? 0) > settings.network.maxCombatEventsPerMessage) {
+      current.events = current.events.slice(-settings.network.maxCombatEventsPerMessage);
+    }
     stream.seq += 1;
     current.seq = stream.seq;
-    const delta = buildStateDelta(stream.base, current, stream.seq, includeFleet);
-    deltaBytes += encodeStateDelta(delta).byteLength;
+    const delta = buildStateDelta(stream.base, current, stream.seq, includeFleet, includeRoutes);
+    const encoded = encodeStateDelta(delta).byteLength;
+
+    deltaBytes += encoded;
     deltaMessages += 1;
     stream.base = current;
   }
 }
-console.log("10 v 10 BATTLE BENCHMARK (after delta/network changes)");
+console.log("10 v 10 BATTLE BENCHMARK");
 console.log({
   ships: blue.length + red.length,
   steps: STEPS,

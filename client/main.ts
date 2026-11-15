@@ -8,6 +8,11 @@ import { Application, Container, Graphics, RenderTexture, Sprite, Text, Texture 
 import { settings } from "@naval/shared/settings";
 import { MotionTrack } from "@naval/shared/render-motion";
 import {
+  DataSaverGovernor,
+  parseNetworkPreference,
+  type NetworkPreference,
+} from "@naval/shared/net-rate";
+import {
   fireVisualPlan,
   galleryFrame,
   lightsRingPlan,
@@ -1108,6 +1113,7 @@ async function start(): Promise<void> {
   const perfVisibleState = element<HTMLElement>("perf-visible-state");
   const perfToggle = element<HTMLButtonElement>("perf-toggle");
   const qualityNote = element<HTMLElement>("quality-note");
+  const dataSaverNote = element<HTMLElement>("data-saver-note");
   const debugSection = element<HTMLDetailsElement>("debug-info");
   const shipPanel = element<HTMLElement>("ship-panel");
   const shipExpand = element<HTMLButtonElement>("ship-expand");
@@ -1195,13 +1201,51 @@ async function start(): Promise<void> {
   let layoutApplyFrame = 0;
   const UNPLACED_LAYOUT_IDS = new Set([
     "capture-strip", "escort-strip", "charting", "version-notice",
-    "client-error", "quality-note", "layout-debug-layer",
+    "client-error", "quality-note", "data-saver-note", "layout-debug-layer",
   ]);
   const chartDebug = query.get("chartdebug") === "1";
   let perfVisible = query.get("perf") === "1";
   let perfAutoOpened = false;
   const qualityGovernor = new QualityGovernor();
   let qualityPreference: QualityPreference = parseQualityPreference(query.get("quality"));
+  const NETWORK_KEY = "armada-network-mode";
+  const networkStorage = browserStorage("localStorage");
+  function readNetworkPreference(): NetworkPreference {
+    try {
+      return parseNetworkPreference(networkStorage?.getItem(NETWORK_KEY)) ?? "auto";
+    } catch {
+      return "auto";
+    }
+  }
+  let networkPreference: NetworkPreference = readNetworkPreference();
+  const dataSaverGovernor = new DataSaverGovernor();
+  let lastNetworkModeSent = "";
+  let lastConnectionSampleAt = 0;
+  function effectiveNetworkMode(): NetworkPreference {
+    return dataSaverGovernor.effective(networkPreference);
+  }
+  function syncNetworkMode(force = false): void {
+    const mode = effectiveNetworkMode();
+    dataSaverNote.hidden = !(networkPreference === "auto" && mode === "saver");
+    for (const button of document.querySelectorAll<HTMLButtonElement>("[data-network]")) {
+      button.setAttribute("aria-pressed", String(button.dataset.network === networkPreference));
+    }
+    if ((force || mode !== lastNetworkModeSent) && socket?.readyState === WebSocket.OPEN) {
+      lastNetworkModeSent = mode;
+      socket.send(JSON.stringify({ t: "networkMode", mode }));
+    }
+  }
+  function setNetworkPreference(next: NetworkPreference): void {
+    networkPreference = next;
+    dataSaverGovernor.active = false;
+    lastNetworkModeSent = "";
+    try {
+      networkStorage?.setItem(NETWORK_KEY, next);
+    } catch {
+      // Remembering the choice is optional.
+    }
+    syncNetworkMode(true);
+  }
   let qualityLevel: QualityLevel = 0;
   let quality: QualityFeatures = qualityFeatures(0);
   const requestedBots = query.get("bots");
@@ -2921,8 +2965,11 @@ async function start(): Promise<void> {
   /** Grey smoke, splashes, hit flashes and a sinking cloud, in paper ink. */
   function drawCombatFx(now: number): void {
     combatFxInk.clear();
-    if (combatFx.length > settings.client.maxLiveEffects) {
-      combatFx.splice(0, combatFx.length - settings.client.maxLiveEffects);
+    const effectLimit = effectiveNetworkMode() === "saver"
+      ? Math.min(48, settings.client.maxLiveEffects)
+      : settings.client.maxLiveEffects;
+    if (combatFx.length > effectLimit) {
+      combatFx.splice(0, combatFx.length - effectLimit);
     }
     const zoom = Math.max(0.55, Math.min(2.2, scale() / 700));
     let write = 0;
@@ -6945,7 +6992,7 @@ async function start(): Promise<void> {
           }
         }
       }
-      while (combatFx.length > settings.client.maxLiveEffects) combatFx.shift();
+      while (combatFx.length > (effectiveNetworkMode() === "saver" ? 48 : settings.client.maxLiveEffects)) combatFx.shift();
     }
 
     if (Array.isArray(state.fleet)) {
@@ -9319,6 +9366,17 @@ async function start(): Promise<void> {
         pingAt = Date.now();
         socket.send(JSON.stringify({ t: "ping", at: pingAt }));
       }
+      if (now - lastConnectionSampleAt >= 1_000) {
+        lastConnectionSampleAt = now;
+        if (networkPreference === "auto") {
+          const snapshotAge = lastStateReceivedAt === 0 ? 0 : performance.now() - lastStateReceivedAt;
+          const sampled = dataSaverGovernor.update(Date.now(), { pingMs, snapshotAgeMs: snapshotAge });
+          if (sampled.changed) syncNetworkMode(true);
+          else syncNetworkMode();
+        } else {
+          syncNetworkMode();
+        }
+      }
       if (now - lastFocusSentAt >= settings.network.pingIntervalSeconds * 1000) {
         lastFocusSentAt = now;
         socket.send(JSON.stringify({ t: "focus", x: view.x, y: view.y }));
@@ -9418,6 +9476,13 @@ async function start(): Promise<void> {
       }
       dockCollapsed = false;
       scheduleScreenLayout();
+    });
+  }
+
+  for (const button of document.querySelectorAll<HTMLButtonElement>("[data-network]")) {
+    button.addEventListener("click", () => {
+      const next = parseNetworkPreference(button.dataset.network);
+      if (next) setNetworkPreference(next);
     });
   }
 

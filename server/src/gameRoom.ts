@@ -104,6 +104,13 @@ import {
   type World,
 } from "@naval/shared/world";
 import { buildStateDelta, encodeStateDelta } from "@naval/shared/state-delta";
+import {
+  battleRateFor,
+  dueAtRate,
+  holdFarShips,
+  parseNetworkPreference,
+  type NetworkPreference,
+} from "@naval/shared/net-rate";
 import { RoomLoop } from "@naval/shared/room-loop";
 import { GhostCleanup, PlayerSessions } from "@naval/shared/player-sessions";
 import { BlockSendBudget } from "@naval/shared/block-batch";
@@ -132,8 +139,11 @@ export class GameRoom {
     seq: number;
     base: StateMessage | null;
     fleetAt: number;
+    fleetRouteAt: number;
+    logAt: number;
     fullAt: number;
     forceFull: boolean;
+    networkMode: NetworkPreference;
   }>();
   private readonly focus = new Map<string, { x: number; y: number }>();
   private readonly blockBudget = new BlockSendBudget(
@@ -483,7 +493,7 @@ export class GameRoom {
   }
 
   /** Send the world to every connected player, through visibleStateFor only. */
-  private broadcast(regular: boolean, battleNow: boolean): void {
+  private broadcast(regular: boolean, _battleNow: boolean): void {
     for (const [playerId, socket] of this.sockets.entries()) {
       const stream = this.streams.get(playerId);
       // A client that was skipped for backpressure gets one fresh state as
@@ -494,15 +504,18 @@ export class GameRoom {
         }
         continue;
       }
-      if (
-        regular ||
-        (battleNow && battleZoneNear(
-          this.world,
-          playerId,
-          this.battleFocus(playerId),
-          settings.network.battleZoneRadiusKm,
-        ))
-      ) {
+      const mode = stream?.networkMode ?? "auto";
+      const battleDue = dueAtRate(
+        this.ticks,
+        battleRateFor(mode),
+        settings.server.tickHz,
+      ) && battleZoneNear(
+        this.world,
+        playerId,
+        this.battleFocus(playerId),
+        settings.network.battleZoneRadiusKm,
+      );
+      if (regular || battleDue) {
         this.sendState(playerId, socket);
       }
     }
@@ -571,7 +584,16 @@ export class GameRoom {
       const now = Date.now();
       let stream = this.streams.get(playerId);
       if (!stream) {
-        stream = { seq: 0, base: null, fleetAt: 0, fullAt: 0, forceFull: true };
+        stream = {
+          seq: 0,
+          base: null,
+          fleetAt: 0,
+          fleetRouteAt: 0,
+          logAt: 0,
+          fullAt: 0,
+          forceFull: true,
+          networkMode: "auto",
+        };
         this.streams.set(playerId, stream);
       }
       if (!forceFull && this.bufferedBytes(socket) > settings.network.slowClientBufferBytes) {
@@ -584,8 +606,32 @@ export class GameRoom {
       const allowed = this.blockBudget.take(now);
       const includeFleet = forceFull || stream.forceFull || stream.base === null ||
         now - stream.fleetAt >= settings.network.fleetDetailSeconds * 1000;
+      const includeFleetRoutes = forceFull || stream.forceFull || stream.base === null ||
+        now - stream.fleetRouteAt >= settings.network.fleetRouteSeconds * 1000;
+      const includeLog = forceFull || stream.forceFull || stream.base === null ||
+        now - stream.logAt >= settings.network.battleLogSeconds * 1000;
       const state = visibleStateFor(this.world, playerId, CHART_BLOCKS, allowed, includeFleet);
+      if (!includeFleet && stream.base?.fleet) state.fleet = stream.base.fleet;
+      if (!includeLog && stream.base) state.log = stream.base.log;
       this.blockBudget.note(state.chart.blocks.length, now);
+      const eventLimit = stream.networkMode === "saver"
+        ? settings.network.dataSaverEffectEvents
+        : settings.network.maxCombatEventsPerMessage;
+      if ((state.events?.length ?? 0) > eventLimit) {
+        state.events = state.events!.slice(-eventLimit);
+      }
+      if (!forceFull && !stream.forceFull && stream.base && stream.networkMode !== "full") {
+        const ownIds = new Set(shipsForOwner(this.world, playerId).map((ship) => ship.id));
+        state.ships = holdFarShips(
+          stream.base.ships,
+          state.ships,
+          ownIds,
+          this.battleFocus(playerId),
+          stream.networkMode,
+          this.ticks,
+          settings.server.tickHz,
+        );
+      }
       // TEMP-DEBUG: dev rooms carry the live load-test counters.
       if (this.world.kind === "dev") {
         state.d = this.metrics.snapshot(
@@ -605,15 +651,19 @@ export class GameRoom {
         stream.base = state;
         stream.fullAt = now;
         stream.fleetAt = now;
+        stream.fleetRouteAt = now;
+        stream.logAt = now;
         stream.forceFull = false;
       } else {
-        const delta = buildStateDelta(stream.base, state, stream.seq, includeFleet);
+        const delta = buildStateDelta(stream.base, state, stream.seq, includeFleet, includeFleetRoutes);
         const binary = encodeStateDelta(delta);
         this.sentBytesSincePerf += binary.byteLength;
         socket.send(binary);
         stream.base = state;
       }
       if (includeFleet) stream.fleetAt = now;
+      if (includeFleetRoutes) stream.fleetRouteAt = now;
+      if (includeLog) stream.logAt = now;
       this.lastSnapshotMs = now;
 
       // Notices are short events, not world state, so they travel separately.
@@ -733,6 +783,14 @@ export class GameRoom {
       note?: unknown;
     };
 
+    if (order.t === "networkMode") {
+      const mode = parseNetworkPreference(order.mode);
+      if (mode) {
+        const stream = this.streams.get(playerId);
+        if (stream) stream.networkMode = mode;
+      }
+      return;
+    }
     if (order.t === "ping") {
       const at = typeof order.at === "number" ? order.at : Date.now();
       this.sockets.get(playerId)?.send(JSON.stringify({ t: "pong", at }));
@@ -1105,6 +1163,13 @@ export class GameRoom {
         ok: accepted,
         text: reason ?? undefined,
       }));
+      // 3J-fix-b: the ship readout catches up with the acknowledgement now,
+      // instead of waiting for the next half-second fleet detail.
+      if (accepted && socket) {
+        const stream = this.streams.get(playerId);
+        if (stream) stream.fleetAt = 0;
+        this.sendState(playerId, socket);
+      }
     }
   }
 }

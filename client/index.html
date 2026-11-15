@@ -12,6 +12,7 @@
     <div id="game-root"></div>
     <p class="client-error paper" id="client-error" role="alert" hidden></p>
     <p class="quality-note paper" id="quality-note" hidden>Reduced effects for speed</p>
+    <p class="quality-note paper" id="data-saver-note" hidden>Poor connection: data saver on</p>
 
     <header class="hud hud-top paper" id="top-bar">
       <div class="money" id="money-panel" title="Pieces of eight">
@@ -466,6 +467,12 @@
         <button class="btn size-option quality-option" type="button" data-quality="auto" aria-pressed="true">Auto</button>
         <button class="btn size-option quality-option" type="button" data-quality="high" aria-pressed="false">High</button>
         <button class="btn size-option quality-option" type="button" data-quality="low" aria-pressed="false">Low</button>
+      </div>
+      <div class="size-picker network-picker" role="group" aria-label="Network">
+        <span class="size-label">Network</span>
+        <button class="btn size-option network-option" type="button" data-network="auto" aria-pressed="true">Auto</button>
+        <button class="btn size-option network-option" type="button" data-network="saver" aria-pressed="false">Data saver</button>
+        <button class="btn size-option network-option" type="button" data-network="full" aria-pressed="false">Full</button>
       </div>
       <details class="debug-info" id="debug-info" hidden>
         <summary>Debug info</summary>

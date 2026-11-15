@@ -11,6 +11,7 @@ declare const TextEncoder: { new(): { encode(input: string): Uint8Array } };
 declare const TextDecoder: { new(): { decode(input: Uint8Array): string } };
 
 const MAGIC = 0x314441; // "AD1" in little-endian order.
+const FLEET_ROUTE_FIELDS = new Set(["route", "predictedPath", "trail", "orderLines", "journey"]);
 const encoder = new TextEncoder();
 const decoder = new TextDecoder();
 
@@ -32,15 +33,60 @@ function equal(a: unknown, b: unknown): boolean {
   return JSON.stringify(a) === JSON.stringify(b);
 }
 
-function changedFields(previous: StateMessage, current: StateMessage, includeFleet: boolean): Record<string, unknown> {
+function changedFields(previous: StateMessage, current: StateMessage, includeFleet: boolean, includeFleetRoutes: boolean): Record<string, unknown> {
   const fields: Record<string, unknown> = {};
   for (const key of ["m", "research", "sel", "sp", "h", "d", "sv", "out", "go", "roster", "ports", "fleets", "groups", "chart", "l", "npcs", "escorts", "trailAdds", "trailReset", "lostMarks"] as const) {
     if (!equal(previous[key], current[key])) fields[key] = current[key];
   }
-  if (includeFleet) fields.fleet = current.fleet;
-  // These small flag lists must be sent even when empty so the client clears
-  // a flag that has gone away.
-  fields.events = current.events ?? [];
+  if (includeFleet) {
+    // Fleet detail is a field-level patch. Static stores, capacities and
+    // upgrades stay on the client instead of being resent twice a second.
+    const oldFleet = new Map((previous.fleet ?? []).map((ship) => [ship.id, ship]));
+    const patch: Array<Record<string, unknown> & { id: string }> = [];
+    for (const ship of current.fleet ?? []) {
+      const old = oldFleet.get(ship.id);
+      const changed: Record<string, unknown> & { id: string } = { id: ship.id };
+      if (!old) {
+        Object.assign(changed, ship);
+      } else {
+        for (const [key, value] of Object.entries(ship)) {
+          // The selected route and predicted ghost can be several hundred
+          // points. They refresh at 1 Hz, not with every damage readout.
+          if (!includeFleetRoutes && FLEET_ROUTE_FIELDS.has(key)) continue;
+          if (!equal((old as unknown as Record<string, unknown>)[key], value)) {
+            changed[key] = value;
+          }
+        }
+      }
+      if (Object.keys(changed).length > 1) patch.push(changed);
+    }
+    if (patch.length > 0) fields.fleetPatch = patch;
+    const currentIds = new Set((current.fleet ?? []).map((ship) => ship.id));
+    const removed = (previous.fleet ?? []).map((ship) => ship.id).filter((id) => !currentIds.has(id));
+    if (removed.length > 0) fields.fleetRemoved = removed;
+  }
+  // Small flag lists are sent when they change, including a clear. Repeating
+  // an empty list every tick wastes bytes.
+  const flags = [
+    ["events", current.events, previous.events],
+    ["sf", current.sf, previous.sf],
+    ["abandoned", current.abandoned, previous.abandoned],
+    ["burning", current.burning, previous.burning],
+    ["nightLightsOff", current.nightLightsOff, previous.nightLightsOff],
+    ["grappled", current.grappled, previous.grappled],
+    ["sinking", current.sinking, previous.sinking],
+    ["log", current.log, previous.log],
+  ] as const;
+  for (const [key, value, old] of flags) {
+    if (!equal(value ?? [], old ?? [])) {
+      fields[key] = value ?? [];
+    }
+  }
+  const burningStrength = current.burningStrength ?? {};
+  const oldBurning = previous.burningStrength ?? {};
+  if (!equal(burningStrength, oldBurning)) {
+    fields.burningStrength = burningStrength;
+  }
   // Trail lists are only needed when there is something new to append or a
   // previous list that must be cleared; an empty full state stays compact.
   if ((Object.keys(current.trailAdds ?? {}).length > 0) ||
@@ -53,14 +99,6 @@ function changedFields(previous: StateMessage, current: StateMessage, includeFle
   if ((current.lostMarks?.length ?? 0) > 0 || (previous.lostMarks?.length ?? 0) > 0) {
     fields.lostMarks = current.lostMarks ?? [];
   }
-  fields.sf = current.sf ?? [];
-  fields.abandoned = current.abandoned ?? [];
-  fields.burning = current.burning ?? [];
-  fields.burningStrength = current.burningStrength ?? {};
-  fields.nightLightsOff = current.nightLightsOff ?? [];
-  fields.grappled = current.grappled ?? [];
-  fields.sinking = current.sinking ?? [];
-  fields.log = current.log ?? [];
   return fields;
 }
 
@@ -70,6 +108,7 @@ export function buildStateDelta(
   current: StateMessage,
   seq: number,
   includeFleet = false,
+  includeFleetRoutes = true,
 ): StateDelta {
   const previousShips = new Map(previous.ships.map((ship) => [ship[0], ship]));
   const ships: ShipSnapshot[] = [];
@@ -89,7 +128,7 @@ export function buildStateDelta(
     w: current.w,
     originX: first ? first[2] : 0,
     originY: first ? first[3] : 0,
-    fields: changedFields(previous, current, includeFleet),
+    fields: changedFields(previous, current, includeFleet, includeFleetRoutes),
     ships,
     removed,
   };
@@ -108,6 +147,44 @@ function readString(view: DataView, bytes: Uint8Array, offset: number): { value:
   return { value, offset: offset + 1 + length };
 }
 
+/** Unsigned LEB128. Quantised numbers below 128 take one byte. */
+function writeVarint(bytes: Uint8Array, offset: number, value: number): number {
+  let rest = Math.max(0, Math.floor(value));
+  while (rest >= 0x80) {
+    bytes[offset] = (rest & 0x7f) | 0x80;
+    offset += 1;
+    rest = Math.floor(rest / 128);
+  }
+  bytes[offset] = rest;
+  return offset + 1;
+}
+
+function readVarint(bytes: Uint8Array, offset: number): { value: number; offset: number } {
+  let value = 0;
+  let scale = 1;
+  for (let count = 0; count < 8; count += 1) {
+    const byte = bytes[offset + count] ?? 0;
+    value += (byte & 0x7f) * scale;
+    if ((byte & 0x80) === 0) return { value, offset: offset + count + 1 };
+    scale *= 128;
+  }
+  return { value, offset: offset + 8 };
+}
+
+/** Zigzag maps small negative deltas to small positive varints. */
+function writeSigned(bytes: Uint8Array, offset: number, value: number): number {
+  const rounded = Math.round(value);
+  return writeVarint(bytes, offset, rounded < 0 ? -rounded * 2 - 1 : rounded * 2);
+}
+
+function readSigned(bytes: Uint8Array, offset: number): { value: number; offset: number } {
+  const raw = readVarint(bytes, offset);
+  return {
+    value: raw.value % 2 === 0 ? raw.value / 2 : -(raw.value + 1) / 2,
+    offset: raw.offset,
+  };
+}
+
 export function encodeStateDelta(delta: StateDelta): ArrayBuffer {
   const header = encoder.encode(JSON.stringify({
     t: delta.t,
@@ -121,8 +198,8 @@ export function encodeStateDelta(delta: StateDelta): ArrayBuffer {
     fields: delta.fields,
     removed: delta.removed,
   }));
-  // Estimate a safe upper bound: header plus roughly 40 bytes per ship.
-  const buffer = new ArrayBuffer(10 + header.length + delta.ships.length * 96);
+  // Safe upper bound: header plus the longest names and eight varints.
+  const buffer = new ArrayBuffer(10 + header.length + delta.ships.length * 160);
   const view = new DataView(buffer);
   const bytes = new Uint8Array(buffer);
   view.setUint32(0, MAGIC, true);
@@ -130,18 +207,26 @@ export function encodeStateDelta(delta: StateDelta): ArrayBuffer {
   view.setUint16(8, delta.ships.length, true);
   bytes.set(header, 10);
   let offset = 10 + header.length;
+  let previousX = delta.originX;
+  let previousY = delta.originY;
+  let previousHeading = 0;
+  let previousSpeed = 0;
   for (const ship of delta.ships) {
     offset = writeString(view, bytes, offset, ship[0]);
     offset = writeString(view, bytes, offset, ship[1]);
-    view.setInt32(offset, Math.round((ship[2] - delta.originX) * 1000), true);
-    offset += 4;
-    view.setInt32(offset, Math.round((ship[3] - delta.originY) * 1000), true);
-    offset += 4;
+    const x = Math.round(ship[2] * 1000);
+    const y = Math.round(ship[3] * 1000);
+    offset = writeSigned(bytes, offset, x - previousX);
+    offset = writeSigned(bytes, offset, y - previousY);
+    previousX = x;
+    previousY = y;
     const heading = ((Math.round(ship[4] * 10) % 3600) + 3600) % 3600;
-    view.setUint16(offset, heading, true);
-    offset += 2;
-    view.setUint16(offset, Math.max(0, Math.min(65535, Math.round(ship[5] * 10))), true);
-    offset += 2;
+    const headingDelta = ((heading - previousHeading + 5400) % 3600) - 1800;
+    offset = writeSigned(bytes, offset, headingDelta);
+    previousHeading = heading;
+    const speed = Math.max(0, Math.min(65535, Math.round(ship[5] * 10)));
+    offset = writeSigned(bytes, offset, speed - previousSpeed);
+    previousSpeed = speed;
     offset = writeString(view, bytes, offset, ship[6]);
     const docked = typeof ship[7] === "string";
     const waiting = typeof ship[8] === "string";
@@ -164,19 +249,31 @@ export function decodeStateDelta(buffer: ArrayBuffer): StateDelta {
   const header = JSON.parse(decoder.decode(bytes.subarray(10, 10 + headerLength))) as Omit<StateDelta, "ships">;
   let offset = 10 + headerLength;
   const ships: ShipSnapshot[] = [];
+  let previousX = header.originX;
+  let previousY = header.originY;
+  let previousHeading = 0;
+  let previousSpeed = 0;
   for (let index = 0; index < count; index += 1) {
     const id = readString(view, bytes, offset);
     offset = id.offset;
     const classId = readString(view, bytes, offset);
     offset = classId.offset;
-    const x = header.originX + view.getInt32(offset, true) / 1000;
-    offset += 4;
-    const y = header.originY + view.getInt32(offset, true) / 1000;
-    offset += 4;
-    const heading = view.getUint16(offset, true) / 10;
-    offset += 2;
-    const speed = view.getUint16(offset, true) / 10;
-    offset += 2;
+    const xDelta = readSigned(bytes, offset);
+    offset = xDelta.offset;
+    previousX += xDelta.value;
+    const yDelta = readSigned(bytes, offset);
+    offset = yDelta.offset;
+    previousY += yDelta.value;
+    const x = previousX / 1000;
+    const y = previousY / 1000;
+    const headingDelta = readSigned(bytes, offset);
+    offset = headingDelta.offset;
+    previousHeading = ((previousHeading + headingDelta.value) % 3600 + 3600) % 3600;
+    const heading = previousHeading / 10;
+    const speedDelta = readSigned(bytes, offset);
+    offset = speedDelta.offset;
+    previousSpeed = Math.max(0, Math.min(65535, previousSpeed + speedDelta.value));
+    const speed = previousSpeed / 10;
     const navy = readString(view, bytes, offset);
     offset = navy.offset;
     const flags = view.getUint8(offset);
@@ -219,6 +316,22 @@ export function applyStateDelta(base: StateMessage, delta: StateDelta): StateMes
     w: delta.w,
     seq: delta.seq,
   };
+  const fleetPatch = delta.fields.fleetPatch;
+  if (Array.isArray(fleetPatch)) {
+    const fleet = new Map((base.fleet ?? []).map((ship) => [ship.id, ship]));
+    for (const patch of fleetPatch) {
+      if (!patch || typeof patch !== "object" || typeof patch.id !== "string") continue;
+      const old = fleet.get(patch.id);
+      fleet.set(patch.id, old ? { ...old, ...patch } : patch as typeof old);
+    }
+    const removed = delta.fields.fleetRemoved;
+    if (Array.isArray(removed)) {
+      for (const id of removed) if (typeof id === "string") fleet.delete(id);
+    }
+    next.fleet = [...fleet.values()];
+  }
+  delete (next as unknown as Record<string, unknown>).fleetPatch;
+  delete (next as unknown as Record<string, unknown>).fleetRemoved;
   if ("out" in delta.fields && delta.fields.out === undefined) delete next.out;
   if ("go" in delta.fields && delta.fields.go === undefined) delete next.go;
   // The full state omits empty optional lists. Keep the delta result identical

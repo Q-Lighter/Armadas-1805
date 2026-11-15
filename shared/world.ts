@@ -325,6 +325,37 @@ export interface PortCrewPool {
   capacity: number;
 }
 
+export type ScenarioOutcome = "ongoing" | "won" | "lost" | "ended";
+
+/** 3J-b: test-only scoreboard and report state for one scenario run. */
+export interface TestScenarioState {
+  id: string;
+  name: string;
+  seed: string;
+  startedRealMs: number;
+  myStart: number;
+  enemyStart: number;
+  enemyOwners: string[];
+  outcome: ScenarioOutcome;
+  /** 3J-b: a port-capture scenario wins when this port changes hands. */
+  objectivePortId?: string;
+  resultId?: string;
+}
+
+export interface ScenarioStatus {
+  id: string;
+  name: string;
+  seed: string;
+  elapsedRealMs: number;
+  myShips: number;
+  myLosses: number;
+  theirShips: number;
+  theirLosses: number;
+  outcome: ScenarioOutcome;
+  /** True once End scenario recorded the result. */
+  ended: boolean;
+}
+
 export interface World {
   /** Number of world steps taken. */
   tick: number;
@@ -413,6 +444,8 @@ export interface World {
   sessionNotes: SessionNote[];
   /** 3J-a: when the previous performance sample was taken. */
   lastPerfSampleRealMs: number;
+  /** 3J-b: the scenario currently running in a test/dev room. */
+  testScenario?: TestScenarioState;
   /** Shared storage at every capturable port, all goods together. */
   portStorage: Map<string, GoodsAmounts>;
   /** Resource stock held by NPC merchants, by port. */
@@ -1070,6 +1103,7 @@ export function createWorld(roomCode = "main", options: WorldOptions = {}): Worl
     recorder: [],
     sessionNotes: [],
     lastPerfSampleRealMs: 0,
+    testScenario: undefined,
     portStorage: startingPortStorage(),
     npcStocks: startingNpcStocks(),
     priceState: createPriceState(priceSeed),
@@ -2312,6 +2346,120 @@ export function resetTestRoom(world: World): World {
   return fresh;
 }
 
+/** 3J-b: count live hulls for the scoreboard. */
+function liveShipCount(world: World, ownerId: string): number {
+  return shipsForOwner(world, ownerId)
+    .filter((ship) => !ship.abandoned && ship.damage.hull > 0)
+    .length;
+}
+
+/** 3J-b: the scoreboard view for one player, or null outside a scenario. */
+export function scenarioStatusFor(world: World, playerId: string): ScenarioStatus | null {
+  const state = world.testScenario;
+  if (!state || world.kind === "normal") return null;
+  const myShips = liveShipCount(world, playerId);
+  const theirShips = state.enemyOwners.reduce((sum, owner) => sum + liveShipCount(world, owner), 0);
+  let outcome = state.outcome;
+  if (outcome === "ongoing") {
+    if (myShips === 0) outcome = "lost";
+    else if (state.objectivePortId &&
+      world.portBattles.get(state.objectivePortId)?.ownerId === playerId) outcome = "won";
+    else if (state.enemyStart > 0 && theirShips === 0) outcome = "won";
+  }
+  return {
+    id: state.id,
+    name: state.name,
+    seed: state.seed,
+    elapsedRealMs: Math.max(0, Date.now() - state.startedRealMs),
+    myShips,
+    myLosses: Math.max(0, state.myStart - myShips),
+    theirShips,
+    theirLosses: Math.max(0, state.enemyStart - theirShips),
+    outcome,
+    ended: Boolean(state.resultId),
+  };
+}
+
+/** 3J-b: start recording a run after its setup has been applied. */
+export function beginScenarioTracking(
+  world: World,
+  playerId: string,
+  meta: {
+    id: string;
+    name: string;
+    seed: string;
+    enemyOwners: string[];
+    objectivePortId?: string;
+  },
+): ScenarioStatus {
+  const status = {
+    id: meta.id,
+    name: meta.name,
+    seed: meta.seed,
+    startedRealMs: Date.now(),
+    myStart: liveShipCount(world, playerId),
+    enemyStart: meta.enemyOwners.reduce((sum, owner) => sum + liveShipCount(world, owner), 0),
+    enemyOwners: meta.enemyOwners,
+    objectivePortId: meta.objectivePortId,
+    outcome: "ongoing" as ScenarioOutcome,
+  };
+  world.testScenario = status;
+  recordWorldEvent(world, "scenario", `started ${meta.name} (seed ${meta.seed})`, {
+    privateTo: playerId,
+    data: { scenario: meta.id, seed: meta.seed },
+  });
+  return scenarioStatusFor(world, playerId)!;
+}
+
+/** 3J-b: record the final result once, then leave the run for rating. */
+export function endTestScenario(world: World, playerId: string): ScenarioStatus | null {
+  const state = world.testScenario;
+  const status = scenarioStatusFor(world, playerId);
+  if (!state || !status) return null;
+  const outcome: ScenarioOutcome = status.outcome === "ongoing" ? "ended" : status.outcome;
+  state.outcome = outcome;
+  const resultId = `scenario-${Date.now()}-${world.nextCombatEventId++}`;
+  state.resultId = resultId;
+  const finalStatus = scenarioStatusFor(world, playerId)!;
+  recordWorldEvent(world, "scenarioResult",
+    `${state.name}: ${outcome}, ${(finalStatus.elapsedRealMs / 1000).toFixed(1)}s, ` +
+    `my losses ${finalStatus.myLosses}, their losses ${finalStatus.theirLosses}`,
+    {
+      privateTo: playerId,
+      data: {
+        resultId,
+        scenario: state.id,
+        seed: state.seed,
+        outcome,
+        elapsedMs: finalStatus.elapsedRealMs,
+        myLosses: finalStatus.myLosses,
+        theirLosses: finalStatus.theirLosses,
+        rating: "",
+        note: "",
+      },
+    });
+  return finalStatus;
+}
+
+/** 3J-b: attach Good/OK/Bad and the optional one-line note to the result. */
+export function rateTestScenario(
+  world: World,
+  playerId: string,
+  rating: unknown,
+  note: unknown,
+): boolean {
+  const state = world.testScenario;
+  if (!state?.resultId) return false;
+  if (rating !== "good" && rating !== "ok" && rating !== "bad") return false;
+  const text = typeof note === "string" ? note.replace(/\s+/g, " ").trim().slice(0, 160) : "";
+  recordWorldEvent(world, "scenarioRating",
+    `${state.name}: ${rating}${text ? ` - ${text}` : ""}`, {
+      privateTo: playerId,
+      data: { resultId: state.resultId, scenario: state.id, rating, note: text },
+    });
+  return true;
+}
+
 /** Remove a human player's fleet, chart and waiting messages. */
 /** A new socket gets the player's whole discovered record, then changes. */
 export function requestChartResume(world: World, playerId: string): boolean {
@@ -2931,8 +3079,10 @@ export function sessionReportFor(
     height,
     events,
     notes,
-    scenario: typeof meta.scenario === "string" ? meta.scenario : null,
-    seed,
+    scenario: typeof meta.scenario === "string"
+      ? meta.scenario
+      : world.testScenario?.name ?? null,
+    seed: seed ?? world.testScenario?.seed ?? null,
   });
 }
 
@@ -5324,6 +5474,7 @@ function resolveCombat(world: World): void {
           shots: result.gunsFired,
           hits: result.hits,
           misses: result.misses,
+          reloadSeconds: Math.max(0, own.reloadReadyRealSeconds - now),
           hull: result.damageByArea.hull ?? 0,
           sails: result.damageByArea.sails ?? 0,
           masts: result.damageByArea.masts ?? 0,
@@ -5448,14 +5599,18 @@ function resolveCombat(world: World): void {
     }
     if (result.sunk) {
       sunk.add(target.id);
+      const fightId = `${own.id}>${target.id}`;
+      const started = [...world.recorder].reverse().find((event) =>
+        event.kind === "battleStart" && event.data?.fightId === fightId);
+      const durationMs = started ? Math.max(0, Date.now() - started.realMs) : 0;
       recordWorldEvent(world, "battleEnd",
-        `${target.classId} sunk after ${result.hits} hits`,
+        `${target.classId} sunk after ${result.hits} hits in ${(durationMs / 1000).toFixed(1)}s`,
         {
           audience: playersSeeingPoint(world, target.x, target.y, [
             plan.ownerId,
             ...(targetEntry ? [targetEntry.ownerId] : []),
           ]),
-          data: { fightId: `${own.id}>${target.id}`, result: "sunk" },
+          data: { fightId, result: "sunk", durationMs, myClass: own.classId, theirClass: target.classId },
         });
       pushCombatEvent(world, { kind: "sunk", x: target.x, y: target.y, shipId: target.id });
       pushBattleLog(world, plan.ownerId, `Your ${own.name} sank the ${target.name}.`);
@@ -6810,6 +6965,11 @@ function isNarrowChannel(
   const landLeft = knownLand(x + Math.sin(left) * halfWidth, y - Math.cos(left) * halfWidth);
   const landRight = knownLand(x + Math.sin(right) * halfWidth, y - Math.cos(right) * halfWidth);
   return landLeft && landRight;
+}
+
+/** 3J-b test helper: is this point in a channel with land on both beams? */
+export function isTestChannelAt(x: number, y: number, headingRad = 0): boolean {
+  return isNarrowChannel(x, y, headingRad, isLandAt);
 }
 
 /** True when land is within a short distance of a candidate point. */

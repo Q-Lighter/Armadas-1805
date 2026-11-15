@@ -2833,6 +2833,69 @@ body.game {
   background: rgba(255, 250, 235, 0.72);
 }
 .test-report-text[hidden] { display: none; }
+.scenario-tools {
+  margin-top: 12px;
+  padding-top: 10px;
+  border-top: 1px solid rgba(80, 55, 30, 0.35);
+}
+.scenario-tools h3 { margin: 0 0 4px; font-size: 1rem; }
+.scenario-list {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  max-height: 280px;
+  overflow: auto;
+  overscroll-behavior: contain;
+  padding: 2px;
+}
+.scenario-list .btn {
+  min-height: 44px;
+  text-align: left;
+  white-space: normal;
+  line-height: 1.2;
+}
+.scenario-scoreboard {
+  margin-top: 10px;
+  padding: 9px;
+  border: 1px solid rgba(80, 55, 30, 0.45);
+  background: rgba(255, 250, 235, 0.82);
+}
+.scenario-scoreboard[hidden] { display: none; }
+.scenario-name { margin: 0 0 6px; font-weight: 700; }
+.scenario-stats {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 4px 8px;
+  margin-bottom: 9px;
+  font-size: 0.86rem;
+}
+.scenario-stats b { display: block; font-size: 1rem; }
+.scenario-scoreboard .btn { min-height: 44px; width: 100%; }
+.scenario-rating {
+  position: fixed;
+  z-index: 61;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  width: min(420px, calc(100vw - 24px));
+  max-height: calc(100vh - 32px);
+  overflow: auto;
+  padding: 14px;
+}
+.scenario-rating[hidden] { display: none; }
+.scenario-rating-result { margin: 0 0 10px; font-weight: 600; }
+.scenario-rating-buttons {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+  margin-bottom: 12px;
+}
+.scenario-rating-buttons .btn,
+.scenario-rating .btn { min-height: 44px; }
+.scenario-rating .btn { width: 100%; }
+@media (max-width: 640px) {
+  .scenario-list { grid-template-columns: 1fr; max-height: 240px; }
+}
 .note-fab {
   position: fixed;
   z-index: 23;

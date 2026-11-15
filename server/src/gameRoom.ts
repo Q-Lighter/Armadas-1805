@@ -16,6 +16,9 @@ import {
   recordWorldEvent,
   resignPlayer,
   sessionReportFor,
+  scenarioStatusFor,
+  endTestScenario,
+  rateTestScenario,
   setPlayerName,
   sinkPlayerFlagship,
   boardingOddsFor,
@@ -105,6 +108,7 @@ import { RoomLoop } from "@naval/shared/room-loop";
 import { GhostCleanup, PlayerSessions } from "@naval/shared/player-sessions";
 import { BlockSendBudget } from "@naval/shared/block-batch";
 import { findPortByName, type PlacedPort } from "@naval/shared/ports";
+import { startTestScenario } from "@naval/shared/scenarios";
 import { parseNavy, type NavyId } from "@naval/shared/navies";
 import { chooseJoinNavy, chooseTeamNavy, parseDummyBehaviour, type DummyBehaviour } from "@naval/shared/test-setup";
 import { parseShipClass } from "@naval/shared/ship-rules";
@@ -122,6 +126,7 @@ export class GameRoom {
   private lastSnapshotMs = 0;
   private lastStepMs = 0;
   private sentBytesSincePerf = 0;
+  private lastScenarioStatusMs = 0;
   private readonly metrics = new LoadMetrics();
   private readonly streams = new Map<string, {
     seq: number;
@@ -436,6 +441,7 @@ export class GameRoom {
     this.lastStepMs = performance.now() - stepStarted;
     this.metrics.noteWorldStep(this.lastStepMs, now);
     this.samplePerformance(now);
+    this.sendScenarioStatus(now);
     this.ticks += 1;
     const regular = this.ticks % broadcastEvery === 0;
     const battleEvery = Math.max(
@@ -512,6 +518,21 @@ export class GameRoom {
           JSON.stringify(update).length,
           now,
         );
+      }
+    }
+  }
+
+  /** 3J-b: one scoreboard update per second while a scenario runs. */
+  private sendScenarioStatus(now: number): void {
+    if (!this.world.testScenario || now - this.lastScenarioStatusMs < 1_000) return;
+    this.lastScenarioStatusMs = now;
+    for (const [playerId, socket] of this.sockets.entries()) {
+      const status = scenarioStatusFor(this.world, playerId);
+      if (!status) continue;
+      try {
+        socket.send(JSON.stringify({ t: "scenarioStatus", status }));
+      } catch {
+        // A dead socket is handled by the state sender.
       }
     }
   }
@@ -708,6 +729,8 @@ export class GameRoom {
       seed?: unknown;
       scenario?: unknown;
       where?: unknown;
+      rating?: unknown;
+      note?: unknown;
     };
 
     if (order.t === "ping") {
@@ -740,6 +763,50 @@ export class GameRoom {
         socket?.send(JSON.stringify({ t: "ack", id: order.id, ok, text }));
       }
     };
+    if (order.t === "scenario") {
+      if (!testOnly) {
+        ack(false, "Test tools are removed in normal rooms.");
+        return;
+      }
+      const result = startTestScenario(this.world, playerId, order.scenario);
+      if (result.error || !result.status) {
+        ack(false, result.error ?? "Scenario could not start.");
+        return;
+      }
+      this.world = result.world;
+      this.ghosts.clear();
+      for (const stream of this.streams.values()) stream.forceFull = true;
+      socket?.send(JSON.stringify({ t: "scenarioStatus", status: result.status }));
+      recordWorldEvent(this.world, "order", `scenario: accepted`, {
+        privateTo: playerId,
+        data: { type: "scenario", accepted: true, reason: "" },
+      });
+      ack(true);
+      return;
+    }
+    if (order.t === "endScenario") {
+      if (!testOnly) {
+        ack(false, "Test tools are removed in normal rooms.");
+        return;
+      }
+      const status = endTestScenario(this.world, playerId);
+      if (!status) {
+        ack(false, "No scenario is running.");
+        return;
+      }
+      socket?.send(JSON.stringify({ t: "scenarioStatus", status }));
+      ack(true);
+      return;
+    }
+    if (order.t === "scenarioRating") {
+      if (!testOnly) {
+        ack(false, "Test tools are removed in normal rooms.");
+        return;
+      }
+      const rated = rateTestScenario(this.world, playerId, order.rating, order.note);
+      ack(rated, rated ? undefined : "End the scenario before rating it.");
+      return;
+    }
     if (order.t === "sessionReport") {
       if (!testOnly) {
         ack(false, "Test tools are removed in normal rooms.");

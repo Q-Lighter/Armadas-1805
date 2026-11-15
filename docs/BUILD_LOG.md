@@ -3568,3 +3568,51 @@ rules, and print the balance report and simulated first hour.
 
 - Scenario results are empty until Part B; the section is already reserved.
 - The client frame time is recorded as unknown (no reliable source yet).
+
+## Session 3J-b: scenario launcher
+
+**Date:** 2026-11-15
+**Branch:** main
+
+### What was built
+
+- Seventeen repeatable playtest scenarios in `shared/scenarios.ts`, each with a
+  fixed seed and a first Reset room through the existing helper. Set-ups use
+  the existing test helpers and direct test-only ship placement: duels at
+  600 m, 3 v 3 and 10 v 10 fleets, small and large ports with a 30 s capture
+  hold, boarding at 30% crew, surrender/run dummies, night fire-ship attacks
+  with lights out and the two anchored-fleet stances, merchant and whaler
+  traffic, NPC-port escort and privateer starts, a lee shore and a channel
+  found by scanning the real land mask, and the two-device frigate start.
+- Server orders `scenario`, `endScenario` and `scenarioRating`, with a
+  one-second scoreboard update while a run is active. End records duration,
+  outcome and losses in the recorder, then the client asks Good/OK/Bad and an
+  optional one-line note. Results and ratings appear in the session report,
+  including the scenario seed.
+- Developer sheet: a scrolling 17-button launcher, a compact scoreboard
+  (elapsed real time, my losses, their losses, won/lost/ongoing), an End
+  scenario button and a rating sheet. Scenario 6 switches the Performance
+  panel on; scenario 17 points at the existing second-device invite link.
+- `tests/scenarios-3j.test.ts`: all 17 set-ups, exact duel classes and 600 m,
+  fleet composition, ports and capture hold, boarding/morale/night/NPC states,
+  coast and channel, two-player placement, real-loop stepping and clean reset,
+  scoreboard losses to report, rating rules, normal-room refusal and launcher
+  fit at all five review viewports.
+
+### Checks
+
+- `npm test`: **563/563 passing** (serial command inside `npm test`).
+- `npm run build`: passed (`Build OK -> dist/index.html`).
+- No browser is available. Click-through, real clipboard/download and pixel
+  layout were not tested; the launcher, scoreboard and rating sheet were
+  checked as markup, CSS and a browser-free fit plan.
+
+### Broken or unfinished
+
+- Scenario 17 places one frigate per player already in the room. A second
+  device that has not joined yet gets its normal start ship until it joins.
+- The "anchored" fleets in scenarios 11/12 use the existing anchored-fleet
+  helper (hove to, stopped, lights off), not a literal dropped anchor.
+- The channel in scenario 16 is found by scanning the existing land mask for a
+  2 km gap. If a map has no such gap near the start, the fallback keeps the
+  lee-shore ship only.

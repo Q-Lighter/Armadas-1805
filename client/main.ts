@@ -43,6 +43,7 @@ import type {
   LastSeenSnapshot,
   NpcContactSnapshot,
   OrderLineSnapshot,
+  ScenarioStatus,
   OwnShipSnapshot,
   ShipSnapshot,
   StateMessage,
@@ -78,6 +79,7 @@ import {
 } from "@naval/shared/screen-layout";
 import { buildBlockCommands, findChartSuspects } from "@naval/shared/chart-paint";
 import { researchScreenView, shipUpgradeRows } from "@naval/shared/research-view";
+import { SCENARIOS, type ScenarioDefinition } from "@naval/shared/scenarios";
 import { isLandAt } from "@naval/shared/land";
 import { cameraScale, screenToWorld, worldToScreen } from "@naval/shared/camera";
 import { buildDiscoveredOutline, type OutlineRing } from "@naval/shared/discovered-outline";
@@ -1064,6 +1066,18 @@ async function start(): Promise<void> {
   const testClearRecorder = element<HTMLButtonElement>("test-clear-recorder");
   const testNoteButton = element<HTMLButtonElement>("test-note");
   const testNoteToggle = element<HTMLInputElement>("test-note-toggle");
+  const scenarioList = element<HTMLElement>("scenario-list");
+  const scenarioScoreboard = element<HTMLElement>("scenario-scoreboard");
+  const scenarioName = element<HTMLElement>("scenario-name");
+  const scenarioElapsed = element<HTMLElement>("scenario-elapsed");
+  const scenarioMyLosses = element<HTMLElement>("scenario-my-losses");
+  const scenarioTheirLosses = element<HTMLElement>("scenario-their-losses");
+  const scenarioOutcome = element<HTMLElement>("scenario-outcome");
+  const scenarioEnd = element<HTMLButtonElement>("scenario-end");
+  const scenarioRating = element<HTMLElement>("scenario-rating");
+  const scenarioRatingResult = element<HTMLElement>("scenario-rating-result");
+  const scenarioRatingNote = element<HTMLInputElement>("scenario-rating-note");
+  const scenarioRatingCancel = element<HTMLButtonElement>("scenario-rating-cancel");
   const noteFab = element<HTMLButtonElement>("note-fab");
   const noteSheet = element<HTMLElement>("note-sheet");
   const noteForm = element<HTMLFormElement>("note-form");
@@ -6735,6 +6749,13 @@ async function start(): Promise<void> {
       }
       return;
     }
+    if (type === "scenarioStatus") {
+      const status = (message as { status?: unknown }).status;
+      if (status && typeof status === "object") {
+        renderScenario(status as ScenarioStatus);
+      }
+      return;
+    }
     if (type === "sessionReport") {
       const text = (message as { text?: unknown }).text;
       if (typeof text === "string") {
@@ -8807,6 +8828,105 @@ async function start(): Promise<void> {
   });
   testNoteToggle.addEventListener("change", refreshNoteFab);
   refreshNoteFab();
+
+  let activeScenario: ScenarioDefinition | null = null;
+  let lastScenarioStatus: ScenarioStatus | null = null;
+  let ratingPending = false;
+
+  function scenarioDefinition(id: string): ScenarioDefinition | null {
+    return SCENARIOS.find((scenario) => scenario.id === id) ?? null;
+  }
+
+  function formatElapsed(ms: number): string {
+    const total = Math.max(0, Math.round(ms / 100) / 10);
+    if (total < 60) return `${total.toFixed(1)}s`;
+    return `${Math.floor(total / 60)}m ${(total % 60).toFixed(0)}s`;
+  }
+
+  function renderScenario(status: ScenarioStatus | null): void {
+    lastScenarioStatus = status;
+    if (!status) {
+      scenarioScoreboard.hidden = true;
+      return;
+    }
+    activeScenario = scenarioDefinition(status.id);
+    scenarioName.textContent = `${status.name} — seed ${status.seed}`;
+    scenarioElapsed.textContent = formatElapsed(status.elapsedRealMs);
+    scenarioMyLosses.textContent = String(status.myLosses);
+    scenarioTheirLosses.textContent = String(status.theirLosses);
+    scenarioOutcome.textContent = status.outcome;
+    scenarioScoreboard.hidden = false;
+    scenarioEnd.textContent = status.ended ? "Ended — rate it" : "End scenario";
+    scenarioEnd.disabled = status.ended;
+    if (status.ended && ratingPending) {
+      ratingPending = false;
+      openScenarioRating(status);
+    }
+  }
+
+  function openScenarioRating(status: ScenarioStatus): void {
+    scenarioRatingResult.textContent =
+      `${status.name}: ${status.outcome}, ${formatElapsed(status.elapsedRealMs)}, ` +
+      `my losses ${status.myLosses}, their losses ${status.theirLosses}.`;
+    scenarioRatingNote.value = "";
+    scenarioRating.hidden = false;
+    scheduleScreenLayout();
+  }
+
+  function closeScenarioRating(): void {
+    scenarioRating.hidden = true;
+    scheduleScreenLayout();
+  }
+
+  function startScenario(definition: ScenarioDefinition): void {
+    if (!sendCommand({ t: "scenario", scenario: definition.id })) return;
+    activeScenario = definition;
+    ratingPending = false;
+    scenarioScoreboard.hidden = false;
+    scenarioName.textContent = `${definition.name} — building…`;
+    scenarioElapsed.textContent = "0.0s";
+    scenarioMyLosses.textContent = "0";
+    scenarioTheirLosses.textContent = "0";
+    scenarioOutcome.textContent = "ongoing";
+    scenarioEnd.disabled = false;
+    scenarioEnd.textContent = "End scenario";
+    if (definition.performance) setPerfVisible(true);
+    if (definition.twoPlayer) {
+      refreshTestInvite();
+      showNotice("Scenario 17: copy the invite link for the second device.");
+    }
+  }
+
+  for (const definition of SCENARIOS) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "btn";
+    button.textContent = definition.name;
+    button.title = definition.summary;
+    button.dataset.scenario = definition.id;
+    button.addEventListener("click", () => startScenario(definition));
+    scenarioList.appendChild(button);
+  }
+  scenarioEnd.addEventListener("click", () => {
+    if (!lastScenarioStatus || lastScenarioStatus.ended) return;
+    ratingPending = true;
+    sendCommand({ t: "endScenario" });
+  });
+  scenarioRatingCancel.addEventListener("click", closeScenarioRating);
+  for (const button of scenarioRating.querySelectorAll<HTMLButtonElement>("[data-rating]")) {
+    button.addEventListener("click", () => {
+      const rating = button.dataset.rating;
+      if (!rating) return;
+      sendCommand({
+        t: "scenarioRating",
+        rating,
+        note: scenarioRatingNote.value,
+      });
+      closeScenarioRating();
+      showNotice(`Scenario rated ${rating}.`);
+    });
+  }
+
   testResetRoom.addEventListener("click", () => {
     sendCommand({ t: "resetRoom" });
     showNotice("Reset room requested.");

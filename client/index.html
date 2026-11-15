@@ -569,6 +569,21 @@
         <button class="btn" id="debug-log-toggle" type="button" aria-expanded="false">Debug log</button>
         <pre class="debug-log" id="debug-log-lines" hidden></pre>
       </div>
+      <div class="scenario-tools">
+        <h3>Scenarios</h3>
+        <p class="test-report-note">Test tools, removed before release. Each button resets the room first.</p>
+        <div class="scenario-list" id="scenario-list"></div>
+        <div class="scenario-scoreboard" id="scenario-scoreboard" hidden>
+          <p class="scenario-name" id="scenario-name"></p>
+          <div class="scenario-stats">
+            <span>Elapsed <b id="scenario-elapsed">0.0s</b></span>
+            <span>My losses <b id="scenario-my-losses">0</b></span>
+            <span>Their losses <b id="scenario-their-losses">0</b></span>
+            <span>Outcome <b id="scenario-outcome">ongoing</b></span>
+          </div>
+          <button class="btn btn-seal" id="scenario-end" type="button">End scenario</button>
+        </div>
+      </div>
       <div class="test-invite">
         <h3>Invite second device</h3>
         <p>Same room, same port and ship, different navy.</p>
@@ -576,6 +591,25 @@
         <button class="btn btn-seal" id="test-copy-link" type="button">Copy link</button>
         <p class="test-invite-note">No QR code: the game has no QR library and I did not add a dependency for one.</p>
       </div>
+    </section>
+
+    <section class="scenario-rating paper" id="scenario-rating" role="dialog" aria-labelledby="scenario-rating-title" hidden>
+      <div class="panel-head">
+        <div>
+          <p class="kicker">Test tools, removed before release</p>
+          <h2 id="scenario-rating-title">Rate this scenario</h2>
+        </div>
+      </div>
+      <p class="scenario-rating-result" id="scenario-rating-result"></p>
+      <div class="scenario-rating-buttons">
+        <button class="btn btn-seal" data-rating="good" type="button">Good</button>
+        <button class="btn" data-rating="ok" type="button">OK</button>
+        <button class="btn" data-rating="bad" type="button">Bad</button>
+      </div>
+      <label class="note-label">Optional one-line note
+        <input id="scenario-rating-note" type="text" maxlength="160" autocomplete="off" />
+      </label>
+      <button class="btn" id="scenario-rating-cancel" type="button">Skip rating</button>
     </section>
 
     <button class="note-fab paper" id="note-fab" type="button" aria-label="Add a session note" hidden>N</button>

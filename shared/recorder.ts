@@ -230,8 +230,12 @@ export function buildSessionReport(input: SessionReportInput): string {
   if (results.length === 0) lines.push("none");
   for (const event of results) {
     lines.push(short(event.text, 160));
-    const rating = stringValue(event, "rating");
-    if (rating) lines.push(`  rating: ${rating}`);
+    const resultId = stringValue(event, "resultId");
+    const rated = events.find((candidate) =>
+      candidate.kind === "scenarioRating" && stringValue(candidate, "resultId") === resultId);
+    const rating = stringValue(rated ?? event, "rating");
+    const note = stringValue(rated ?? event, "note");
+    if (rating) lines.push(`  rating: ${rating}${note ? ` - ${short(note, 100)}` : ""}`);
   }
 
   section(lines, "FIGHTS");

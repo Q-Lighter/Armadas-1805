@@ -34,6 +34,10 @@
       "types": "./dist/recorder.d.ts",
       "default": "./dist/recorder.js"
     },
+    "./scenarios": {
+      "types": "./dist/scenarios.d.ts",
+      "default": "./dist/scenarios.js"
+    },
     "./land": {
       "types": "./dist/land.d.ts",
       "default": "./dist/land.js"

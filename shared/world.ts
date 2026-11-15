@@ -446,6 +446,8 @@ export interface World {
   lastPerfSampleRealMs: number;
   /** 3J-b: the scenario currently running in a test/dev room. */
   testScenario?: TestScenarioState;
+  /** 3J-a: last recorded manoeuvre signature, so only changes are logged. */
+  lastManoeuvre: Map<string, string>;
   /** Shared storage at every capturable port, all goods together. */
   portStorage: Map<string, GoodsAmounts>;
   /** Resource stock held by NPC merchants, by port. */
@@ -1104,6 +1106,7 @@ export function createWorld(roomCode = "main", options: WorldOptions = {}): Worl
     sessionNotes: [],
     lastPerfSampleRealMs: 0,
     testScenario: undefined,
+    lastManoeuvre: new Map(),
     portStorage: startingPortStorage(),
     npcStocks: startingNpcStocks(),
     priceState: createPriceState(priceSeed),
@@ -2952,6 +2955,32 @@ export function recordWorldEvent(
   });
 }
 
+/** 3J-a: count each manoeuvre phase once, without a per-tick event cost. */
+function recordManoeuvreChanges(world: World): void {
+  if (world.kind === "normal") return;
+  for (const { ownerId, ship } of allShips(world)) {
+    const signature = ship.manoeuvre
+      ? `${ship.manoeuvre.kind}:${ship.manoeuvre.phase}:${ship.manoeuvre.missed ? "missed" : ""}`
+      : "";
+    if (signature === (world.lastManoeuvre.get(ship.id) ?? "")) continue;
+    if (signature) world.lastManoeuvre.set(ship.id, signature);
+    else {
+      world.lastManoeuvre.delete(ship.id);
+      continue;
+    }
+    recordWorldEvent(world, "sailing",
+      `${ship.classId}: ${ship.manoeuvre!.kind} ${ship.manoeuvre!.phase}`, {
+        audience: playersSeeingPoint(world, ship.x, ship.y, [ownerId]),
+        data: {
+          action: `manoeuvre:${ship.manoeuvre!.kind}`,
+          kind: ship.manoeuvre!.kind,
+          phase: ship.manoeuvre!.phase,
+          missed: ship.manoeuvre!.missed,
+        },
+      });
+  }
+}
+
 /** Players with a ship whose own sight reaches this point. */
 export function playersSeeingPoint(
   world: World,
@@ -3591,10 +3620,17 @@ export function startShipRun(world: World, ownerId: string, ship: Ship): boolean
   ship.route = null;
   setRunSteering(world, ship);
   pushBattleLog(world, ownerId, `Your ${ship.name} is running.`);
-  recordWorldEvent(world, "run", `${ship.classId} attempted to run`, {
-    privateTo: ownerId,
-    data: { shipClass: ship.classId, enemies: enemies.size },
-  });
+  if (ship.isNpc) {
+    recordWorldEvent(world, "npc", `${ship.npcKind ?? "npc"} fled`, {
+      audience: playersSeeingPoint(world, ship.x, ship.y, [ownerId]),
+      data: { action: "flee", kind: ship.npcKind ?? "merchant" },
+    });
+  } else {
+    recordWorldEvent(world, "run", `${ship.classId} attempted to run`, {
+      privateTo: ownerId,
+      data: { shipClass: ship.classId, enemies: enemies.size },
+    });
+  }
   return true;
 }
 
@@ -3613,10 +3649,17 @@ export function startShipSurrender(world: World, ownerId: string, ship: Ship): b
     pushBattleLog(world, ownerId, `Your ${ship.name} surrendered.`);
     pushNotice(world, ownerId, `${ship.name} has surrendered.`);
   }
-  recordWorldEvent(world, "surrender", `${ship.classId} struck colours`, {
-    audience: playersSeeingPoint(world, ship.x, ship.y, [ownerId]),
-    data: { shipClass: ship.classId, owner: ownerId, navy: ship.navy },
-  });
+  if (ship.isNpc) {
+    recordWorldEvent(world, "npc", `${ship.npcKind ?? "npc"} surrendered`, {
+      audience: playersSeeingPoint(world, ship.x, ship.y, [ownerId]),
+      data: { action: "surrender", kind: ship.npcKind ?? "merchant" },
+    });
+  } else {
+    recordWorldEvent(world, "surrender", `${ship.classId} struck colours`, {
+      audience: playersSeeingPoint(world, ship.x, ship.y, [ownerId]),
+      data: { shipClass: ship.classId, owner: ownerId, navy: ship.navy },
+    });
+  }
   for (const [playerId] of world.players) {
     if (playerId === ownerId) continue;
     if (!ownerCanSeeShip(world, playerId, ship)) continue;
@@ -9508,6 +9551,7 @@ export function stepWorld(
   recordFleetPaths(world);
   refreshPredictedRoutes(world, windFromDeg);
   refreshBotOrders(world);
+  recordManoeuvreChanges(world);
   world.tick += 1;
   // Integer milliseconds avoid a slowly drifting clock. A tick always adds the
   // same amount, and nothing is added while the room has no players.
@@ -9701,7 +9745,9 @@ function stepPortBattles(world: World, dtGameSeconds: number): void {
     ship.reloadReadyRealSeconds = nowReal +
       reloadRealSeconds(spec, crewPercent(ship.damage, damageCapacities(spec)));
     if (result.hits > 0) {
+      const healthBefore = state.health;
       damagePort(state, battlePort(port), entry!.ownerId, result.pounds, nowReal);
+      const hullLost = Math.max(0, healthBefore - state.health);
       pushCombatEvent(world, { kind: "portHit", x: port.anchorage.x, y: port.anchorage.y });
       pushBattleLog(world, entry!.ownerId, `Your ships hit ${port.name}: ${Math.round(result.pounds)} lb landed.`);
       recordWorldEvent(world, "portAttack",
@@ -9710,6 +9756,7 @@ function stepPortBattles(world: World, dtGameSeconds: number): void {
           data: {
             port: port.id,
             pounds: result.pounds,
+            hullLost,
             health: state.health,
             tier: state.tier,
           },
@@ -9718,6 +9765,14 @@ function stepPortBattles(world: World, dtGameSeconds: number): void {
         pushNoticeOnce(world, state.ownerId, port.id, "portAttack", `Port ${port.name} is under attack`);
       }
       if (state.health <= 0) {
+        const firstHit = world.recorder.find((event) =>
+          event.kind === "portAttack" && event.data?.port === port.id);
+        const silencedAfterMs = firstHit ? Math.max(0, Date.now() - firstHit.realMs) : 0;
+        recordWorldEvent(world, "portSilenced",
+          `${port.name} silenced after ${(silencedAfterMs / 1000).toFixed(1)}s`, {
+            audience: playersSeeingPoint(world, port.anchorage.x, port.anchorage.y, [entry!.ownerId]),
+            data: { port: port.id, silencedAfterMs },
+          });
         pushCombatEvent(world, { kind: "portSilenced", x: port.anchorage.x, y: port.anchorage.y });
         if (state.ownerId) pushNoticeOnce(world, state.ownerId, port.id, "portSilenced", `Port ${port.name} silenced`);
       }

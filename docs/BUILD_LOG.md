@@ -3616,3 +3616,11 @@ rules, and print the balance report and simulated first hour.
 - The channel in scenario 16 is found by scanning the existing land mask for a
   2 km gap. If a map has no such gap near the start, the fallback keeps the
   lee-shore ship only.
+
+### 3J follow-up
+
+- Sailing now records each manoeuvre phase once (`tack`, `wear`, `boxHaul`,
+  `irons`, `warp`) and the report counts them in the sailing table. NPC flee
+  and surrender events go into the NPC table. Port attack rows include hull
+  lost, and a silenced port records how long it took from the first hit.
+- Re-ran `npm test`: 563/563 passing. `npm run build`: passed.

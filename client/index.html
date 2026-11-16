@@ -14,103 +14,33 @@
     <p class="quality-note paper" id="quality-note" hidden>Reduced effects for speed</p>
     <p class="quality-note paper" id="data-saver-note" hidden>Poor connection: data saver on</p>
 
-    <header class="hud hud-top paper" id="top-bar">
-      <div class="money" id="money-panel" title="Pieces of eight">
-        <svg class="coin-icon" viewBox="0 0 24 24" aria-hidden="true">
-          <circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="1.6" />
-          <circle cx="12" cy="12" r="6.5" fill="none" stroke="currentColor" stroke-width="0.8" />
-          <path d="M12 7.5v9M9.5 9.5h4a1.6 1.6 0 0 1 0 3.2h-3a1.6 1.6 0 0 0 0 3.2h4" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" />
-        </svg>
-        <span class="money-value" id="money">0</span>
-      </div>
-
-      <div class="game-clock top-clock" id="game-clock-panel" data-night="false">
-        <svg class="clock-icon" viewBox="0 0 24 24" aria-hidden="true">
-          <g class="clock-sun">
-            <circle cx="12" cy="12" r="4.5" fill="currentColor" />
-            <path
-              d="M12 2v2.5M12 19.5V22M2 12h2.5M19.5 12H22M4.9 4.9l1.8 1.8M17.3 17.3l1.8 1.8M19.1 4.9l-1.8 1.8M6.7 17.3l-1.8 1.8"
-              fill="none"
-              stroke="currentColor"
-              stroke-width="1.4"
-              stroke-linecap="round"
-            />
-          </g>
-          <path
-            class="clock-moon"
-            d="M16.2 3.6a8.5 8.5 0 1 0 4.2 14.8A8 8 0 0 1 16.2 3.6Z"
-            fill="currentColor"
-          />
-        </svg>
-        <span id="game-clock">Day 1, 08:00</span>
-      </div>
-
-      <div class="wind-chip" id="wind-chip" aria-label="Wind">
-        <span class="wind-chip-label">Wind</span>
-        <span id="wind-chip-label">–</span>
-      </div>
-
-      <button class="btn top-action" id="battle-log-btn" type="button" aria-label="Battle log" aria-expanded="false">
-        Log <span class="fleet-count" id="battle-log-btn-count">0</span>
-      </button>
-
-      <button class="btn top-action" id="fleet-btn" type="button">
-        Fleet <span class="fleet-count" id="fleet-count">1</span>
-      </button>
-
-      <button class="btn top-action" id="chart-btn" type="button" aria-pressed="false">
-        Chart
-      </button>
-
-      <button class="btn top-action menu-toggle" id="menu-btn" type="button" aria-expanded="false" aria-controls="menu-panel">
-        <span class="menu-lines" aria-hidden="true">≡</span>
-        <span>Menu</span>
-      </button>
+    <!-- 3K: the one fixed top-right slot. Money, date/time and moon, then
+         Menu, Sailor's Log and Formations. No old toolbar lives here. -->
+    <header class="game-slot top-right-slot" id="top-right-slot" aria-label="Game status">
+      <section class="status-panel paper" id="status-panel">
+        <div class="money" id="money-panel" title="Pieces of eight">
+          <svg class="coin-icon" viewBox="0 0 24 24" aria-hidden="true">
+            <circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="1.6" />
+            <circle cx="12" cy="12" r="6.5" fill="none" stroke="currentColor" stroke-width="0.8" />
+          </svg>
+          <span class="money-value" id="money">0</span>
+        </div>
+        <div class="game-clock top-clock" id="game-clock-panel" data-night="false">
+          <svg class="clock-icon" viewBox="0 0 24 24" aria-hidden="true">
+            <g class="clock-sun">
+              <circle cx="12" cy="12" r="4.5" fill="currentColor" />
+              <path d="M12 2v2.5M12 19.5V22M2 12h2.5M19.5 12H22M4.9 4.9l1.8 1.8M17.3 17.3l1.8 1.8M19.1 4.9l-1.8 1.8M6.7 17.3l-1.8 1.8" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" />
+            </g>
+            <path class="clock-moon" d="M16.2 3.6a8.5 8.5 0 1 0 4.2 14.8A8 8 0 0 1 16.2 3.6Z" fill="currentColor" />
+          </svg>
+          <span id="game-clock">Day 1, 08:00</span>
+        </div>
+        <p class="moon-line" id="moon-phase">Moon: –</p>
+      </section>
+      <button class="btn slot-button" id="menu-btn" type="button" aria-expanded="false" aria-controls="menu-panel">Menu</button>
+      <button class="btn slot-button" id="sailors-log-btn" type="button">Sailor's Log</button>
+      <button class="btn slot-button" id="formations-btn" type="button" aria-expanded="false">Formations</button>
     </header>
-
-    <nav class="hud action-bar paper" id="action-bar" aria-label="Sailing actions">
-      <button class="btn action-button" id="tap-btn" type="button" aria-pressed="true">
-        <span class="action-icon tap-icon" aria-hidden="true">◉</span>
-        <span class="action-label">Tap <span id="tap-mode-label">On</span></span>
-      </button>
-      <button class="btn action-button" id="move-btn" type="button" aria-pressed="false" disabled title="Tap On is active: choose Move first">
-        <span class="action-icon" aria-hidden="true">✥</span>
-        <span class="action-label">Move</span>
-      </button>
-      <button class="btn action-button" id="multi-btn" type="button" aria-pressed="false">
-        <span class="action-icon" aria-hidden="true">▣</span>
-        <span class="action-label">Multi <span class="multi-count" id="multi-count" hidden>0</span></span>
-      </button>
-      <button class="btn action-button" id="follow-btn" type="button" aria-pressed="true">
-        <span class="action-icon" aria-hidden="true">⌖</span>
-        <span class="action-label">Follow</span>
-      </button>
-      <button class="btn action-button" id="queue-btn" type="button" aria-pressed="false" disabled title="Select a fleet to queue orders">
-        <span class="action-icon" aria-hidden="true">☰</span>
-        <span class="action-label">Queue</span>
-      </button>
-      <button class="btn action-button" id="orders-list-btn" type="button">
-        <span class="action-icon" aria-hidden="true">▤</span>
-        <span class="action-label">Orders</span>
-      </button>
-      <button class="btn action-button" id="back-to-ship-btn" type="button" title="Centre the camera on the selected ship">
-        <span class="action-icon" aria-hidden="true">↺</span>
-        <span class="action-label">Back</span>
-      </button>
-      <button class="btn action-button btn-seal" id="attack-nearest-btn" type="button" title="No enemy in sight">
-        <span class="action-icon" aria-hidden="true">⚔</span>
-        <span class="action-label">Nearest</span>
-      </button>
-    </nav>
-
-    <!-- 3J-fix-c1: what is armed, and one tap to cancel it. -->
-    <section class="armed-order paper" id="armed-order" aria-live="polite" hidden>
-      <p id="armed-order-text">Order armed</p>
-      <button class="btn" id="armed-order-cancel" type="button">Cancel</button>
-    </section>
-    <section class="armed-order undo-chip paper" id="undo-chip" hidden>
-      <button class="btn btn-seal" id="undo-sail" type="button">Undo sail</button>
-    </section>
 
     <!-- 3J-fix-c2: five first-use hints. Never modal and always dismissable. -->
     <aside class="controls-hint paper" id="controls-hint" aria-live="polite" hidden>
@@ -120,28 +50,6 @@
         <button class="btn" id="controls-hint-close" type="button">Dismiss</button>
       </div>
     </aside>
-
-    <!-- One dock frame. The existing panels are placed inside its body by the
-         pure screen-layout plan; the tabs switch which panel is visible. -->
-    <section class="layout-dock paper" id="dock" aria-label="Ship dock" hidden>
-      <div class="dock-tabs" id="dock-tabs" role="tablist" aria-label="Dock sections">
-        <button class="btn dock-tab" id="dock-tab-ship" type="button" role="tab" aria-selected="true">Ship</button>
-        <button class="btn dock-tab" id="dock-tab-fleet" type="button" role="tab" aria-selected="false">Fleet</button>
-        <button class="btn dock-tab" id="dock-tab-log" type="button" role="tab" aria-selected="false">Log</button>
-        <button class="btn dock-tab" id="dock-tab-ports" type="button" role="tab" aria-selected="false">Ports</button>
-        <button class="btn dock-tab" id="dock-tab-research" type="button" role="tab" aria-selected="false">Research</button>
-      </div>
-    </section>
-    <button class="btn dock-collapse" id="dock-collapse" type="button" aria-label="Collapse dock" hidden>›</button>
-
-    <nav class="bottom-dock paper" id="bottom-dock" aria-label="Phone dock" hidden>
-      <button class="btn dock-button" id="orders-btn" type="button">Orders</button>
-      <button class="btn dock-button" id="dock-menu-btn" type="button">Menu</button>
-    </nav>
-
-    <section class="orders-sheet paper" id="orders-sheet" aria-label="Sailing orders" hidden>
-      <p class="kicker">Orders</p>
-    </section>
 
     <!-- Battle orders for the selected ship or fleet. Phones: a slim bar. -->
     <section class="battle-bar paper" id="battle-bar" hidden aria-label="Battle orders">
@@ -281,8 +189,6 @@
       </div>
     </section>
 
-    <nav class="hud group-bar paper" id="group-bar" aria-label="Control groups" hidden></nav>
-
     <section class="hud hud-ship paper" id="ship-panel" aria-label="Your ship">
       <button class="ship-strip" id="ship-expand" type="button" aria-expanded="false" aria-controls="ship-detail">
         <span class="ship-strip-copy">
@@ -293,6 +199,8 @@
             <span id="ship-strip-heading">–</span>
             <span id="ship-strip-crew">–</span>
             <span id="ship-strip-provisions">–</span>
+            <span id="ship-strip-stance" data-optional>–</span>
+            <span id="ship-strip-lights" data-optional>Lights –</span>
             <span class="ship-strip-hull" aria-label="Hull"><span id="ship-chip-hull-fill"></span></span>
           </span>
         </span>
@@ -472,6 +380,7 @@
       <p class="status" id="status" data-state="loading">Connecting…</p>
       <div class="menu-actions">
         <button class="btn" id="research-btn" type="button">Research</button>
+        <button class="btn" id="battle-log-btn" type="button" aria-expanded="false">Battle log <span class="fleet-count" id="battle-log-btn-count">0</span></button>
         <button class="btn" id="known-ports-btn" type="button" hidden>Known ports</button>
         <button class="btn" id="borders-btn" type="button" aria-pressed="false" hidden>Show borders</button>
         <button class="btn" id="flagship-pennant-btn" type="button" aria-pressed="false">Show flagship pennant on the map</button>
@@ -677,8 +586,6 @@
       </form>
     </section>
 
-    <p class="chart-notice" id="notice" role="status" aria-live="polite" hidden></p>
-    <p class="chart-notice" id="notice-2" role="status" aria-live="polite" hidden></p>
     <p class="enemy-chip paper" id="enemy-chip" hidden></p>
     <p class="capture-strip" id="capture-strip" role="status" aria-live="polite" hidden></p>
     <section class="escort-strip paper" id="escort-strip" role="status" aria-live="polite" aria-label="Privateer contracts" hidden>
@@ -751,6 +658,16 @@
       </div>
       <p class="order-menu-where" id="order-menu-where"></p>
       <div class="order-menu-actions" id="order-menu-actions"></div>
+    </section>
+
+    <!-- 3K: small formation sheet for the selected fleet. -->
+    <section class="formation-sheet paper" id="formations-sheet" role="dialog" aria-labelledby="formations-title" hidden>
+      <div class="panel-head">
+        <div><p class="kicker">Fleet</p><h2 id="formations-title">Formations</h2></div>
+        <button class="btn panel-close" id="formations-close" type="button">Close</button>
+      </div>
+      <p class="surrender-offer-detail" id="formations-detail">Select a fleet to set its formation.</p>
+      <div class="formation-grid" id="formations-choices"></div>
     </section>
 
     <!-- Heading and distance order. The preview line is drawn on the map. -->
@@ -1054,6 +971,33 @@
     <button class="version-notice paper" id="version-notice" type="button" hidden>
       A new version is available: tap to reload
     </button>
+
+    <!-- 3K: the one fixed bottom-left slot. The compass shows the wind, then
+         the Tools, Multi and Stance buttons. -->
+    <section class="game-slot bottom-left-slot" id="bottom-left-slot" aria-label="Map tools">
+      <div class="wind-compass" id="wind-compass" aria-label="Wind direction and speed">
+        <svg class="wind-dial" viewBox="0 0 72 72" aria-hidden="true">
+          <circle cx="36" cy="36" r="32" fill="none" stroke="currentColor" stroke-width="1" />
+          <text x="36" y="9" text-anchor="middle">N</text>
+          <g id="wind-dial-arrow">
+            <path d="M36 11 L45 37 L36 32 L27 37 Z" fill="#8c1d1d" stroke="#2a1c10" stroke-width="1" />
+          </g>
+        </svg>
+        <span id="wind-speed-label">Wind speed –</span>
+      </div>
+      <div class="bottom-left-buttons">
+        <button class="btn slot-button tools-button" id="tools-btn" type="button" aria-expanded="false">Tools</button>
+        <button class="btn slot-button" id="multi-btn" type="button" aria-pressed="false">Multi <span class="multi-count" id="multi-count" hidden>0</span></button>
+        <button class="btn slot-button" id="stance-btn" type="button" aria-expanded="false">Stance</button>
+      </div>
+    </section>
+    <p class="game-slot wordmark" id="wordmark" aria-hidden="true"><span>ARMADAS</span><b>1805</b></p>
+    <section class="game-slot armed-order" id="armed-order" aria-live="polite" hidden>
+      <p id="armed-order-text">Order armed</p>
+      <button class="btn" id="armed-order-cancel" type="button">Cancel</button>
+    </section>
+    <p class="game-slot chart-notice" id="notice" role="status" aria-live="polite" hidden></p>
+    <p class="game-slot chart-notice" id="notice-2" role="status" aria-live="polite" hidden></p>
 
     <div class="map-compass" id="map-compass" aria-label="Compass"></div>
     <div class="scale-bar" id="scale-bar"><span id="scale-bar-label">0 km</span></div>

@@ -5,6 +5,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { test } from "node:test";
 
+import { REMOVED_3K_IDS } from "@naval/shared/screen-3k";
 import { createWorld, addPlayer, visibleStateFor } from "@naval/shared/world";
 
 const main = readFileSync("client/main.ts", "utf8");
@@ -19,8 +20,10 @@ test("every element the client looks up exists exactly once in the page", () => 
   const ids = [...html.matchAll(/\bid="([^"]+)"/g)].map((match) => match[1]);
   const duplicates = ids.filter((id, index) => ids.indexOf(id) !== index);
   assert.deepEqual(duplicates, []);
-  const missing = [...referenced].filter((id) => !ids.includes(id));
+  const missing = [...referenced].filter((id) => !ids.includes(id) && !REMOVED_3K_IDS.has(id));
   assert.deepEqual(missing, []);
+  const removedStillPresent = [...REMOVED_3K_IDS].filter((id) => ids.includes(id));
+  assert.deepEqual(removedStillPresent, [], "3K removed the old toolbar and dock");
   assert.ok(referenced.has("damage-battle"));
 });
 

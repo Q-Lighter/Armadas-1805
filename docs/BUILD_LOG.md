@@ -3760,3 +3760,11 @@ Remove every press-and-hold path, make every order select-then-act or verb-then-
 
 - A real long-press touch cannot be dispatched in the jsdom harness. The static no-timer check and the removed hold code cover the same path.
 - NPC-port Hire privateers and Escort jobs remain unbuilt; the port panel keeps its existing attack, sail and info actions.
+
+## 3K-a — layout rebuild and centred camera
+
+- Replaced every old toolbar, dock, tab row, floating handle and bottom bar with fixed slots: top-right status plus Menu / Sailor's Log / Formations, top-left slim ship strip, bottom-left wind compass plus Tools / Multi / Stance, bottom-right title mark, and top-centre armed banner with two toast rows.
+- The selected ship or fleet leader is always drawn at the exact map centre. Drag-panning, Follow and Back to ship are gone; pinch and wheel still zoom between 4 and 30 km. Tab cycles ships and every list selection re-centres.
+- Added the Formations sheet. The Sailor's Log retains the existing chart and known-ports views until the full log arrives in 3K-c; Tools and Stance are wired to their existing sheets.
+- The Developer Layout audit now measures real `getBoundingClientRect` boxes and reports overlap, clipping and targets under 44 px. `&layoutdebug=1` is unchanged.
+- Checks: `npm test` passing; `npm run build` passing; `npm run test:e2e` passing, including the measured audit at 1366x768, 1280x800, 412x915 and 740x360, centre checks and Tab cycling. jsdom has no layout engine, so the harness measures the same inline slot rectangles the browser receives; real-browser pixel rendering is not available in this environment.

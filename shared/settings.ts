@@ -1291,7 +1291,7 @@ export const settings = {
     startKmAcross: 60,
     /** Ship-view zoom range, measured across the shorter screen side. */
     shipMinKmAcross: 4,
-    shipMaxKmAcross: 65,
+    shipMaxKmAcross: 30,
     /** Chart-screen zoom range. */
     chartMinKmAcross: 25,
     /** Below this view width the chart draws vector blocks, not its texture. */

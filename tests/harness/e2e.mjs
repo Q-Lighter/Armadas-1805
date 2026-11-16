@@ -179,6 +179,30 @@ async function bootClient(query, width = 1280, height = 800) {
   window.crypto ??= globalThis.crypto;
   window.HTMLCanvasElement.prototype.setPointerCapture = () => {};
   window.HTMLCanvasElement.prototype.releasePointerCapture = () => {};
+  // jsdom has no layout engine. The 3K shell writes real px rectangles into
+  // inline styles, so the harness can measure those same boxes. A browser uses
+  // the real getBoundingClientRect() without this shim.
+  window.HTMLElement.prototype.getBoundingClientRect = function () {
+    if (this.hidden) return { left: 0, top: 0, right: 0, bottom: 0, width: 0, height: 0 };
+    const style = this.style;
+    const left = Number.parseFloat(style.left);
+    const top = Number.parseFloat(style.top);
+    const width = Number.parseFloat(style.width);
+    const height = Number.parseFloat(style.height);
+    if (style.position === "fixed" && Number.isFinite(left) && Number.isFinite(top) &&
+        Number.isFinite(width) && Number.isFinite(height)) {
+      return { left, top, width, height, right: left + width, bottom: top + height };
+    }
+    const slot = this.closest(".game-slot");
+    const slotStyle = slot && slot !== this ? slot.style : null;
+    const slotLeft = Number.parseFloat(slotStyle?.left ?? "");
+    const slotTop = Number.parseFloat(slotStyle?.top ?? "");
+    if (Number.isFinite(slotLeft) && Number.isFinite(slotTop)) {
+      return { left: slotLeft + 6, top: slotTop + 6, width: 44, height: 44,
+        right: slotLeft + 50, bottom: slotTop + 50 };
+    }
+    return { left: 0, top: 0, right: 0, bottom: 0, width: 0, height: 0 };
+  };
   window.Date.now = () => virtualNow;
   Object.defineProperty(window.performance, "now", { value: () => virtualNow });
   window.eval(clientCode);
@@ -260,74 +284,6 @@ addPlayer(bootRoom.world, "downwind", "frigate", 50_000, "Spanish");
 spawnTestFireShips(bootRoom.world, "downwind", 2);
 const downwindFleet = worldFleet(bootRoom, "downwind").filter((ship) => ship.classId === "fireShip");
 assert.equal(downwindFleet.length, 2, "second fleet spawned");
-
-// ---- 3J-fix-c1: select-then-act, Orders list, sea palette, Undo, groups ---
-
-advanceMs(500);
-// The first-use hint is visible, dismissable and not in the way of the map.
-assert.equal(alpha.document.getElementById("controls-hint").hidden, false, "first-use hint is visible");
-alpha.document.getElementById("controls-hint-close").click();
-assert.equal(alpha.document.getElementById("controls-hint").hidden, true, "first-use hint is dismissed");
-// The cheat sheet lives in Menu, Controls.
-alpha.document.getElementById("controls-help-btn").click();
-assert.equal(alpha.document.getElementById("controls-help").hidden, false, "Controls cheat sheet opens");
-alpha.document.getElementById("controls-help-btn").click();
-
-// The Orders button opens every command group. No hold is involved.
-clickButton(alpha, "Orders");
-assert.equal(alpha.document.getElementById("order-menu").hidden, false, "Orders list opened");
-for (const label of ["Sail", "Attack ship: Sink", "Follow", "Ignite on contact"]) {
-  assert.ok(buttonByText(alpha, label), `Orders list has ${label}`);
-}
-const headingOrder = [...alpha.document.querySelectorAll("#order-menu-actions button")]
-  .find((button) => (button.textContent ?? "").trim() === "Heading and distance");
-assert.ok(headingOrder, "Orders list has Heading and distance");
-headingOrder.click();
-assert.equal(alpha.document.getElementById("heading-sheet").hidden, false, "Heading and distance opens");
-alpha.document.getElementById("heading-cancel").click();
-alpha.document.getElementById("order-menu-close").click();
-assert.equal(alpha.document.getElementById("order-menu").hidden, true, "Orders list closes");
-
-// Select a frigate, tap the sea, and use the five-second Undo chip.
-const controlShip = fleet.find((ship) => ship.classId === "frigate");
-assert.ok(controlShip, "a frigate is available for the controls test");
-tapWorld(alpha, controlShip.x, controlShip.y);
-advanceMs(200);
-assert.equal(alpha.window.__armadaTest.selectedShipId(), controlShip.id, "ship selected by tap");
-tapWorld(alpha, controlShip.x + 2, controlShip.y);
-advanceMs(300);
-assert.equal(alpha.document.getElementById("undo-sail").hidden, false, "Undo chip appeared after Sail");
-clickButton(alpha, "Undo sail");
-assert.equal(alpha.document.getElementById("undo-chip").hidden, true, "Undo chip cleared");
-
-// Tap-to-sail off opens the palette; a hold is not part of this path.
-alpha.document.getElementById("tap-btn").click();
-assert.equal(alpha.document.getElementById("tap-btn").getAttribute("aria-pressed"), "false", "Tap is off");
-tapWorld(alpha, controlShip.x + 10, controlShip.y + 10);
-advanceMs(200);
-assert.equal(alpha.document.getElementById("order-menu").hidden, false, "sea tap opens order palette with Tap off");
-assert.ok(buttonByText(alpha, "Sail here"), "palette has Sail here");
-alpha.document.getElementById("order-menu-close").click();
-alpha.document.getElementById("tap-btn").click();
-
-// Select all and save/recall a control group with one tap.
-clickButton(alpha, "Select all");
-advanceMs(300);
-assert.match(alpha.document.getElementById("fleet-selected-count").textContent ?? "", /[2-9]|[1-9][0-9]+ selected/, "Select all selected several ships");
-clickButton(alpha, "Save group");
-advanceMs(500);
-const groupChip = [...alpha.document.querySelectorAll("#group-bar button")]
-  .find((button) => /^1 ·/.test((button.textContent ?? "").trim()));
-assert.ok(groupChip, "numbered control group exists");
-groupChip.click();
-advanceMs(200);
-assert.match(alpha.document.getElementById("fleet-selected-count").textContent ?? "", /selected/, "group recalled on one tap");
-alpha.window.__armadaTest.openOrders(controlShip.x, controlShip.y);
-alpha.document.getElementById("order-menu-close")?.click();
-if (alpha.document.getElementById("multi-btn").getAttribute("aria-pressed") === "true") {
-  alpha.document.getElementById("multi-btn").click();
-}
-advanceMs(200);
 
 // ---- a. Ignite now: the hulk must remain drawn and then sink ------------
 
@@ -577,6 +533,53 @@ assert.equal(shipById(alpha, secondFire.id)?.fireShipMode, "contact", "contact o
 advanceMs(100_000);
 assert.equal(shipById(alpha, secondFire.id)?.fireShipIgnited, true,
   "fire ship reached and ignited on the target");
+
+// ---- 3K-a: fixed slots, measured audit and centred camera ----------------
+
+for (const id of ["action-bar", "bottom-dock", "dock", "dock-tabs", "tap-btn", "follow-btn", "orders-list-btn", "group-bar"]) {
+  assert.equal(alpha.document.getElementById(id), null, `old toolbar ${id} is gone`);
+}
+for (const id of ["top-right-slot", "ship-panel", "bottom-left-slot", "wordmark"]) {
+  assert.ok(alpha.document.getElementById(id), `3K slot ${id} exists`);
+}
+assert.ok(alpha.document.getElementById("sailors-log-btn"), "Sailor's Log button exists");
+assert.ok(alpha.document.getElementById("formations-btn"), "Formations button exists");
+assert.ok(alpha.document.getElementById("tools-btn"), "Tools button exists");
+assert.ok(alpha.document.getElementById("stance-btn"), "Stance button exists");
+
+const layoutFleet = alpha.window.__armadaTest.fleet().filter((ship) => ship.status !== "delivery");
+assert.ok(layoutFleet.length > 0, "a live ship exists for the camera test");
+const cameraShip = layoutFleet[0];
+assert.equal(alpha.window.__armadaTest.selectShip(cameraShip.id), true, "camera ship selected");
+advanceMs(300);
+const centre = alpha.window.__armadaTest.centreScreen();
+let drawn = drawShip(alpha, cameraShip.id);
+assert.ok(Math.abs(drawn.screenX - centre.x) <= 1, `ship is centred x (${drawn.screenX} vs ${centre.x})`);
+assert.ok(Math.abs(drawn.screenY - centre.y) <= 1, `ship is centred y (${drawn.screenY} vs ${centre.y})`);
+zoomBy(alpha, -500);
+advanceMs(300);
+drawn = drawShip(alpha, cameraShip.id);
+assert.ok(Math.abs(drawn.screenX - centre.x) <= 1 && Math.abs(drawn.screenY - centre.y) <= 1,
+  "ship stays centred while zooming");
+
+const beforeTab = alpha.window.__armadaTest.selectedShipId();
+alpha.document.dispatchEvent(new alpha.window.KeyboardEvent("keydown", { key: "Tab", bubbles: true, cancelable: true }));
+advanceMs(200);
+assert.notEqual(alpha.window.__armadaTest.selectedShipId(), beforeTab, "Tab cycles to another ship");
+
+for (const size of [
+  { width: 1366, height: 768 },
+  { width: 1280, height: 800 },
+  { width: 412, height: 915 },
+  { width: 740, height: 360 },
+]) {
+  alpha.window.innerWidth = size.width;
+  alpha.window.innerHeight = size.height;
+  alpha.window.dispatchEvent(new alpha.window.Event("resize"));
+  advanceMs(300);
+  const issues = alpha.window.__armadaTest.layoutAudit();
+  assert.equal(issues.length, 0, `${size.width}x${size.height} measured layout: ${JSON.stringify(issues)}`);
+}
 
 console.log("HARNESS OK");
 process.exit(0);

@@ -138,7 +138,6 @@ test("3I-c the research and upgrade markup exists for the client", () => {
   const html = readFileSync("client/index.html", "utf8");
   for (const id of [
     "research-panel",
-    "dock-tab-research",
     "research-branches",
     "ship-tab-upgrades",
     "ship-upgrade-list",

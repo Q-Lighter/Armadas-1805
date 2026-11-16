@@ -69,10 +69,6 @@ import { formationSlots } from "@naval/shared/fleets";
 import { orderedChartBlocks } from "@naval/shared/chart-draw";
 import { chartTextureSize, planChartDetail } from "@naval/shared/chart-detail";
 import {
-  type LayoutIssue,
-} from "@naval/shared/layout-audit";
-import {
-  buildScreenLayout,
   contextStripVisible,
   layoutElement,
   resolveLayoutMode,
@@ -80,7 +76,6 @@ import {
   type LayoutPanelId,
   type LayoutPreference,
   type LayoutState,
-  type ScreenLayoutPlan,
 } from "@naval/shared/screen-layout";
 import { buildBlockCommands, findChartSuspects } from "@naval/shared/chart-paint";
 import { researchScreenView, shipUpgradeRows } from "@naval/shared/research-view";
@@ -102,6 +97,7 @@ import { runDrawLayer } from "@naval/shared/draw-layer";
 import { applyStateDelta, decodeStateDelta, newestStateWithEvents } from "@naval/shared/state-delta";
 import { DomThrottle } from "@naval/shared/dom-throttle";
 import { selectVisibleEffects } from "@naval/shared/effect-budget";
+import { REMOVED_3K_IDS, auditMeasuredSlots, fixedGameSlots, type MeasuredSlot, type SlotAuditIssue } from "@naval/shared/screen-3k";
 import {
   CONTROL_HINTS,
   CONTROL_GROUP_NAMES,
@@ -120,7 +116,7 @@ import {
   type QualityLevel,
   type QualityPreference,
 } from "@naval/shared/quality";
-import { formatGameClock, gameClockAt } from "@naval/shared/time";
+import { formatGameClock, gameClockAt, moonPhase } from "@naval/shared/time";
 import { navyColorNumber, parseNavy, type NavyId } from "@naval/shared/navies";
 import {
   inviteSecondDeviceLink,
@@ -278,10 +274,16 @@ function setUiSize(size: UiSize): void {
 // Small helpers.
 // ---------------------------------------------------------------------------
 
+
+
 function element<T extends Element>(id: string): T {
   const node = document.getElementById(id);
-  if (!node) throw new Error(`Missing element #${id}`);
-  return node as unknown as T;
+  if (node) return node as unknown as T;
+  if (!REMOVED_3K_IDS.has(id)) throw new Error(`Missing element #${id}`);
+  // The 3K shell deleted the old toolbar and dock. Keep their wiring inert
+  // until the replacement sheet owns the action, instead of crashing boot.
+  const tag = id.includes("btn") ? "button" : id.includes("label") ? "span" : "div";
+  return document.createElement(tag) as unknown as T;
 }
 
 type ArmadasErrorWindow = Window & {
@@ -1150,6 +1152,19 @@ async function start(): Promise<void> {
   const clockOut = element<HTMLElement>("game-clock");
   const windChip = element<HTMLElement>("wind-chip");
   const windChipLabel = element<HTMLElement>("wind-chip-label");
+  const moonOut = element<HTMLElement>("moon-phase");
+  const windSpeedLabel = element<HTMLElement>("wind-speed-label");
+  const windDialArrow = element<SVGGElement>("wind-dial-arrow");
+  const sailorsLogButton = element<HTMLButtonElement>("sailors-log-btn");
+  const formationsButton = element<HTMLButtonElement>("formations-btn");
+  const formationsSheet = element<HTMLElement>("formations-sheet");
+  const formationsChoices = element<HTMLElement>("formations-choices");
+  const formationsDetail = element<HTMLElement>("formations-detail");
+  const formationsClose = element<HTMLButtonElement>("formations-close");
+  const toolsButton = element<HTMLButtonElement>("tools-btn");
+  const stanceButton = element<HTMLButtonElement>("stance-btn");
+  const shipStripStance = element<HTMLElement>("ship-strip-stance");
+  const shipStripLights = element<HTMLElement>("ship-strip-lights");
   const battleLogButton = element<HTMLButtonElement>("battle-log-btn");
   const battleLogButtonCount = element<HTMLElement>("battle-log-btn-count");
   const dockFrame = element<HTMLElement>("dock");
@@ -1174,6 +1189,9 @@ async function start(): Promise<void> {
   const ordersSheet = element<HTMLElement>("orders-sheet");
   const queueButton = element<HTMLButtonElement>("queue-btn");
   const noticeSecond = element<HTMLParagraphElement>("notice-2");
+  const topRightSlot = element<HTMLElement>("top-right-slot");
+  const bottomLeftSlot = element<HTMLElement>("bottom-left-slot");
+  const wordmark = element<HTMLElement>("wordmark");
   const enemyChip = element<HTMLElement>("enemy-chip");
   const mapCompass = element<HTMLElement>("map-compass");
   const scaleBar = element<HTMLElement>("scale-bar");
@@ -1778,7 +1796,6 @@ async function start(): Promise<void> {
 
   function setFollow(on: boolean): void {
     view.follow = on;
-    followButton.setAttribute("aria-pressed", String(on));
   }
 
   let lastNoticeText = "";
@@ -3404,6 +3421,16 @@ async function start(): Promise<void> {
     }
   }
 
+  function centreOnShip(id: string): void {
+    const viewShip = ships.get(id);
+    if (!viewShip) return;
+    if (mode === "chart") setMode("ship");
+    view.x = viewShip.x;
+    view.y = viewShip.y;
+    view.follow = true;
+    refreshMap(performance.now(), true);
+  }
+
   function updateSelectedShip(id: string, centre: boolean): boolean {
     const row = fleetShips.find((ship) => ship.id === id);
     if (!row || row.status === "delivery") return false;
@@ -3415,16 +3442,7 @@ async function start(): Promise<void> {
     marker.visible = false;
     sendCommand({ t: "select", ship: id });
 
-    if (centre) {
-      if (mode === "chart") setMode("ship");
-      const viewShip = ships.get(id);
-      if (viewShip) {
-        view.x = viewShip.x;
-        view.y = viewShip.y;
-        setFollow(true);
-        refreshMap(performance.now(), true);
-      }
-    }
+    if (centre) centreOnShip(id);
     updateMultiUi();
     updateHud(ownSnapshot ?? undefined);
     renderBattleBar();
@@ -3474,6 +3492,7 @@ async function start(): Promise<void> {
     multiSelect = true;
     updateMultiUi();
     drawSelectedRoute();
+    centreOnShip(selectedShipId);
   }
 
   function selectControlGroup(slot: number): void {
@@ -4105,6 +4124,7 @@ async function start(): Promise<void> {
     multiSelect = true;
     updateMultiUi();
     drawSelectedRoute();
+    centreOnShip(selectedShipId);
   }
 
   function showControlHint(): void {
@@ -6003,6 +6023,8 @@ async function start(): Promise<void> {
     shipUndock.hidden = row?.status !== "docked";
     shipDamage.disabled = !row || row.status === "delivery";
     const lightsOn = row?.lightsOn !== false;
+    shipStripStance.textContent = row?.stance ? stanceLabel(row.stance) : "Stance –";
+    shipStripLights.textContent = `Lights ${lightsOn ? "On" : "Off"}`;
     shipLightsOut.dataset.on = String(lightsOn);
     shipLightsText.textContent = `Lights: ${lightsOn ? "On" : "Off"}`;
     shipLightsOut.hidden = !row;
@@ -7033,6 +7055,15 @@ async function start(): Promise<void> {
     if (text !== lastClockText) {
       clockOut.textContent = text;
       clockPanel.dataset.night = String(!clock.isDay);
+      const moon = moonPhase(clockShownMs);
+      const phaseName = moon.phase < 0.0625 || moon.phase >= 0.9375 ? "new"
+        : moon.phase < 0.1875 ? "crescent"
+          : moon.phase < 0.3125 ? "quarter"
+            : moon.phase < 0.4375 ? "gibbous"
+              : moon.phase < 0.5625 ? "full"
+                : moon.phase < 0.6875 ? "gibbous"
+                  : moon.phase < 0.8125 ? "quarter" : "crescent";
+      moonOut.textContent = `Moon: ${phaseName} · ${Math.round(moon.illumination * 100)}%`;
       lastClockText = text;
     }
 
@@ -7630,6 +7661,10 @@ async function start(): Promise<void> {
     }
     scheduleLayoutAudit();
     windArrow.setAttribute("transform", `rotate(${(windFrom + 180) % 360} 12 12)`);
+    windDialArrow.setAttribute("transform", `rotate(${(windFrom + 180) % 360} 36 36)`);
+    const windSpeed = Math.round(settings.weather.windStrengthKnots);
+    windSpeedLabel.textContent = `Wind speed ${windSpeed} kn`;
+    windChipLabel.textContent = `${compassPoint(windFrom)} ${windSpeed} kn`;
     windLabel.textContent = `Wind from ${compassPoint(windFrom)} (${Math.round(windFrom)}°)`;
 
     // The server sends only ports this player has found. Keep the display set
@@ -8224,6 +8259,7 @@ async function start(): Promise<void> {
     multiSelect = true;
     updateMultiUi();
     drawSelectedRoute();
+    centreOnShip(selectedShipId);
   }
 
   function zoomTo(kmAcross: number): void {
@@ -8286,11 +8322,7 @@ async function start(): Promise<void> {
     const dy = next.y - previous.y;
     dragDistance += Math.hypot(dx, dy);
 
-    if (dragDistance > 6) {
-      view.x -= dx / scale();
-      view.y -= dy / scale();
-      setFollow(false);
-    }
+    // 3K: the selected ship is always centred. Dragging never pans the map.
   });
 
   function endPointer(event: PointerEvent): void {
@@ -8752,7 +8784,7 @@ async function start(): Promise<void> {
     node.style.setProperty("overscroll-behavior", "contain", "important");
   }
 
-  function drawLayoutDebug(plan: ScreenLayoutPlan): void {
+  function drawLayoutDebug(slots: ReturnType<typeof fixedGameSlots>): void {
     if (!layoutDebug || roomKind === "normal") {
       layoutDebugLayer.hidden = true;
       layoutDebugLayer.replaceChildren();
@@ -8760,17 +8792,21 @@ async function start(): Promise<void> {
     }
     layoutDebugLayer.hidden = false;
     layoutDebugLayer.replaceChildren();
-    for (const element of plan.elements) {
-      if (!element.visible || element.rect.width <= 0 || element.rect.height <= 0) continue;
+    for (const slot of slots.slots) {
+      const node = document.getElementById(slot.id) ?? (slot.id === "ship-slot" ? shipPanel : null);
+      const rect = node?.getBoundingClientRect();
+      const use = rect && rect.width > 0 && rect.height > 0
+        ? { left: rect.left, top: rect.top, width: rect.width, height: rect.height }
+        : slot.rect;
       const box = document.createElement("div");
       box.className = "layout-debug-box";
-      box.dataset.group = element.group;
-      box.style.left = `${element.rect.left}px`;
-      box.style.top = `${element.rect.top}px`;
-      box.style.width = `${element.rect.width}px`;
-      box.style.height = `${element.rect.height}px`;
+      box.dataset.group = "slot";
+      box.style.left = `${use.left}px`;
+      box.style.top = `${use.top}px`;
+      box.style.width = `${use.width}px`;
+      box.style.height = `${use.height}px`;
       const label = document.createElement("span");
-      label.textContent = `${element.label} · ${element.id}`;
+      label.textContent = `${slot.id}`;
       box.append(label);
       layoutDebugLayer.append(box);
     }
@@ -8808,40 +8844,59 @@ async function start(): Promise<void> {
     }
   }
 
+  function applyFixedRect(node: HTMLElement, rect: { left: number; top: number; width: number; height: number }, z: number, scrollable = false): void {
+    node.style.setProperty("position", "fixed", "important");
+    node.style.setProperty("left", `${rect.left}px`, "important");
+    node.style.setProperty("top", `${rect.top}px`, "important");
+    node.style.setProperty("width", `${rect.width}px`, "important");
+    node.style.setProperty("height", `${rect.height}px`, "important");
+    node.style.setProperty("right", "auto", "important");
+    node.style.setProperty("bottom", "auto", "important");
+    node.style.setProperty("margin", "0", "important");
+    node.style.setProperty("max-width", "none", "important");
+    node.style.setProperty("max-height", "none", "important");
+    node.style.setProperty("transform", "none", "important");
+    node.style.setProperty("z-index", String(z), "important");
+    node.style.setProperty("overflow-y", scrollable ? "auto" : "visible", "important");
+    node.style.setProperty("overflow-x", "hidden", "important");
+    node.style.setProperty("overscroll-behavior", "contain", "important");
+  }
+
   function applyScreenLayout(): void {
-    const viewport = { width: window.innerWidth, height: window.innerHeight };
-    const state = currentLayoutState();
-    const plan = buildScreenLayout({ ...viewport, preference: layoutPreference, state });
-    const phone = plan.mode !== "desktop";
+    const slots = fixedGameSlots(window.innerWidth, window.innerHeight);
+    const byId = new Map(slots.slots.map((slot) => [slot.id, slot.rect]));
 
-    for (const element of plan.elements) {
-      if (UNPLACED_LAYOUT_IDS.has(element.id)) continue;
-      const node = document.getElementById(element.id) as HTMLElement | null;
-      if (!node) continue;
-      if (!element.visible || element.rect.width <= 0 || element.rect.height <= 0) {
-        node.hidden = true;
-        continue;
-      }
-      node.hidden = false;
-      setLayoutRect(node, element);
-      if (node instanceof HTMLButtonElement) {
-        node.disabled = element.disabled;
-        if (element.reason) node.title = element.reason;
-      }
-    }
+    const topRight = byId.get("top-right-slot")!;
+    const shipSlot = byId.get("ship-slot")!;
+    const bottomLeft = byId.get("bottom-left-slot")!;
+    const wordmarkRect = byId.get("wordmark")!;
+    const armedRect = byId.get("armed-order")!;
+    const noticeRect = byId.get("notice")!;
+    const notice2Rect = byId.get("notice-2")!;
+
+    applyFixedRect(topRightSlot, topRight, 30);
+    const shipRect = shipExpanded
+      ? {
+          left: shipSlot.left,
+          top: shipSlot.top,
+          width: Math.min(430, window.innerWidth - shipSlot.left - 8),
+          height: Math.min(window.innerHeight - shipSlot.top - 8, 640),
+        }
+      : shipSlot;
+    applyFixedRect(shipPanel, shipRect, 26, shipExpanded);
+    applyFixedRect(bottomLeftSlot, bottomLeft, 28);
+    applyFixedRect(wordmark, wordmarkRect, 6);
+    applyFixedRect(armedOrderBar, armedRect, 42);
+    applyFixedRect(notice, noticeRect, 41);
+    applyFixedRect(noticeSecond, notice2Rect, 41);
+    document.body.dataset.layout3k = slots.mode;
+
+    if (mapCompass.parentElement) mapCompass.hidden = true;
+    scaleBar.hidden = true;
     queueButton.disabled = !selectedFleetId;
-    queueButton.title = selectedFleetId
-      ? "Queue fleet orders"
-      : "Select a fleet to queue orders";
     developerButton.hidden = roomKind === "normal";
-
     refreshContextActions();
 
-    // The compass is the one map overlay that used to live in the ship card.
-    if (compassRose.parentElement !== mapCompass) mapCompass.append(compassRose);
-    mapCompass.hidden = false;
-    scaleBar.hidden = false;
-    scaleBarLabel.textContent = `${Math.max(1, Math.round(view.kmAcross))} km`;
     const selectedEnemy = selectedEnemyId ? ships.get(selectedEnemyId) : null;
     enemyChip.textContent = selectedEnemy
       ? `${selectedEnemy.navy} ${selectedEnemy.classId}`
@@ -8853,13 +8908,7 @@ async function start(): Promise<void> {
       ? (selectedEnemy.surrendered ? "Struck colours" : selectedEnemy.abandoned ? "Abandoned" : "Under way")
       : "Select an enemy ship on the map.";
 
-    dockTabShip.setAttribute("aria-selected", String(currentDockPanel() === "ship"));
-    dockTabFleet.setAttribute("aria-selected", String(currentDockPanel() === "fleet"));
-    dockTabLog.setAttribute("aria-selected", String(currentDockPanel() === "log"));
-    dockTabPorts.setAttribute("aria-selected", String(currentDockPanel() === "ports" || currentDockPanel() === "knownPorts"));
-    dockTabResearch.setAttribute("aria-selected", String(currentDockPanel() === "research"));
-
-    drawLayoutDebug(plan);
+    drawLayoutDebug(slots);
     layoutApplyFrame = 0;
     lastLayoutApplyAt = performance.now();
   }
@@ -8874,22 +8923,47 @@ async function start(): Promise<void> {
     layoutAuditFrame = requestAnimationFrame(runLayoutAudit);
   }
 
-  /** TEMP-DEBUG: audit the exact plan applied to the live UI. */
-  function runLayoutAudit(): void {
+  /** Audit the real measured fixed slots, never the planned rectangles. */
+  function runLayoutAudit(): SlotAuditIssue[] {
     layoutAuditFrame = 0;
     if (roomKind === "normal") {
       layoutAudit.hidden = true;
       layoutIssueCount = 0;
-      return;
+      return [];
     }
 
-    const plan = buildScreenLayout({
+    const measured: MeasuredSlot[] = [];
+    const addNode = (id: string, node: HTMLElement | null, nested = false): void => {
+      if (!node || node.hidden) return;
+      const rect = node.getBoundingClientRect();
+      if (rect.width <= 0 || rect.height <= 0) return;
+      measured.push({
+        id,
+        rect: { left: rect.left, top: rect.top, right: rect.right, bottom: rect.bottom },
+        interactive: node instanceof HTMLButtonElement,
+        contentHeight: node.scrollHeight,
+        clientHeight: node.clientHeight,
+        scrollable: node.scrollHeight <= node.clientHeight + 1 || (node === shipPanel && shipExpanded),
+        nested,
+      });
+    };
+    addNode("top-right-slot", document.getElementById("top-right-slot"));
+    addNode("ship-slot", shipPanel);
+    addNode("bottom-left-slot", document.getElementById("bottom-left-slot"));
+    addNode("wordmark", document.getElementById("wordmark"));
+    if (!armedOrderBar.hidden) addNode("armed-order", armedOrderBar);
+    if (!notice.hidden) addNode("notice", notice);
+    if (!noticeSecond.hidden) addNode("notice-2", noticeSecond);
+    for (const container of [document.getElementById("top-right-slot"), document.getElementById("bottom-left-slot"), shipPanel]) {
+      for (const button of container?.querySelectorAll<HTMLButtonElement>("button") ?? []) {
+        addNode(`${container === shipPanel ? "ship-slot" : container!.id}:${button.id}`, button, true);
+      }
+    }
+
+    const issues = auditMeasuredSlots(measured, {
       width: window.innerWidth,
       height: window.innerHeight,
-      preference: layoutPreference,
-      state: currentLayoutState(),
     });
-    const issues: LayoutIssue[] = plan.audit();
     layoutIssueCount = issues.length;
     layoutAudit.hidden = false;
     layoutAuditSummary.textContent = issues.length === 0
@@ -8901,6 +8975,7 @@ async function start(): Promise<void> {
       item.textContent = `${issue.kind}: ${issue.id}${issue.other ? ` ↔ ${issue.other}` : ""} — ${issue.detail}`;
       layoutAuditList.append(item);
     }
+    return issues;
   }
 
   function drawBorders(): void {
@@ -8958,6 +9033,61 @@ async function start(): Promise<void> {
     menuPanel.hidden = true;
     menuButton.setAttribute("aria-expanded", "false");
   }
+
+  function renderFormationsSheet(): void {
+    const fleet = fleetById(selectedFleetId);
+    formationsChoices.replaceChildren();
+    if (!fleet) {
+      formationsDetail.textContent = "Select a fleet first. A ship without a fleet cannot take a formation.";
+      for (const option of FORMATION_OPTIONS) {
+        const button = document.createElement("button");
+        button.type = "button";
+        button.className = "btn";
+        button.textContent = `${option.icon} ${option.label}`;
+        button.disabled = true;
+        button.title = "Select a fleet first";
+        formationsChoices.append(button);
+      }
+      return;
+    }
+    formationsDetail.textContent = `${fleet.name} · ${fleet.members.length} ships · leader ${shipById(fleet.leaderId)?.name ?? "unknown"}`;
+    for (const option of FORMATION_OPTIONS) {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = "btn";
+      button.textContent = `${option.icon} ${option.label}`;
+      button.setAttribute("aria-pressed", String(fleet.formation === option.id));
+      button.addEventListener("click", () => {
+        sendCommand({ t: "fleetUpdate", fleet: fleet.id, formation: option.id });
+        formationPreview = { fleetId: fleet.id, formation: option.id, until: performance.now() + 3_000 };
+        renderFormationsSheet();
+      });
+      formationsChoices.append(button);
+    }
+  }
+
+  function toggleFormationsSheet(): void {
+    const open = formationsSheet.hidden;
+    formationsSheet.hidden = !open;
+    formationsButton.setAttribute("aria-expanded", String(open));
+    if (open) renderFormationsSheet();
+  }
+
+  function openSailorsLogPlaceholder(): void {
+    if (mode !== "chart") setMode("chart");
+    renderKnownPorts();
+    knownPortsPanel.hidden = false;
+    showNotice("Sailor's Log chart. Full tabs arrive next.");
+  }
+
+  formationsButton.addEventListener("click", toggleFormationsSheet);
+  formationsClose.addEventListener("click", () => {
+    formationsSheet.hidden = true;
+    formationsButton.setAttribute("aria-expanded", "false");
+  });
+  sailorsLogButton.addEventListener("click", openSailorsLogPlaceholder);
+  toolsButton.addEventListener("click", () => openHeading(null));
+  stanceButton.addEventListener("click", () => showNotice("Stance sheet opens in the controls step."));
 
   menuButton.addEventListener("click", () => {
     menuPanel.hidden = !menuPanel.hidden;
@@ -9026,6 +9156,16 @@ async function start(): Promise<void> {
   window.addEventListener("keydown", (event) => {
     const target = event.target as HTMLElement | null;
     if (target && /^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName)) return;
+    if (event.key === "Tab") {
+      event.preventDefault();
+      const ids = fleetShips.filter((ship) => ship.status !== "delivery").map((ship) => ship.id);
+      if (ids.length > 0) {
+        const current = ids.indexOf(selectedShipId);
+        const next = ids[(current + 1 + ids.length) % ids.length]!;
+        updateSelectedShip(next, true);
+      }
+      return;
+    }
     if (event.key === "Escape") {
       if (armedOrder) cancelArmedOrder();
       else closeOrderMenu();
@@ -9454,18 +9594,17 @@ async function start(): Promise<void> {
     }
   });
 
-  let shipExpanded = !window.matchMedia("(max-width: 640px)").matches;
+  let shipExpanded = false;
   function setShipExpanded(expanded: boolean): void {
     shipExpanded = expanded;
     shipPanel.classList.toggle("is-expanded", expanded);
     shipPanel.classList.toggle("is-collapsed", !expanded);
     shipExpand.setAttribute("aria-expanded", String(expanded));
+    scheduleScreenLayout();
   }
-  setShipExpanded(shipExpanded);
+  setShipExpanded(false);
   shipExpand.addEventListener("click", () => setShipExpanded(!shipExpanded));
-  window.matchMedia("(max-width: 640px)").addEventListener("change", (event) => {
-    setShipExpanded(!event.matches);
-  });
+  setShipExpanded(false);
 
   knownPortsButton.addEventListener("click", () => {
     if (mode !== "chart") setMode("chart");
@@ -9680,7 +9819,7 @@ async function start(): Promise<void> {
 
     // Follow the same interpolated position the hull uses, so the camera and
     // selection ring never disagree or fight each other.
-    if (view.follow && own && mode === "ship") {
+    if (own && mode === "ship") {
       const ownMotion = own.motion.sample(renderAtSeconds);
       if (ownMotion) {
         view.x = ownMotion.x;
@@ -9952,6 +10091,10 @@ async function start(): Promise<void> {
       fleet: () => Array<Record<string, unknown>>;
       tick: () => number;
       gallery: () => { on: boolean; name: string; remainingSeconds: number };
+      layoutAudit: () => SlotAuditIssue[];
+      layoutSlots: () => Array<{ id: string; left: number; top: number; width: number; height: number }>;
+      centreScreen: () => { x: number; y: number };
+      selectShip: (id: string) => boolean;
     };
   };
   (window as ArmadaTestWindow).__armadaTest = {
@@ -10018,6 +10161,14 @@ async function start(): Promise<void> {
         remainingSeconds: effectGalleryOn ? Math.ceil(frame.remainingMs / 1000) : 0,
       };
     },
+    layoutAudit: () => runLayoutAudit(),
+    layoutSlots: () => ["top-right-slot", "ship-slot", "bottom-left-slot", "wordmark"].map((id) => {
+      const node = id === "ship-slot" ? shipPanel : document.getElementById(id);
+      const rect = node?.getBoundingClientRect();
+      return { id, left: rect?.left ?? 0, top: rect?.top ?? 0, width: rect?.width ?? 0, height: rect?.height ?? 0 };
+    }),
+    centreScreen: () => ({ x: app.screen.width / 2, y: app.screen.height / 2 }),
+    selectShip: (id) => updateSelectedShip(id, true),
   };
   window.addEventListener("error", (event) => {
     reportClientError(event.error ?? event.message, "window error");

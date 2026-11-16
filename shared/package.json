@@ -78,6 +78,10 @@
       "types": "./dist/controls3j.d.ts",
       "default": "./dist/controls3j.js"
     },
+    "./screen-3k": {
+      "types": "./dist/screen3k.d.ts",
+      "default": "./dist/screen3k.js"
+    },
     "./time": {
       "types": "./dist/time.d.ts",
       "default": "./dist/time.js"

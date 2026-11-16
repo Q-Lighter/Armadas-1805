@@ -4279,6 +4279,55 @@ export function pushPlayerNotice(world: World, playerId: string, text: string): 
   pushNotice(world, playerId, text);
 }
 
+/** Reorder or remove a pending fleet queue entry (3K-c Sailor's Log). */
+export function updateFleetQueue(
+  world: World,
+  playerId: string,
+  fleetId: unknown,
+  action: unknown,
+  index: unknown,
+  to: unknown,
+): boolean {
+  if (world.gameOver) return false;
+  const fleet = fleetFor(world, playerId, fleetId);
+  const command = fleet ? world.fleetCommands.get(fleet.id) : null;
+  if (!command || typeof index !== "number" || !Number.isInteger(index)) return false;
+  if (index < 0 || index >= command.queue.length) return false;
+  if (action === "remove") {
+    command.queue.splice(index, 1);
+    return true;
+  }
+  if (action !== "move" || typeof to !== "number" || !Number.isInteger(to)) return false;
+  if (to < 0 || to >= command.queue.length) return false;
+  const [entry] = command.queue.splice(index, 1);
+  if (!entry) return false;
+  command.queue.splice(to, 0, entry);
+  return true;
+}
+
+/** Move one non-leader ship to another formation slot in its fleet. */
+export function movePlayerFleetMember(
+  world: World,
+  playerId: string,
+  fleetId: unknown,
+  shipId: unknown,
+  delta: unknown,
+): boolean {
+  if (world.gameOver || typeof shipId !== "string" || typeof delta !== "number") return false;
+  const fleet = fleetFor(world, playerId, fleetId);
+  if (!fleet || fleet.leaderId === shipId) return false;
+  const from = fleet.members.indexOf(shipId);
+  if (from < 0) return false;
+  const to = from + Math.sign(delta);
+  if (to < 1 || to >= fleet.members.length) return false;
+  const next = [...fleet.members];
+  const [moved] = next.splice(from, 1);
+  if (!moved) return false;
+  next.splice(to, 0, moved);
+  fleetMapFor(world, playerId).set(fleet.id, { ...fleet, members: next });
+  return true;
+}
+
 /** Give an order to a whole fleet, optionally appending it to the queue. */
 export function applyFleetOrder(
   world: World,

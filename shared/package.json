@@ -78,6 +78,10 @@
       "types": "./dist/controls3j.d.ts",
       "default": "./dist/controls3j.js"
     },
+    "./chart-grid": {
+      "types": "./dist/chartGrid.d.ts",
+      "default": "./dist/chartGrid.js"
+    },
     "./sight": {
       "types": "./dist/sight.d.ts",
       "default": "./dist/sight.js"

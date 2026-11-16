@@ -636,6 +636,69 @@ assert.equal(headingCommand.order?.type, "heading", "a heading order was sent");
 assert.equal(headingCommand.order?.headingDeg, 90, "the exact heading left the client");
 assert.equal(headingCommand.order?.distanceKm, 6, "the exact distance left the client");
 
+// ---- 3K-c: Sailor's Log tabs, grid, ruler and lists ----------------------
+
+const log = alpha.window.__armadaTest;
+log.openLog("chart");
+assert.equal(alpha.document.getElementById("sailors-log").hidden, false, "Sailor's Log opens");
+assert.equal(log.logTab(), "chart", "Chart opens first");
+assert.ok(log.logGridLabels().length > 0, "the chart draws coordinate labels");
+assert.ok(log.logGridLabels().some((label) => /°\s*[NSEW]/.test(label)),
+  `labels use degrees and hemispheres (${log.logGridLabels().slice(0, 5).join(", ")})`);
+assert.ok(alpha.document.querySelector("#log-ports-host .known-ports-panel"), "Port list lives in the log");
+const logShipButtons = [...alpha.document.querySelectorAll("#log-ships button")];
+assert.ok(logShipButtons.length > 0, "Ship list has a selectable ship");
+const logShipButton = logShipButtons.find((button) => button.getAttribute("aria-pressed") !== "true") ?? logShipButtons[0];
+logShipButton.click();
+advanceMs(200);
+assert.equal(log.selectedShipId(), logShipButton.dataset.shipId, "Ship list selects that ship");
+assert.equal(alpha.document.getElementById("sailors-log").hidden, true, "selecting a ship returns to the game");
+log.openLog("chart");
+const logPortButton = alpha.document.querySelector("#known-ports-list .known-port");
+if (logPortButton) {
+  logPortButton.click();
+  advanceMs(50);
+  assert.equal(alpha.document.getElementById("port-panel").hidden, false, "Port list opens that port");
+  alpha.document.getElementById("port-close").click();
+  assert.equal(alpha.document.getElementById("port-panel").hidden, true, "port panel closes");
+} else {
+  assert.equal(alpha.document.getElementById("known-ports-empty").hidden, false,
+    "with no discovered port the list shows its empty reason");
+}
+
+log.openLog("queued");
+assert.equal(log.logTab(), "queued", "Queued orders tab opens");
+alpha.document.querySelector('[data-log-tab="chart"]').click();
+assert.equal(log.logTab(), "chart", "Chart tab switches");
+alpha.document.querySelector('[data-log-tab="queued"]').click();
+assert.equal(log.logTab(), "queued", "Queued tab switches back");
+advanceMs(500);
+assert.equal(alpha.document.getElementById("sailors-log").hidden, false, "state updates do not wipe the log");
+assert.equal(log.logTab(), "queued", "the chosen tab survives state updates");
+alpha.document.querySelector('[data-log-tab="fleets"]').click();
+assert.ok(alpha.document.querySelector("#log-fleets-host .fleet-panel"), "Fleet panel lives in the log");
+alpha.document.querySelector('[data-log-tab="trade"]').click();
+assert.match(alpha.document.getElementById("log-panel-trade").textContent, /Arrives with trade links/,
+  "trade links are disabled with the agreed reason");
+assert.equal(alpha.document.querySelector("#log-trade-links button").disabled, true, "Trade links is disabled");
+
+log.openLog("chart");
+log.armLogRuler();
+const rulerA = { x: 120, y: 220 };
+const rulerB = { x: 320, y: 220 };
+log.tapScreen(rulerA.x, rulerA.y);
+log.tapScreen(rulerB.x, rulerB.y);
+assert.equal(log.logRuler().points, 2, "the ruler takes two points");
+assert.match(log.logRuler().text, /^90° · /, `the ruler reports an east bearing (${log.logRuler().text})`);
+const rulerKm = Number(log.logRuler().text.split("·")[1].replace("km", "").trim());
+assert.ok(rulerKm > 0, "the ruler reports a distance");
+clickButton(alpha, "Use this course");
+assert.equal(alpha.document.getElementById("heading-sheet").hidden, false, "Use this course opens the heading tool");
+assert.equal(Number(alpha.document.getElementById("heading-degrees").value), 90, "the ruler course bearing fills Heading");
+assert.ok(Math.abs(Number(alpha.document.getElementById("heading-distance").value) - rulerKm) < 0.2,
+  "the ruler distance fills Heading and distance");
+clickButton(alpha, "Close");
+
 // ---- 3K-a: fixed slots, measured audit and centred camera ----------------
 
 for (const id of ["action-bar", "bottom-dock", "dock", "dock-tabs", "tap-btn", "follow-btn", "orders-list-btn", "group-bar"]) {

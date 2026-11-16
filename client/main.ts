@@ -117,6 +117,7 @@ import {
 } from "@naval/shared/quality";
 import { formatGameClock, gameClockAt, moonPhase } from "@naval/shared/time";
 import { sightRangeKm, targetInSight } from "@naval/shared/sight";
+import { bearingDegrees, chartGridLines, scaleRuler, type ChartGridLine } from "@naval/shared/chart-grid";
 import { navyColorNumber, parseNavy, type NavyId } from "@naval/shared/navies";
 import {
   inviteSecondDeviceLink,
@@ -1169,6 +1170,28 @@ async function start(): Promise<void> {
   const lightsSwitch = element<HTMLInputElement>("lights-switch");
   const lightsSwitchLabel = element<HTMLElement>("lights-switch-label");
   const stanceNote = element<HTMLElement>("stance-note");
+  const sailorsLogPanel = element<HTMLElement>("sailors-log");
+  const logTabs = [...document.querySelectorAll<HTMLButtonElement>("[data-log-tab]")];
+  const logPanelChart = element<HTMLElement>("log-panel-chart");
+  const logPanelQueued = element<HTMLElement>("log-panel-queued");
+  const logPanelFleets = element<HTMLElement>("log-panel-fleets");
+  const logPanelTrade = element<HTMLElement>("log-panel-trade");
+  const logShips = element<HTMLUListElement>("log-ships");
+  const logPortsHost = element<HTMLElement>("log-ports-host");
+  const logFleetsHost = element<HTMLElement>("log-fleets-host");
+  const logTradeHost = element<HTMLElement>("log-trade-host");
+  const logCargoList = element<HTMLUListElement>("log-cargo-list");
+  const logGrid = element<HTMLElement>("log-grid");
+  const logPickHint = element<HTMLElement>("log-pick-hint");
+  const logRuler = element<HTMLElement>("log-ruler");
+  const logRulerLine = element<HTMLElement>("log-ruler-line");
+  const logRulerText = element<HTMLElement>("log-ruler-text");
+  const logRulerButton = element<HTMLButtonElement>("log-ruler-btn");
+  const logRulerUse = element<HTMLButtonElement>("log-ruler-use");
+  const logPatrol = element<HTMLButtonElement>("log-patrol");
+  const logRendezvous = element<HTMLButtonElement>("log-rendezvous");
+  const logQueueNote = element<HTMLElement>("log-queue-note");
+  const logQueueList = element<HTMLUListElement>("log-queue-list");
   const battleLogButton = element<HTMLButtonElement>("battle-log-btn");
   const battleLogButtonCount = element<HTMLElement>("battle-log-btn-count");
   const dockFrame = element<HTMLElement>("dock");
@@ -1501,6 +1524,14 @@ async function start(): Promise<void> {
   };
 
   let mode: ViewMode = "ship";
+  type LogTab = "chart" | "queued" | "fleets" | "trade";
+  let sailorsLogOpen = false;
+  let activeLogTab: LogTab = "chart";
+  let logChartPick: { kind: "patrol"; fleetId: string; points: Array<{ x: number; y: number }> } |
+    { kind: "rendezvous"; fleetId: string } | null = null;
+  let logRulerPoints: Array<{ x: number; y: number }> = [];
+  let logRulerArmed = false;
+  let logChartCentred = false;
   let showFlagshipPennant = readSavedFlagshipPennant();
   let showRouteLine = readSavedRouteLine();
   let chartTrailMode: ChartTrailMode = settings.journey.defaultChartTrail;
@@ -3678,9 +3709,8 @@ async function start(): Promise<void> {
 
       const members = document.createElement("ul");
       members.className = "fleet-member-list";
-      const ordered = [...fleet.members].sort((a, b) =>
-        a.id === fleet.leaderId ? -1 : b.id === fleet.leaderId ? 1 : 0,
-      );
+      const ordered = [...fleet.members];
+      const leaderIndex = ordered.findIndex((member) => member.id === fleet.leaderId);
       for (const member of ordered) {
         const item = document.createElement("li");
         item.className = "fleet-member-row";
@@ -3708,7 +3738,6 @@ async function start(): Promise<void> {
         state.className = "fleet-member-state";
         state.textContent = fleetMemberStateText(member.state);
         item.prepend(pick);
-        item.append(memberName, state);
         if (member.state === "detached") {
           const rejoin = document.createElement("button");
           rejoin.type = "button";
@@ -3718,9 +3747,37 @@ async function start(): Promise<void> {
             sendCommand({ t: "fleetRejoin", ship: member.id });
           });
           item.append(rejoin);
-        } else {
-          item.append(document.createElement("span"));
         }
+        const slot = ordered.findIndex((row) => row.id === member.id);
+        const slotTools = document.createElement("span");
+        slotTools.className = "fleet-member-slot";
+        if (member.id === fleet.leaderId) {
+          slotTools.textContent = "Leader · slot 1";
+        } else {
+          const up = document.createElement("button");
+          up.type = "button";
+          up.className = "btn";
+          up.textContent = "↑";
+          up.title = slot <= 1 ? "Already in the first follower slot" : "Move up one slot";
+          up.disabled = slot <= 1;
+          up.addEventListener("click", () => {
+            sendCommand({ t: "fleetMove", fleet: fleet.id, ship: member.id, delta: -1 });
+          });
+          const down = document.createElement("button");
+          down.type = "button";
+          down.className = "btn";
+          down.textContent = "↓";
+          down.title = slot >= ordered.length - 1 ? "Already in the last slot" : "Move down one slot";
+          down.disabled = slot >= ordered.length - 1;
+          down.addEventListener("click", () => {
+            sendCommand({ t: "fleetMove", fleet: fleet.id, ship: member.id, delta: 1 });
+          });
+          const label = document.createElement("span");
+          label.textContent = `slot ${slot + 1}`;
+          slotTools.append(up, down, label);
+        }
+        if (leaderIndex !== 0) slotTools.title = "Leader shown in slot 1";
+        item.append(memberName, state, slotTools);
         if (memberShip && memberShip.status !== "delivery") {
           const battle = document.createElement("div");
           battle.className = "fleet-member-battle";
@@ -4459,14 +4516,8 @@ async function start(): Promise<void> {
   }
 
   function openFleetPanel(): void {
-    closePortPanel();
-    closeTradePanel();
-    closeShipyardPanel();
-    closeHirePanel();
-    closeShipActions();
-    knownPortsPanel.hidden = true;
-    fleetPanel.hidden = false;
-    renderFleetPanel(true);
+    // 3K-c: the fleet panel now lives in the Sailor's Log.
+    openSailorsLog("fleets");
   }
 
   function stockSize(port: PortInfo): "small" | "mid" | "large" {
@@ -4910,6 +4961,7 @@ async function start(): Promise<void> {
     tradeShipId = null;
     tradeRenderKey = "";
     tradePanel.hidden = true;
+    if (sailorsLogOpen) renderLogTrade();
   }
 
   function tradeTabAvailable(
@@ -4929,6 +4981,8 @@ async function start(): Promise<void> {
       return;
     }
 
+    if (!sailorsLogOpen) openSailorsLog("trade");
+    else setLogTab("trade");
     closePortPanel();
     closeFleetPanel();
     closeShipyardPanel();
@@ -4950,6 +5004,7 @@ async function start(): Promise<void> {
     tradeRenderKey = "";
     tradePanel.hidden = false;
     renderTradePanel(true);
+    renderLogTrade();
   }
 
   function renderTradePanel(force = false): void {
@@ -8125,6 +8180,7 @@ async function start(): Promise<void> {
 
 
   function mapTapAction(screenX: number, screenY: number): void {
+    if (handleLogChartTap(screenX, screenY)) return;
     if (handleArmedOrderTap(screenX, screenY)) return;
     if (handleFireTargetTap(screenX, screenY)) return;
     const ownShip = shipAt(screenX, screenY);
@@ -8210,6 +8266,10 @@ async function start(): Promise<void> {
 
   function zoomTo(kmAcross: number): void {
     view.kmAcross = clamp(kmAcross, minViewKmAcross(), maxViewKmAcross());
+    if (sailorsLogOpen) {
+      renderLogGrid();
+      if (!logRuler.hidden) logRulerCache();
+    }
   }
 
   app.canvas.addEventListener("pointerdown", (event) => {
@@ -9180,6 +9240,433 @@ async function start(): Promise<void> {
     stanceSheetPanel.hidden = true;
   }
 
+  // ---- 3K-c: Sailor's Log, chart grid and scale ruler --------------------
+
+  function hydrateLogHosts(): void {
+    if (fleetPanel.parentElement !== logFleetsHost) logFleetsHost.append(fleetPanel);
+    if (tradePanel.parentElement !== logTradeHost) logTradeHost.append(tradePanel);
+    if (knownPortsPanel.parentElement !== logPortsHost) logPortsHost.append(knownPortsPanel);
+  }
+
+  function logPaneRect(): { left: number; top: number; width: number; height: number } {
+    const pane = document.getElementById("log-chart");
+    const rect = pane?.getBoundingClientRect();
+    if (rect && rect.width > 0 && rect.height > 0) {
+      return { left: rect.left, top: rect.top, width: rect.width, height: rect.height };
+    }
+    return {
+      left: 0,
+      top: 64,
+      width: app.screen.width * 0.55,
+      height: Math.max(1, app.screen.height - 64),
+    };
+  }
+
+  function logGridDiscovered(xKm: number, yKm: number): boolean {
+    if (chartMemory.all) return true;
+    const column = Math.floor(xKm / chartCellKm);
+    const row = Math.floor(yKm / chartCellKm);
+    if (column < 0 || column >= chartColumns || row < 0 || row >= chartRows) return false;
+    return discovered.has(row * chartColumns + column);
+  }
+
+  function renderLogGrid(): void {
+    logGrid.replaceChildren();
+    if (!sailorsLogOpen || mode !== "chart" || app.screen.width <= 0) return;
+    const pane = logPaneRect();
+    const s = scale();
+    const halfW = app.screen.width / (2 * s);
+    const halfH = app.screen.height / (2 * s);
+    const lines = chartGridLines({
+      xMin: view.x - halfW,
+      xMax: view.x + halfW,
+      yMin: view.y - halfH,
+      yMax: view.y + halfH,
+      isDiscovered: logGridDiscovered,
+    });
+    for (const line of lines) {
+      for (const segment of line.segments) {
+        const a = line.axis === "lon"
+          ? toScreen(line.at, segment.from)
+          : toScreen(segment.from, line.at);
+        const b = line.axis === "lon"
+          ? toScreen(line.at, segment.to)
+          : toScreen(segment.to, line.at);
+        const x = a.x - pane.left;
+        const y = a.y - pane.top;
+        if (line.axis === "lon") {
+          if (x < 0 || x > pane.width) continue;
+          const mark = document.createElement("div");
+          mark.className = "log-grid-line lon";
+          mark.style.left = `${x}px`;
+          mark.style.top = `${y}px`;
+          mark.style.height = `${Math.max(1, b.y - a.y)}px`;
+          logGrid.append(mark);
+        } else {
+          if (y < 0 || y > pane.height) continue;
+          const mark = document.createElement("div");
+          mark.className = "log-grid-line lat";
+          mark.style.left = `${x}px`;
+          mark.style.top = `${y}px`;
+          mark.style.width = `${Math.max(1, b.x - a.x)}px`;
+          logGrid.append(mark);
+        }
+      }
+      const first = line.segments[0];
+      if (!first) continue;
+      const edge = line.axis === "lon"
+        ? toScreen(line.at, first.from)
+        : toScreen(first.from, line.at);
+      const labelX = edge.x - pane.left;
+      const labelY = edge.y - pane.top;
+      if (labelX < 0 || labelX > pane.width || labelY < 0 || labelY > pane.height) continue;
+      const label = document.createElement("span");
+      label.className = "log-grid-label";
+      label.textContent = line.label;
+      label.style.left = `${labelX + 2}px`;
+      label.style.top = `${labelY + 2}px`;
+      logGrid.append(label);
+    }
+  }
+
+  function renderLogShips(): void {
+    logShips.replaceChildren();
+    for (const ship of fleetShips.filter((row) => row.status !== "delivery")) {
+      const item = document.createElement("li");
+      const button = document.createElement("button");
+      button.type = "button";
+      button.textContent = `${ship.isFlagship ? "⚑ " : ""}${ship.name} · ${ship.classId} · ${Math.round(ship.crew)}/${ship.fullCrew}`;
+      button.dataset.shipId = ship.id;
+      button.setAttribute("aria-pressed", String(ship.id === selectedShipId));
+      button.addEventListener("click", () => {
+        updateSelectedShip(ship.id, true);
+        closeSailorsLog();
+      });
+      item.append(button);
+      logShips.append(item);
+    }
+    if (logShips.childElementCount === 0) {
+      const item = document.createElement("li");
+      item.textContent = "No ships yet.";
+      logShips.append(item);
+    }
+  }
+
+  function renderLogQueue(): void {
+    const fleet = selectedFleetIds()[0] ? fleetById(selectedFleetIds()[0]!) : null;
+    logPatrol.disabled = !fleet;
+    logPatrol.title = fleet ? "Pick a patrol and tap two chart points" : "Select a fleet first";
+    logRendezvous.disabled = !fleet;
+    logRendezvous.title = fleet ? "Pick a rendezvous point on the chart" : "Select a fleet first";
+    logQueueNote.textContent = fleet
+      ? `${fleet.name}: Patrol or Rendezvous, then tap the chart. Taps only pick points.`
+      : "Select a fleet first. Taps on the chart only pick points, never sail a ship.";
+    logQueueList.replaceChildren();
+    for (const entry of playerFleets) {
+      const leader = shipById(entry.leaderId);
+      const queued = (leader?.orderLines ?? [])
+        .filter((line) => line.kind === "queue" && line.queueNumber !== undefined);
+      const heading = document.createElement("li");
+      heading.textContent = `${entry.name}${queued.length ? "" : " · no queued points"}`;
+      heading.className = "log-queue-fleet";
+      logQueueList.append(heading);
+      for (const line of queued) {
+        const index = (line.queueNumber ?? 1) - 1;
+        const item = document.createElement("li");
+        item.className = "log-queue-row";
+        const label = document.createElement("span");
+        label.textContent = line.label || `Queued ${index + 1}`;
+        const buttons = document.createElement("span");
+        const up = document.createElement("button");
+        up.type = "button";
+        up.className = "btn";
+        up.textContent = "Up";
+        up.disabled = index <= 0;
+        up.addEventListener("click", () => sendCommand({ t: "queueUpdate", fleet: entry.id, action: "move", index, to: index - 1 }));
+        const down = document.createElement("button");
+        down.type = "button";
+        down.className = "btn";
+        down.textContent = "Down";
+        down.disabled = index >= queued.length - 1;
+        down.addEventListener("click", () => sendCommand({ t: "queueUpdate", fleet: entry.id, action: "move", index, to: index + 1 }));
+        const remove = document.createElement("button");
+        remove.type = "button";
+        remove.className = "btn";
+        remove.textContent = "Remove";
+        remove.addEventListener("click", () => sendCommand({ t: "queueUpdate", fleet: entry.id, action: "remove", index }));
+        buttons.append(up, down, remove);
+        item.append(label, buttons);
+        logQueueList.append(item);
+      }
+    }
+    if (logQueueList.childElementCount === 0) {
+      const item = document.createElement("li");
+      item.textContent = "No fleets yet.";
+      logQueueList.append(item);
+    }
+  }
+
+  function renderLogTrade(): void {
+    logCargoList.replaceChildren();
+    for (const ship of fleetShips.filter((row) => row.status !== "delivery")) {
+      const item = document.createElement("li");
+      const button = document.createElement("button");
+      button.type = "button";
+      button.dataset.shipId = ship.id;
+      button.textContent = `${ship.name} · ${formatTonnesWithUnit(ship.cargoUsed)} in the hold`;
+      button.addEventListener("click", () => {
+        updateSelectedShip(ship.id, true);
+        closeSailorsLog();
+        setShipExpanded(true);
+      });
+      item.append(button);
+      logCargoList.append(item);
+    }
+    const note = logTradeHost.querySelector<HTMLElement>("[data-log-trade-note]");
+    if (tradePortId && tradePanel.hidden) tradePanel.hidden = false;
+    if (!tradePortId) {
+      if (!note) {
+        const p = document.createElement("p");
+        p.className = "log-note";
+        p.dataset.logTradeNote = "1";
+        p.textContent = "Dock a ship and open its port trade to see cargo and storage here.";
+        logTradeHost.prepend(p);
+      }
+    } else {
+      note?.remove();
+    }
+  }
+
+  function renderLogFleets(): void {
+    renderFleetPanel(true);
+    fleetPanel.hidden = false;
+  }
+
+  function setLogTab(tab: LogTab): void {
+    activeLogTab = tab;
+    for (const button of logTabs) {
+      button.setAttribute("aria-selected", String(button.dataset.logTab === tab));
+    }
+    logPanelChart.hidden = tab !== "chart";
+    logPanelQueued.hidden = tab !== "queued";
+    logPanelFleets.hidden = tab !== "fleets";
+    logPanelTrade.hidden = tab !== "trade";
+    logPickHint.hidden = logChartPick === null;
+    if (tab === "chart") {
+      renderLogShips();
+      renderKnownPorts();
+      knownPortsPanel.hidden = false;
+    } else if (tab === "queued") {
+      renderLogQueue();
+    } else if (tab === "fleets") {
+      renderLogFleets();
+    } else if (tab === "trade") {
+      renderLogTrade();
+    }
+    renderLogGrid();
+  }
+
+  function openSailorsLog(tab: LogTab = "chart"): void {
+    hydrateLogHosts();
+    closePortPanel();
+    closeFleetPanel();
+    closeShipyardPanel();
+    closeHirePanel();
+    sailorsLogOpen = true;
+    sailorsLogPanel.hidden = false;
+    sailorsLogButton.setAttribute("aria-expanded", "true");
+    setMode("chart");
+    if (!logChartCentred) {
+      // The chart canvas runs the full screen; the log covers its right side.
+      // Centre the selected ship's discovered chart in the visible left pane,
+      // not underneath the list panel.
+      const pane = logPaneRect();
+      view.kmAcross = clamp(600, minViewKmAcross(), maxViewKmAcross());
+      const focusShip = selectedFleetShip() ?? fleetShips.find((ship) => ship.status !== "delivery");
+      const focus = focusShip
+        ? { x: focusShip.x, y: focusShip.y }
+        : { x: MAP_WIDTH_KM / 2, y: MAP_HEIGHT_KM / 2 };
+      const s = scale();
+      view.x = clamp(
+        focus.x + (app.screen.width / 2 - (pane.left + pane.width / 2)) / s,
+        0,
+        MAP_WIDTH_KM,
+      );
+      view.y = clamp(
+        focus.y + (app.screen.height / 2 - (pane.top + pane.height / 2)) / s,
+        0,
+        MAP_HEIGHT_KM,
+      );
+      logChartCentred = true;
+      lastChartBuild = 0;
+      refreshMap(performance.now(), true);
+      refreshFogPaper();
+    }
+    setLogTab(tab);
+  }
+
+  function closeSailorsLog(): void {
+    if (!sailorsLogOpen) return;
+    sailorsLogOpen = false;
+    sailorsLogPanel.hidden = true;
+    sailorsLogButton.setAttribute("aria-expanded", "false");
+    logChartPick = null;
+    logRulerArmed = false;
+    logRulerPoints = [];
+    logPickHint.hidden = true;
+    logRuler.hidden = true;
+    logRulerLine.hidden = true;
+    logRulerUse.hidden = true;
+    logChartCentred = false;
+    setMode("ship");
+  }
+
+  function logRulerCache(): void {
+    logRuler.hidden = false;
+    logRulerUse.hidden = logRulerPoints.length < 2;
+    if (logRulerPoints.length === 0) {
+      logRulerText.textContent = "Scale ruler: tap two chart points.";
+      logRulerLine.hidden = true;
+      return;
+    }
+    if (logRulerPoints.length === 1) {
+      logRulerText.textContent = "Scale ruler: tap the second point.";
+      logRulerLine.hidden = true;
+      return;
+    }
+    const a = logRulerPoints[0]!;
+    const b = logRulerPoints[1]!;
+    const result = scaleRuler(a, b);
+    logRulerText.textContent = `${result.bearingDeg.toFixed(0)}° · ${result.distanceKm.toFixed(1)} km`;
+    const pane = logPaneRect();
+    const from = toScreen(a.x, a.y);
+    const to = toScreen(b.x, b.y);
+    const dx = to.x - from.x;
+    const dy = to.y - from.y;
+    logRulerLine.hidden = false;
+    logRulerLine.style.left = `${from.x - pane.left}px`;
+    logRulerLine.style.top = `${from.y - pane.top}px`;
+    logRulerLine.style.width = `${Math.hypot(dx, dy)}px`;
+    logRulerLine.style.transform = `rotate(${Math.atan2(dy, dx)}rad)`;
+  }
+
+  function handleLogChartTap(screenX: number, screenY: number): boolean {
+    if (!sailorsLogOpen) return false;
+    const point = toWorld(screenX, screenY);
+    if (logRulerArmed) {
+      if (logRulerPoints.length >= 2) logRulerPoints = [];
+      logRulerPoints.push(point);
+      renderLogGrid();
+      logRulerCache();
+      logPickHint.hidden = false;
+      logPickHint.textContent = logRulerPoints.length < 2
+        ? "Scale ruler: tap the second point."
+        : "Scale ruler: bearing and distance shown.";
+      return true;
+    }
+    if (logChartPick?.kind === "patrol") {
+      logChartPick.points.push(point);
+      if (logChartPick.points.length < 2) {
+        logPickHint.hidden = false;
+        logPickHint.textContent = "Patrol: tap the second point.";
+        return true;
+      }
+      const [a, b] = logChartPick.points;
+      sendFleetOrder(logChartPick.fleetId, { type: "patrol", a: a!, b: b! });
+      showNotice("Patrol ordered from the chart.");
+      logChartPick = null;
+      logPickHint.hidden = true;
+      renderLogQueue();
+      return true;
+    }
+    if (logChartPick?.kind === "rendezvous") {
+      const fleet = fleetById(logChartPick.fleetId);
+      sendFleetOrder(logChartPick.fleetId, {
+        type: "rendezvous",
+        point,
+        memberIds: fleet?.members.map((member) => member.id) ?? [],
+      });
+      showNotice("Rendezvous ordered from the chart.");
+      logChartPick = null;
+      logPickHint.hidden = true;
+      renderLogQueue();
+      return true;
+    }
+    return false;
+  }
+
+  function beginLogPick(kind: "patrol" | "rendezvous"): void {
+    const fleetId = selectedFleetIds()[0];
+    if (!fleetId) {
+      showNotice("Select a fleet first.");
+      return;
+    }
+    logRulerArmed = false;
+    logRulerPoints = [];
+    logRuler.hidden = true;
+    logChartPick = kind === "patrol"
+      ? { kind, fleetId, points: [] }
+      : { kind, fleetId };
+    logPickHint.hidden = false;
+    logPickHint.textContent = kind === "patrol"
+      ? "Patrol: tap the first point."
+      : "Rendezvous: tap the point.";
+  }
+
+  function armLogRuler(): void {
+    logChartPick = null;
+    logRulerArmed = true;
+    logRulerPoints = [];
+    logRuler.hidden = false;
+    logRulerUse.hidden = true;
+    logPickHint.hidden = false;
+    logPickHint.textContent = "Scale ruler: tap two chart points.";
+    logRulerText.textContent = "Scale ruler: tap two chart points.";
+    logRulerLine.hidden = true;
+  }
+
+  function useRulerCourse(): void {
+    if (logRulerPoints.length < 2) return;
+    const result = scaleRuler(logRulerPoints[0]!, logRulerPoints[1]!);
+    closeSailorsLog();
+    openHeading(null);
+    headingDegrees.value = String(Math.round(result.bearingDeg) % 360);
+    headingDial.value = String(Math.round(result.bearingDeg) % 360);
+    headingDistance.value = result.distanceKm.toFixed(1);
+    drawHeadingPreview();
+  }
+
+  function openLogFromKnownPorts(): void {
+    hydrateLogHosts();
+    openSailorsLog("chart");
+    knownPortsPanel.hidden = false;
+    renderKnownPorts();
+  }
+
+  for (const button of logTabs) {
+    button.addEventListener("click", () => {
+      const tab = button.dataset.logTab;
+      if (tab === "return") closeSailorsLog();
+      else if (tab === "chart" || tab === "queued" || tab === "fleets" || tab === "trade") {
+        if (!sailorsLogOpen) openSailorsLog(tab);
+        else setLogTab(tab);
+      }
+    });
+  }
+  logRulerButton.addEventListener("click", armLogRuler);
+  logRulerUse.addEventListener("click", useRulerCourse);
+  logPatrol.addEventListener("click", () => {
+    beginLogPick("patrol");
+  });
+  logRendezvous.addEventListener("click", () => {
+    beginLogPick("rendezvous");
+  });
+  logPortsHost.addEventListener("click", () => {
+    window.setTimeout(() => {
+      if (!portPanel.hidden) closeSailorsLog();
+    }, 0);
+  });
+
   function renderFormationsSheet(): void {
     const fleet = fleetById(selectedFleetId);
     formationsChoices.replaceChildren();
@@ -9219,19 +9706,15 @@ async function start(): Promise<void> {
     if (open) renderFormationsSheet();
   }
 
-  function openSailorsLogPlaceholder(): void {
-    if (mode !== "chart") setMode("chart");
-    renderKnownPorts();
-    knownPortsPanel.hidden = false;
-    showNotice("Sailor's Log chart. Full tabs arrive next.");
-  }
-
   formationsButton.addEventListener("click", toggleFormationsSheet);
   formationsClose.addEventListener("click", () => {
     formationsSheet.hidden = true;
     formationsButton.setAttribute("aria-expanded", "false");
   });
-  sailorsLogButton.addEventListener("click", openSailorsLogPlaceholder);
+  sailorsLogButton.addEventListener("click", () => {
+    if (sailorsLogOpen) closeSailorsLog();
+    else openSailorsLog("chart");
+  });
   toolsButton.addEventListener("click", () => openHeading(null));
   stanceButton.addEventListener("click", () => {
     if (stanceSheetPanel.hidden) openStanceSheet();
@@ -9761,15 +10244,14 @@ async function start(): Promise<void> {
   setShipExpanded(false);
 
   knownPortsButton.addEventListener("click", () => {
-    if (mode !== "chart") setMode("chart");
+    // 3K-c: the old floating port list now lives in the Sailor's Log chart.
     menuPanel.hidden = true;
     menuButton.setAttribute("aria-expanded", "false");
     closePortPanel();
     closeFleetPanel();
     closeShipyardPanel();
     closeHirePanel();
-    renderKnownPorts();
-    knownPortsPanel.hidden = false;
+    openLogFromKnownPorts();
   });
 
   for (const button of tradePanel.querySelectorAll<HTMLButtonElement>(
@@ -9882,6 +10364,10 @@ async function start(): Promise<void> {
   });
   document.addEventListener("keydown", (event) => {
     if (event.key !== "Escape") return;
+    if (sailorsLogOpen) {
+      closeSailorsLog();
+      return;
+    }
     menuPanel.hidden = true;
     menuButton.setAttribute("aria-expanded", "false");
     closePortPanel();
@@ -10246,6 +10732,14 @@ async function start(): Promise<void> {
       layoutSlots: () => Array<{ id: string; left: number; top: number; width: number; height: number }>;
       centreScreen: () => { x: number; y: number };
       selectShip: (id: string) => boolean;
+      openLog: (tab: "chart" | "queued" | "fleets" | "trade") => void;
+      closeLog: () => void;
+      logTab: () => string;
+      logGridLabels: () => string[];
+      logRuler: () => { points: number; text: string };
+      armLogRuler: () => void;
+      queueLines: () => string[];
+      logDebug: () => Record<string, unknown>;
     };
   };
   (window as ArmadaTestWindow).__armadaTest = {
@@ -10319,6 +10813,41 @@ async function start(): Promise<void> {
     }),
     centreScreen: () => ({ x: app.screen.width / 2, y: app.screen.height / 2 }),
     selectShip: (id) => updateSelectedShip(id, true),
+    openLog: (tab) => openSailorsLog(tab),
+    closeLog: closeSailorsLog,
+    logTab: () => activeLogTab,
+    logGridLabels: () => [...logGrid.querySelectorAll<HTMLElement>(".log-grid-label")].map((node) => node.textContent ?? ""),
+    logRuler: () => ({ points: logRulerPoints.length, text: logRulerText.textContent ?? "" }),
+    armLogRuler,
+    queueLines: () => [...logQueueList.querySelectorAll<HTMLElement>(".log-queue-row")].map((node) => node.textContent ?? ""),
+    logDebug: () => {
+      const pane = logPaneRect();
+      const s = scale();
+      const halfW = app.screen.width / (2 * s);
+      const halfH = app.screen.height / (2 * s);
+      const box = {
+        xMin: view.x - halfW,
+        xMax: view.x + halfW,
+        yMin: view.y - halfH,
+        yMax: view.y + halfH,
+      };
+      return {
+        mode,
+        all: chartMemory.all,
+        discovered: discovered.size,
+        view: { ...view },
+        pane,
+        gridChildren: logGrid.childElementCount,
+        screen: { width: app.screen.width, height: app.screen.height },
+        linesAll: chartGridLines({ ...box, isDiscovered: () => true }).length,
+        linesDisc: chartGridLines({ ...box, isDiscovered: logGridDiscovered }).length,
+        box,
+        sample: [...discovered].slice(0, 5),
+        columns: chartColumns,
+        rows: chartRows,
+        cell: chartCellKm,
+      };
+    },
   };
   window.addEventListener("error", (event) => {
     reportClientError(event.error ?? event.message, "window error");

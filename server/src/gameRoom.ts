@@ -80,6 +80,8 @@ import {
   castOffTow,
   setShipLights,
   rejoinPlayerShip,
+  movePlayerFleetMember,
+  updateFleetQueue,
   requestChartResume,
   resupplyShip,
   savePlayerControlGroup,
@@ -749,6 +751,9 @@ export class GameRoom {
       leader?: unknown;
       order?: unknown;
       queue?: unknown;
+      action?: unknown;
+      index?: unknown;
+      delta?: unknown;
       slot?: unknown;
       ids?: unknown;
       enabled?: unknown;
@@ -944,6 +949,10 @@ export class GameRoom {
       });
     } else if (order.t === "fleetDisband") {
       accepted = disbandPlayerFleet(this.world, playerId, order.fleet);
+    } else if (order.t === "fleetMove") {
+      accepted = movePlayerFleetMember(this.world, playerId, order.fleet, order.ship, order.delta);
+    } else if (order.t === "queueUpdate") {
+      accepted = updateFleetQueue(this.world, playerId, order.fleet, order.action, order.index, order.to);
     } else if (order.t === "fleetDetach") {
       accepted = detachPlayerShip(this.world, playerId, order.ship);
     } else if (order.t === "fleetRejoin") {

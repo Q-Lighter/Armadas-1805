@@ -697,6 +697,68 @@
       </div>
     </section>
 
+    <!-- 3K-c: the full-screen Sailor's Log. The chart runs behind the left
+         pane; the right pane owns every tab. -->
+    <section class="sailors-log" id="sailors-log" role="dialog" aria-labelledby="sailors-log-title" hidden>
+      <header class="log-bar">
+        <h1 id="sailors-log-title">Sailor's Log</h1>
+        <nav class="log-tabs" role="tablist" aria-label="Sailor's Log sections">
+          <button class="log-tab" type="button" data-log-tab="return">Return to game</button>
+          <button class="log-tab" type="button" data-log-tab="chart" role="tab" aria-selected="true">Chart</button>
+          <button class="log-tab" type="button" data-log-tab="queued" role="tab" aria-selected="false">Queued orders</button>
+          <button class="log-tab" type="button" data-log-tab="fleets" role="tab" aria-selected="false">Fleets</button>
+          <button class="log-tab" type="button" data-log-tab="trade" role="tab" aria-selected="false">Trade routes</button>
+        </nav>
+      </header>
+      <div class="log-body">
+        <section class="log-chart" id="log-chart" aria-label="Chart">
+          <div class="log-grid" id="log-grid" aria-hidden="true"></div>
+          <div class="log-rose" aria-hidden="true">
+            <span>N</span><span>E</span><span>S</span><span>W</span>
+            <b>✦</b>
+          </div>
+          <p class="log-pick-hint" id="log-pick-hint" hidden></p>
+          <div class="log-ruler" id="log-ruler" hidden>
+            <div class="log-ruler-line" id="log-ruler-line"></div>
+            <p id="log-ruler-text"></p>
+            <button class="btn" id="log-ruler-use" type="button" hidden>Use this course</button>
+          </div>
+        </section>
+        <aside class="log-side">
+          <section class="log-panel" id="log-panel-chart">
+            <div class="log-order-actions">
+              <button class="btn" id="log-ruler-btn" type="button">Scale ruler</button>
+            </div>
+            <h2>Ship list</h2>
+            <ul class="log-ship-list" id="log-ships"></ul>
+            <h2>Port list</h2>
+            <div class="log-port-host" id="log-ports-host"></div>
+          </section>
+          <section class="log-panel" id="log-panel-queued" hidden>
+            <h2>Queued orders</h2>
+            <div class="log-order-actions">
+              <button class="btn" id="log-patrol" type="button">Patrol</button>
+              <button class="btn" id="log-rendezvous" type="button">Rendezvous</button>
+            </div>
+            <p class="log-note" id="log-queue-note">Select a fleet, then choose Patrol or Rendezvous and tap the chart.</p>
+            <ul class="log-queue-list" id="log-queue-list"></ul>
+          </section>
+          <section class="log-panel" id="log-panel-fleets" hidden>
+            <div class="log-host" id="log-fleets-host"></div>
+          </section>
+          <section class="log-panel" id="log-panel-trade" hidden>
+            <h2>Ship cargo</h2>
+            <ul class="log-ship-list" id="log-cargo-list"></ul>
+            <div class="log-host" id="log-trade-host"></div>
+            <div class="log-disabled" id="log-trade-links">
+              <button class="btn" type="button" disabled>Trade links</button>
+              <p>Arrives with trade links</p>
+            </div>
+          </section>
+        </aside>
+      </div>
+    </section>
+
     <!-- A found port's paper folio. It is filled from the current port state. -->
     <section
       class="port-panel paper"

@@ -150,6 +150,9 @@ function clientState(world: World, playerId: string, allowed = settings.fog.maxB
 test("a 1,400 km voyage keeps every sight-radius cell through a slow client and two reconnects", () => {
   const world = createWorld("test-3g-chart-coverage");
   const ship = addPlayer(world, "chart-voyager", "frigate", 50_000, "British");
+  // This test owns chart delivery, not the sight table; pin daylight so its
+  // twenty-five kilometre expectation stays about the pipeline.
+  world.testDaylight = 1;
   const owner = world.owners.get("chart-voyager")!;
   owner.routeLineEnabled = false;
   const start = octagonPoint(0);

@@ -25,6 +25,7 @@ import {
   orderFireShipIgnite,
   orderTowFireShip,
   setShipLights,
+  setTestMoonPhase,
   setTestTimeOfDay,
   spawnTestAnchoredFleet,
   spawnTestFireShips,
@@ -287,6 +288,7 @@ test("3G lights matter only at night and never for capture", () => {
   assert.ok(state.ships.some((ship) => ship[0] === enemy.id));
 
   setTestTimeOfDay(world, 23);
+  setTestMoonPhase(world, 0.5);
   state = visibleStateFor(world, "alpha");
   assert.equal(state.ships.some((ship) => ship[0] === enemy.id), true);
 

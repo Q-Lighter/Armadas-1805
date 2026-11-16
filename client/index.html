@@ -42,6 +42,11 @@
       <button class="btn slot-button" id="formations-btn" type="button" aria-expanded="false">Formations</button>
     </header>
 
+    <div class="tool-wind-marker" id="tool-wind-marker" hidden aria-hidden="true">
+      <span class="tool-wind-arrow" id="tool-wind-arrow"></span>
+      <b id="tool-wind-text">–</b>
+    </div>
+
     <!-- 3J-fix-c2: five first-use hints. Never modal and always dismissable. -->
     <aside class="controls-hint paper" id="controls-hint" aria-live="polite" hidden>
       <p id="controls-hint-text"></p>
@@ -417,7 +422,7 @@
       <section class="controls-help" id="controls-help" hidden aria-labelledby="controls-help-title">
         <h3 id="controls-help-title">Controls</h3>
         <p><strong>Tap</strong> a ship to select it; tap it again for its sheet; double-tap for its fleet. A tap on empty sea does nothing.</p>
-        <p><strong>Tools</strong> opens Heading and distance. Set a compass heading and kilometres, preview the line, then Set course.</p>
+        <p><strong>Tools</strong> lists every tool: Heading and distance, Wind, Range check and Scale ruler. Unbuilt tools stay visible with their reason.</p>
         <p><strong>Stance</strong> sets one of four stances and arms one battle order or action. Tap its target in sight. The armed banner cancels it.</p>
         <p><strong>Enemy</strong> tap still shows Attack: Sink, Attack: Capture, Loot, Board. One tap starts it.</p>
         <p><strong>Bulk:</strong> Select all, Select nearby, class chips, or drag a box in Multi. Save group keeps the selection; 1–9 recall it.</p>
@@ -515,6 +520,16 @@
           <input id="test-time-hour" type="number" min="0" max="23" step="1" value="23" inputmode="numeric" />
         </label>
         <button class="btn" id="test-time-set" type="button">Set time of day</button>
+        <label class="test-inline">Moon phase
+          <select id="test-moon-phase">
+            <option value="0" selected>New</option>
+            <option value="0.125">Crescent</option>
+            <option value="0.25">Quarter</option>
+            <option value="0.375">Gibbous</option>
+            <option value="0.5">Full</option>
+          </select>
+        </label>
+        <button class="btn" id="test-moon-set" type="button">Set moon phase</button>
         <button class="btn" id="test-remove" type="button">Remove all dummies</button>
         <button class="btn" id="test-refill" type="button">Refill and repair my ships</button>
         <button class="btn" id="test-sink-flagship" type="button">Sink my flagship</button>
@@ -658,6 +673,53 @@
     </section>
 
     <!-- Stance and battle-order toggles for the selected ship or fleet. -->
+    <!-- 3K-d: the Tools sheet lists every planned tool. Unbuilt tools stay
+         visible with their reason. -->
+    <section class="tools-sheet paper" id="tools-sheet" role="dialog" aria-labelledby="tools-title" hidden>
+      <div class="panel-head">
+        <div>
+          <p class="kicker">Navigation</p>
+          <h2 id="tools-title">Tools</h2>
+        </div>
+        <button class="btn panel-close" id="tools-close" type="button">Close</button>
+      </div>
+      <div class="tool-list">
+        <button class="btn tool-row" id="tool-heading" type="button">
+          <strong>Heading and distance</strong><span>Set course for the selection</span>
+        </button>
+        <button class="btn tool-row" id="tool-wind" type="button" aria-pressed="false">
+          <strong>Wind</strong><span>Local wind arrow and speed</span>
+        </button>
+        <button class="btn tool-row" id="tool-range" type="button" aria-pressed="false">
+          <strong>Range check</strong><span>Sight, cannon range and hit-chance bands</span>
+        </button>
+        <button class="btn tool-row" id="tool-scale" type="button">
+          <strong>Scale ruler</strong><span>Two chart points, true bearing and distance</span>
+        </button>
+        <button class="btn tool-row" type="button" disabled>
+          <strong>Spyglass</strong><span>Not built yet</span>
+        </button>
+        <button class="btn tool-row" type="button" disabled>
+          <strong>Depth</strong><span>Not built yet</span>
+        </button>
+        <button class="btn tool-row" type="button" disabled>
+          <strong>Survey area</strong><span>Not built yet</span>
+        </button>
+        <button class="btn tool-row" type="button" disabled>
+          <strong>Currents and tides</strong><span>Not built yet</span>
+        </button>
+        <button class="btn tool-row" type="button" disabled>
+          <strong>Barometer</strong><span>Not built yet</span>
+        </button>
+        <button class="btn tool-row" type="button" disabled>
+          <strong>Poseidon's trident</strong><span>Item only</span>
+        </button>
+        <button class="btn tool-row" type="button" disabled>
+          <strong>Compass of Desire</strong><span>Item only</span>
+        </button>
+      </div>
+    </section>
+
     <section class="stance-sheet paper" id="stance-sheet" role="dialog" aria-labelledby="stance-title" hidden>
       <div class="panel-head">
         <div><p class="kicker">Orders</p><h2 id="stance-title">Stance</h2></div>

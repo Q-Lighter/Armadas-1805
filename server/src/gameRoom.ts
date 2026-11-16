@@ -74,6 +74,7 @@ import {
   spawnTestFireShips,
   spawnTestAnchoredFleet,
   setTestTimeOfDay,
+  setTestMoonPhase,
   orderFireShipIgnite,
   orderTowFireShip,
   cancelFireShipContact,
@@ -759,6 +760,7 @@ export class GameRoom {
       enabled?: unknown;
       on?: unknown;
       hour?: unknown;
+      phase?: unknown;
       mode?: unknown;
       target?: unknown;
       deg?: unknown;
@@ -1153,6 +1155,8 @@ export class GameRoom {
       spawnTestAnchoredFleet(this.world, playerId, stance);
     } else if (order.t === "testTimeOfDay" && this.world.kind !== "normal") {
       if (typeof order.hour === "number") setTestTimeOfDay(this.world, order.hour);
+    } else if (order.t === "testMoonPhase" && this.world.kind !== "normal") {
+      accepted = setTestMoonPhase(this.world, order.phase);
     }
 
     if (!accepted) {

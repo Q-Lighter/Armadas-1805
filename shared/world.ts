@@ -106,7 +106,8 @@ import { recordJourneys, simplifyTrail, startJourney, stopJourney, stopAllJourne
 import type { JourneyState } from "./journey.js";
 import type { DebugStats } from "./loadMetrics.js";
 import { SpatialGrid } from "./spatialGrid.js";
-import { gameClockAt, GAME_HOUR_MS } from "./time.js";
+import { gameClockAt, GAME_HOUR_MS, moonPhase } from "./time.js";
+import { sightRangeKm } from "./sight.js";
 import {
   contactAttackGivenUp,
   contactIgnitionInRange,
@@ -115,7 +116,6 @@ import {
   isTowerClass,
   towRefusal,
   towSpeedKnots,
-  withinNightLightsOffRange,
 } from "./fireShip.js";
 import {
   captureRangeKm,
@@ -364,6 +364,10 @@ export interface World {
   gameSeconds: number;
   /** Integer game milliseconds since the room started; the clock authority. */
   gameMs: number;
+  /** Dev/test only: pin the moon phase without moving the clock. */
+  testMoonPhase?: number;
+  /** Dev/test only: pin daylight (1 day, 0 night) for deterministic runs. */
+  testDaylight?: number;
   /** The room code and its kind (normal, test or debug). */
   roomCode: string;
   kind: RoomKind;
@@ -912,6 +916,8 @@ export interface StateMessage {
   k: RoomKind;
   /** Game time in milliseconds since the room started. */
   g: number;
+  /** Dev/test moon-phase override, when one is pinned. */
+  moon?: number;
   ships: ShipSnapshot[];
   /** Faded last-seen markers. */
   l: LastSeenSnapshot[];
@@ -2197,7 +2203,14 @@ export function addPlayer(
     if (!world.charts.has(playerId)) {
       const chart = createChart(world.kind);
       world.charts.set(playerId, chart);
-      revealCircle(chart, existing.x, existing.y);
+      const clock = gameClockAt(world.gameMs);
+      const startMoon = world.testMoonPhase ?? moonPhase(world.gameMs).phase;
+      revealCircle(chart, existing.x, existing.y, sightRangeKm(
+        { daySightKm: shipSightRadiusKm(existing), lightsOn: false },
+        settings.fog.nightSightEnabled ? (world.testDaylight ?? clock.daylight) : 1,
+        startMoon,
+        false,
+      ));
       seedExploredBlocks(world, playerId, chart);
     }
     if (!existing.research) {
@@ -2258,7 +2271,14 @@ export function addPlayer(
 
   const chart = createChart(world.kind);
   world.charts.set(playerId, chart);
-  revealCircle(chart, ship.x, ship.y);
+  const startClock = gameClockAt(world.gameMs);
+  const startMoon = world.testMoonPhase ?? moonPhase(world.gameMs).phase;
+  revealCircle(chart, ship.x, ship.y, sightRangeKm(
+    { daySightKm: shipSightRadiusKm(ship), lightsOn: false },
+    settings.fog.nightSightEnabled ? (world.testDaylight ?? startClock.daylight) : 1,
+    startMoon,
+    false,
+  ));
   seedExploredBlocks(world, playerId, chart);
   return ship;
 }
@@ -4226,6 +4246,13 @@ export function setTestTimeOfDay(world: World, hour: number): boolean {
   const clock = gameClockAt(world.gameMs);
   const delta = (hour - clock.hour + 24) % 24;
   world.gameMs += delta * GAME_HOUR_MS;
+  return true;
+}
+
+/** Dev/test only: pin the moon phase without changing the game clock. */
+export function setTestMoonPhase(world: World, phase: unknown): boolean {
+  if (world.kind === "normal" || typeof phase !== "number" || !Number.isFinite(phase)) return false;
+  world.testMoonPhase = ((phase % 1) + 1) % 1;
   return true;
 }
 
@@ -7494,12 +7521,21 @@ function stepContactFireShip(
 }
 
 /** Update every owner's discovered ground from all of that owner's ships. */
-function updateFog(world: World): void {
+export function updateFog(world: World): void {
+  const clock = gameClockAt(world.gameMs);
+  const daylight = settings.fog.nightSightEnabled ? (world.testDaylight ?? clock.daylight) : 1;
+  const moon = world.testMoonPhase ?? moonPhase(world.gameMs).phase;
   for (const [ownerId, chart] of world.charts) {
     if (chart.all) continue;
     for (const ship of shipsForOwner(world, ownerId)) {
       if (ship.deliveryPortId) continue;
-      revealCircle(chart, ship.x, ship.y, shipSightRadiusKm(ship));
+      const sight = sightRangeKm(
+        { daySightKm: shipSightRadiusKm(ship), lightsOn: false },
+        daylight,
+        moon,
+        false,
+      );
+      revealCircle(chart, ship.x, ship.y, sight);
     }
     awardExploredCells(world, ownerId, chart);
   }
@@ -10062,37 +10098,42 @@ export function visibleStateFor(
   const own = shipsForOwner(world, playerId);
   const ownIds = new Set(own.map((ship) => ship.id));
   const activeOwn = own.filter((ship) => !ship.deliveryPortId);
+  const clock = gameClockAt(world.gameMs);
+  const daylight = settings.fog.nightSightEnabled ? (world.testDaylight ?? clock.daylight) : 1;
+  const moon = world.testMoonPhase ?? moonPhase(world.gameMs).phase;
   const sightByOwn = new Map<Ship, number>();
-  for (const ship of activeOwn) sightByOwn.set(ship, shipSightRadiusKm(ship));
+  for (const ship of activeOwn) {
+    sightByOwn.set(ship, sightRangeKm(
+      { daySightKm: shipSightRadiusKm(ship), lightsOn: false },
+      daylight,
+      moon,
+      false,
+    ));
+  }
   const maxSightKm = Math.max(settings.fog.sightRangeKm,
     ...activeOwn.map((ship) => sightByOwn.get(ship) ?? settings.fog.sightRangeKm));
-  const sightSq = maxSightKm ** 2;
   const ownGrid = new SpatialGrid<Ship>(maxSightKm);
   for (const ship of activeOwn) ownGrid.insert(ship);
-  const clock = gameClockAt(world.gameMs);
   const seesPoint = (x: number, y: number): boolean => activeOwn.some((ship) => {
     const radius = sightByOwn.get(ship) ?? settings.fog.sightRangeKm;
     return (ship.x - x) ** 2 + (ship.y - y) ** 2 <= radius ** 2;
   });
-  const nearestOwnKm = (ship: Ship): number => {
-    let best = Number.POSITIVE_INFINITY;
-    for (const ownShip of activeOwn) {
-      best = Math.min(best, Math.hypot(ownShip.x - ship.x, ownShip.y - ship.y));
-    }
-    return best;
-  };
   const isVisible = (ship: Ship): boolean => {
     if (ownGrid.query(ship.x, ship.y, maxSightKm).length === 0) return false;
     const fireShipFactor = ship.classId === "fireShip"
       ? shipResearchModifiers(ship).fireShipSpot
       : 1;
-    const inside = activeOwn.some((viewer) => {
-      const radius = (sightByOwn.get(viewer) ?? settings.fog.sightRangeKm) * fireShipFactor;
-      return (viewer.x - ship.x) ** 2 + (viewer.y - ship.y) ** 2 <= radius ** 2;
-    });
-    if (!inside) return false;
-    if (clock.isDay || ship.lightsOff !== true || ship.fire?.burning) return true;
-    return withinNightLightsOffRange(false, true, nearestOwnKm(ship));
+    const lit = ship.fire?.burning === true || ship.lightsOff !== true;
+    const targetRange = sightRangeKm(
+      { daySightKm: shipSightRadiusKm(ship), lightsOn: lit },
+      daylight,
+      moon,
+      lit,
+    ) * fireShipFactor;
+    return activeOwn.some((viewer) =>
+      Math.hypot(viewer.x - ship.x, viewer.y - ship.y) <=
+        Math.max(sightByOwn.get(viewer) ?? settings.fog.sightRangeKm, targetRange),
+    );
   };
 
   const chart = world.charts.get(playerId) ?? createChart(world.kind);
@@ -10679,6 +10720,7 @@ export function visibleStateFor(
     fleets: includeFleet ? fleetSnapshotsFor(world, playerId) : [],
     groups: world.controlGroups.get(playerId) ?? {},
   };
+  if (world.testMoonPhase !== undefined) state.moon = world.testMoonPhase;
   state.npcs = npcContacts;
   state.escorts = escorts;
   if (Object.keys(trailAdds).length > 0) state.trailAdds = trailAdds;

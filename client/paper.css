@@ -4723,3 +4723,59 @@ body {
   min-height: 32px;
   padding: 2px 5px;
 }
+
+/* 3K-d: Tools sheet and local wind marker. */
+.tools-sheet {
+  position: fixed;
+  left: 50%;
+  top: 52%;
+  transform: translate(-50%, -50%);
+  z-index: 64;
+  width: min(92vw, 420px);
+  max-height: min(84vh, 680px);
+  overflow: auto;
+}
+
+.tool-list { display: grid; gap: 6px; }
+
+.tool-row {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  min-height: 52px;
+  text-align: left;
+}
+
+.tool-row strong { font-size: 0.84rem; }
+.tool-row span { font-size: 0.7rem; opacity: 0.8; }
+.tool-row[aria-pressed="true"] { outline: 2px solid #5c3921; background: #d8d0aa; }
+.tool-row:disabled { opacity: 0.62; cursor: not-allowed; }
+
+.tool-wind-marker {
+  position: fixed;
+  z-index: 12;
+  width: 82px;
+  height: 82px;
+  margin: -41px 0 0 -41px;
+  pointer-events: none;
+  border: 1px solid rgba(92, 57, 33, 0.5);
+  border-radius: 50%;
+  background: rgba(236, 227, 200, 0.24);
+  color: #2a2117;
+  font-size: 0.62rem;
+  text-align: center;
+}
+
+.tool-wind-marker[hidden] { display: none; }
+.tool-wind-arrow {
+  display: block;
+  margin: 6px auto 0;
+  width: 0;
+  height: 0;
+  border-left: 9px solid transparent;
+  border-right: 9px solid transparent;
+  border-bottom: 30px solid #8c1d1d;
+  transform-origin: 50% 80%;
+}
+.tool-wind-marker b { display: block; margin-top: 2px; font-weight: 600; }

@@ -450,10 +450,10 @@ assert.equal(drawShip(alpha, secondFireWorld.id) !== undefined, true, "owner sti
 assert.equal(drawShip(alpha, tower.id)?.lantern, true, "lights-on ship has a lantern at night");
 assert.equal(drawShip(beta, secondFireWorld.id), undefined,
   "second client does not see a lights-off ship beyond 5 km at night");
-litWorld.x = betaOwn[0].x + 4;
+litWorld.x = betaOwn[0].x + 1.4;
 advanceMs(4_000);
 assert.ok(drawShip(beta, secondFireWorld.id),
-  "second client sees the same ship within 5 km at night");
+  "second client sees a lights-off ship inside the new-moon night sight");
 litWorld.x = betaOwn[0].x + 8;
 alpha.document.getElementById("test-time-hour").value = "12";
 clickButton(alpha, "Set time of day");
@@ -612,7 +612,9 @@ assert.equal(alpha.document.getElementById("surrender-confirm").hidden, true, "K
 clickButton(alpha, "Close");
 
 clickButton(alpha, "Tools");
-assert.equal(alpha.document.getElementById("heading-sheet").hidden, false, "Tools opens Heading and distance");
+assert.equal(alpha.document.getElementById("tools-sheet").hidden, false, "Tools opens the Tools sheet");
+clickButton(alpha, "Heading and distance");
+assert.equal(alpha.document.getElementById("heading-sheet").hidden, false, "Heading and distance opens from Tools");
 const headingInput = alpha.document.getElementById("heading-degrees");
 const distanceInput = alpha.document.getElementById("heading-distance");
 headingInput.value = "90";
@@ -698,6 +700,43 @@ assert.equal(Number(alpha.document.getElementById("heading-degrees").value), 90,
 assert.ok(Math.abs(Number(alpha.document.getElementById("heading-distance").value) - rulerKm) < 0.2,
   "the ruler distance fills Heading and distance");
 clickButton(alpha, "Close");
+
+// ---- 3K-d: Tools rows, wind, range check and real sight circles ----------
+
+clickButton(alpha, "Tools");
+assert.equal(alpha.document.getElementById("tools-sheet").hidden, false, "Tools sheet opens");
+const disabledTools = [...alpha.document.querySelectorAll("#tools-sheet button:disabled")];
+assert.equal(disabledTools.length, 7, "all seven unbuilt tools stay visible and disabled");
+for (const tool of disabledTools) {
+  assert.match(tool.textContent, /Not built yet|Item only/, `disabled reason for ${tool.textContent}`);
+}
+clickButton(alpha, "Wind");
+assert.equal(alpha.window.__armadaTest.windTool(), true, "Wind tool toggles on");
+assert.equal(alpha.document.getElementById("tool-wind-marker").hidden, false, "local wind marker is shown");
+clickButton(alpha, "Wind");
+assert.equal(alpha.window.__armadaTest.windTool(), false, "Wind tool toggles off");
+assert.equal(alpha.document.getElementById("tool-wind-marker").hidden, true, "local wind marker hides");
+clickButton(alpha, "Range check");
+assert.equal(alpha.window.__armadaTest.rangeCheck(), true, "Range check toggles on");
+clickButton(alpha, "Range check");
+assert.equal(alpha.window.__armadaTest.rangeCheck(), false, "Range check toggles off");
+alpha.document.getElementById("developer-btn").click();
+assert.equal(alpha.document.getElementById("test-tools").hidden, false, "Developer opens Test tools");
+alpha.document.getElementById("test-moon-phase").value = "0.5";
+clickButton(alpha, "Set moon phase");
+advanceMs(500);
+assert.ok(Math.abs(alpha.window.__armadaTest.moonPhase() - 0.5) < 0.01,
+  "Developer sets the moon phase used by sight");
+alpha.document.getElementById("test-tools-close").click();
+const sightCircle = alpha.window.__armadaTest.sightCircle();
+assert.ok(sightCircle.km > 0, "selected ship has a sight radius");
+assert.ok(Math.abs(sightCircle.px - sightCircle.km * sightCircle.scale) < 1e-6,
+  "circle pixels equal kilometres times the zoom scale");
+clickButton(alpha, "Scale ruler");
+assert.equal(alpha.document.getElementById("sailors-log").hidden, false, "Scale ruler opens the chart");
+assert.equal(alpha.window.__armadaTest.logTab(), "chart", "Scale ruler opens the chart tab");
+assert.equal(alpha.window.__armadaTest.logRuler().points, 0, "Scale ruler waits for two points");
+alpha.window.__armadaTest.closeLog();
 
 // ---- 3K-a: fixed slots, measured audit and centred camera ----------------
 

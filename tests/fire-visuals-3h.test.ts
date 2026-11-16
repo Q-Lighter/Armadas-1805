@@ -10,7 +10,7 @@ import {
 } from "@naval/shared/fire-visuals";
 import { buildShipRenderPlan } from "@naval/shared/render-plan";
 import { settings } from "@naval/shared/settings";
-import { addPlayer, createWorld, setTestTimeOfDay, visibleStateFor } from "@naval/shared/world";
+import { addPlayer, createWorld, setTestMoonPhase, setTestTimeOfDay, visibleStateFor } from "@naval/shared/world";
 
 const WIDTH = 900;
 const HEIGHT = 600;
@@ -119,6 +119,7 @@ test("lights-off ring appears only at night with the lights off", () => {
   beta.y = own.y;
   beta.lightsOff = false;
   setTestTimeOfDay(world, 23);
+  setTestMoonPhase(world, 0.5);
   let state = visibleStateFor(world, "alpha");
   assert.equal(state.nightLightsOff?.includes(beta.id) ?? false, false);
   beta.lightsOff = true;

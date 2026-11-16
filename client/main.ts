@@ -213,6 +213,8 @@ import {
 // ---------------------------------------------------------------------------
 
 const SEA_COLOR = 0x7c948a;
+const NIGHT_DISC_COLOR = 0x17312f;
+const WARM_SIGHT_COLOR = 0x8a9c5e;
 const LAND_COLOR = 0xefe3c8;
 const INK_COLOR = 0x2a1c10;
 const WATERLINE_COLOR = 0xb79b6b;
@@ -1170,6 +1172,17 @@ async function start(): Promise<void> {
   const lightsSwitch = element<HTMLInputElement>("lights-switch");
   const lightsSwitchLabel = element<HTMLElement>("lights-switch-label");
   const stanceNote = element<HTMLElement>("stance-note");
+  const toolsSheet = element<HTMLElement>("tools-sheet");
+  const toolsClose = element<HTMLButtonElement>("tools-close");
+  const toolHeading = element<HTMLButtonElement>("tool-heading");
+  const toolWind = element<HTMLButtonElement>("tool-wind");
+  const toolRange = element<HTMLButtonElement>("tool-range");
+  const toolScale = element<HTMLButtonElement>("tool-scale");
+  const toolWindMarker = element<HTMLElement>("tool-wind-marker");
+  const toolWindArrow = element<HTMLElement>("tool-wind-arrow");
+  const toolWindText = element<HTMLElement>("tool-wind-text");
+  const testMoonPhase = element<HTMLSelectElement>("test-moon-phase");
+  const testMoonSet = element<HTMLButtonElement>("test-moon-set");
   const sailorsLogPanel = element<HTMLElement>("sailors-log");
   const logTabs = [...document.querySelectorAll<HTMLButtonElement>("[data-log-tab]")];
   const logPanelChart = element<HTMLElement>("log-panel-chart");
@@ -1472,6 +1485,16 @@ async function start(): Promise<void> {
   fleetGroupLayer.addChild(fleetFormationInk);
   const combatFxInk = new Graphics();
   const combatRangeInk = new Graphics();
+  const rangeCheckLayer = new Container();
+  const rangeCheckLabels = [0, 1, 2].map(() => new Text({
+    text: "",
+    style: { fontFamily: "Source Sans 3", fontSize: 11, fill: INK_COLOR, fontWeight: "700" },
+  }));
+  for (const label of rangeCheckLabels) {
+    label.anchor.set(0.5, 0);
+    rangeCheckLayer.addChild(label);
+  }
+  rangeCheckLayer.visible = false;
   const lastSeenLayer = new Container();
   const windLayer = new Graphics();
   const borderLayer = new Graphics();
@@ -1497,6 +1520,7 @@ async function start(): Promise<void> {
     selectionBoxInk,
     routeLayer,
     combatRangeInk,
+    rangeCheckLayer,
     portLayer,
     lastSeenLayer,
     fleetLayer,
@@ -1532,6 +1556,9 @@ async function start(): Promise<void> {
   let logRulerPoints: Array<{ x: number; y: number }> = [];
   let logRulerArmed = false;
   let logChartCentred = false;
+  let serverMoonPhase: number | null = null;
+  let windToolOn = false;
+  let rangeCheckOn = false;
   let showFlagshipPennant = readSavedFlagshipPennant();
   let showRouteLine = readSavedRouteLine();
   let chartTrailMode: ChartTrailMode = settings.journey.defaultChartTrail;
@@ -2535,27 +2562,61 @@ async function start(): Promise<void> {
 
     liveMapLayer.visible = true;
     liveBlockLayer.visible = true;
-    const radiusPx = settings.fog.sightRangeKm * builtScale;
-    const featherPx = settings.fog.sightFeatherKm * builtScale;
     liveHalo.clear();
     const rings = settings.view.sightFeatherRings;
+    const featherPx = settings.fog.sightFeatherKm * builtScale;
+    const light = sightLightNow();
+    const dayAlpha = light.daylight;
+    const nightAlpha = 1 - dayAlpha;
+    const pxPerKm = scale();
 
     for (const ship of own) {
       const centre = builtScreen(ship.x, ship.y);
       const screenCentre = toScreen(ship.x, ship.y);
-      liveSea.circle(centre.x, centre.y, radiusPx).fill(SEA_COLOR);
-      liveMask.circle(centre.x, centre.y, radiusPx).fill(0xffffff);
+      const daySightKm = daySightKmForClass(ship.classId);
+      const ownRangeKm = sightRangeKm(
+        { daySightKm, lightsOn: false },
+        light.daylight,
+        light.moon,
+        false,
+      );
+      const lit = ship.lightsOff !== true;
 
-      // A ring per step, each wider and fainter, softens the sight edge without
-      // a texture or a filter.
-      for (let ring = 1; ring <= rings; ring += 1) {
-        const share = ring / rings;
-        liveHalo
-          .circle(screenCentre.x, screenCentre.y, radiusPx + featherPx * share)
+      // Day: one soft light disc at the full day radius.
+      if (dayAlpha > 0.001) {
+        const dayPx = daySightKm * pxPerKm;
+        liveSea.circle(centre.x, centre.y, dayPx)
+          .fill({ color: SEA_COLOR, alpha: dayAlpha });
+        liveMask.circle(centre.x, centre.y, dayPx).fill(0xffffff);
+        for (let ring = 1; ring <= rings; ring += 1) {
+          const share = ring / rings;
+          liveHalo
+            .circle(screenCentre.x, screenCentre.y, dayPx + featherPx * share)
+            .stroke({
+              width: Math.max(1, featherPx / rings),
+              color: SEA_COLOR,
+              alpha: dayAlpha * settings.view.sightFeatherAlpha *
+                (1 - share * settings.view.sightFeatherFade),
+            });
+        }
+      }
+
+      // Night: a small dark own-sight disc. Lit ships add the agreed 10 km
+      // warm glow, with a crisp edge on the dark disc.
+      if (nightAlpha > 0.001) {
+        const ownPx = ownRangeKm * pxPerKm;
+        if (lit) {
+          liveHalo.circle(screenCentre.x, screenCentre.y, 10 * pxPerKm)
+            .fill({ color: WARM_SIGHT_COLOR, alpha: 0.08 * nightAlpha });
+        }
+        liveSea.circle(centre.x, centre.y, ownPx)
+          .fill({ color: NIGHT_DISC_COLOR, alpha: nightAlpha });
+        liveMask.circle(centre.x, centre.y, ownPx).fill(0xffffff);
+        liveHalo.circle(screenCentre.x, screenCentre.y, ownPx)
           .stroke({
-            width: Math.max(1, featherPx / rings),
-            color: SEA_COLOR,
-            alpha: settings.view.sightFeatherAlpha * (1 - share * settings.view.sightFeatherFade),
+            width: lit ? 2 : 1,
+            color: lit ? WARM_SIGHT_COLOR : NIGHT_DISC_COLOR,
+            alpha: (lit ? 0.85 : 0.55) * nightAlpha,
           });
       }
     }
@@ -2584,6 +2645,7 @@ async function start(): Promise<void> {
     if (app.screen.width <= 0 || app.screen.height <= 0) return;
 
     const own = activeOwnViews();
+    const light = sightLightNow();
     const markers = layoutPortMarkers({
       width: app.screen.width,
       height: app.screen.height,
@@ -2592,7 +2654,12 @@ async function start(): Promise<void> {
       sight: own.map((ship) => ({
         x: ship.x,
         y: ship.y,
-        radiusKm: settings.fog.sightRangeKm,
+        radiusKm: sightRangeKm(
+          { daySightKm: daySightKmForClass(ship.classId), lightsOn: false },
+          light.daylight,
+          light.moon,
+          false,
+        ),
       })),
     });
     laidOutPorts = markers;
@@ -2835,9 +2902,42 @@ async function start(): Promise<void> {
   }
 
   /** A faint 1 km ring and the two 30-degree beam arcs for engaged ships. */
+  function BandKmLabel(km: number): string {
+    return km < 1 ? `${Math.round(km * 1000)} m` : `${km} km`;
+  }
+
   function drawCombatRange(): void {
     combatRangeInk.clear();
+    rangeCheckLayer.visible = false;
     if (mode !== "ship") return;
+    const selected = selectedFleetShip();
+    if (rangeCheckOn && selected) {
+      const centre = toScreen(selected.x, selected.y);
+      const sightPx = ownSightFor(selected) * scale();
+      const cannonPx = 1 * scale();
+      combatRangeInk
+        .circle(centre.x, centre.y, sightPx)
+        .stroke({ width: 1, color: 0x8a9c5e, alpha: 0.6 });
+      for (const band of settings.combat.hitChanceBands) {
+        combatRangeInk
+          .circle(centre.x, centre.y, band.maxKm * scale())
+          .stroke({
+            width: band.maxKm >= 1 ? 2 : 1,
+            color: 0x8c1d1d,
+            alpha: 0.2 + band.chance * 0.7,
+          });
+      }
+      rangeCheckLayer.visible = true;
+      rangeCheckLabels[0]!.text = `Sight ${ownSightFor(selected).toFixed(1)} km`;
+      rangeCheckLabels[0]!.position.set(centre.x, centre.y + sightPx + 4);
+      rangeCheckLabels[1]!.text = "Cannon 1 km";
+      rangeCheckLabels[1]!.position.set(centre.x, centre.y + cannonPx + 4);
+      const bands = settings.combat.hitChanceBands
+        .map((band) => `${BandKmLabel(band.maxKm)} ${Math.round(band.chance * 100)}%`)
+        .join(" · ");
+      rangeCheckLabels[2]!.text = bands;
+      rangeCheckLabels[2]!.position.set(centre.x, centre.y + cannonPx + 20);
+    }
     const radius = scale();
     const arc = (settings.combat.broadsideArcDeg * Math.PI) / 180;
     for (const row of fleetShips) {
@@ -7114,14 +7214,16 @@ async function start(): Promise<void> {
       clockOut.textContent = text;
       clockPanel.dataset.night = String(!clock.isDay);
       const moon = moonPhase(clockShownMs);
-      const phaseName = moon.phase < 0.0625 || moon.phase >= 0.9375 ? "new"
-        : moon.phase < 0.1875 ? "crescent"
-          : moon.phase < 0.3125 ? "quarter"
-            : moon.phase < 0.4375 ? "gibbous"
-              : moon.phase < 0.5625 ? "full"
-                : moon.phase < 0.6875 ? "gibbous"
-                  : moon.phase < 0.8125 ? "quarter" : "crescent";
-      moonOut.textContent = `Moon: ${phaseName} · ${Math.round(moon.illumination * 100)}%`;
+      const moonValue = serverMoonPhase ?? moon.phase;
+      const phaseName = moonValue < 0.0625 || moonValue >= 0.9375 ? "new"
+        : moonValue < 0.1875 ? "crescent"
+          : moonValue < 0.3125 ? "quarter"
+            : moonValue < 0.4375 ? "gibbous"
+              : moonValue < 0.5625 ? "full"
+                : moonValue < 0.6875 ? "gibbous"
+                  : moonValue < 0.8125 ? "quarter" : "crescent";
+      const illumination = (1 - Math.cos(moonValue * Math.PI * 2)) / 2;
+      moonOut.textContent = `Moon: ${phaseName} · ${Math.round(illumination * 100)}%`;
       lastClockText = text;
     }
 
@@ -7699,6 +7801,9 @@ async function start(): Promise<void> {
           Array.isArray(pair) && typeof pair[0] === "string" && typeof pair[1] === "string")
       : [];
 
+    serverMoonPhase = typeof state.moon === "number" && Number.isFinite(state.moon)
+      ? state.moon
+      : null;
     windFrom = Number.isFinite(state.w) ? state.w : settings.weather.windFromDeg;
     serverWorldMs = typeof state.sv === "number" && Number.isFinite(state.sv) ? state.sv : serverWorldMs;
     roomKind = validRoomKind(state.k) ? state.k : "normal";
@@ -7724,6 +7829,7 @@ async function start(): Promise<void> {
     windSpeedLabel.textContent = `Wind speed ${windSpeed} kn`;
     windChipLabel.textContent = `${compassPoint(windFrom)} ${windSpeed} kn`;
     windLabel.textContent = `Wind from ${compassPoint(windFrom)} (${Math.round(windFrom)}°)`;
+    updateToolWindMarker();
 
     // The server sends only ports this player has found. Keep the display set
     // in step with that filtered list rather than the full port table.
@@ -8134,6 +8240,7 @@ async function start(): Promise<void> {
     }
 
     updateKnownPortsButton();
+    updateToolWindMarker();
     refreshMap(now, true);
     refreshFogPaper();
     refreshPorts();
@@ -9027,17 +9134,12 @@ async function start(): Promise<void> {
     const moon = moonPhase(clockShownMs);
     return {
       daylight: settings.fog.nightSightEnabled ? clock.daylight : 1,
-      moon: moon.phase,
+      moon: serverMoonPhase ?? moon.phase,
     };
   }
 
   function ownSightRange(row: OwnShipSnapshot, light = sightLightNow()): number {
-    return sightRangeKm(
-      { lightsOn: row.lightsOn !== false },
-      light.daylight,
-      light.moon,
-      false,
-    );
+    return ownSightFor(row, light);
   }
 
   function targetVisibleNow(target: {
@@ -9049,7 +9151,12 @@ async function start(): Promise<void> {
     const light = sightLightNow();
     return fleetShips.some((ship) => ship.status !== "delivery" &&
       targetInSight(
-        { x: ship.x, y: ship.y, lightsOn: false },
+        {
+          x: ship.x,
+          y: ship.y,
+          lightsOn: false,
+          daySightKm: daySightKmForClass(ship.classId),
+        },
         target,
         light.daylight,
         light.moon,
@@ -9062,6 +9169,7 @@ async function start(): Promise<void> {
         x: ship.x,
         y: ship.y,
         lightsOn: !ship.lightsOff,
+        daySightKm: daySightKmForClass(ship.classId),
       }));
   }
 
@@ -9667,6 +9775,71 @@ async function start(): Promise<void> {
     }, 0);
   });
 
+  // ---- 3K-d: Tools sheet, wind marker and range check ---------------------
+
+  function toggleToolsSheet(open = toolsSheet.hidden): void {
+    toolsSheet.hidden = !open;
+    toolsButton.setAttribute("aria-expanded", String(open));
+    if (open) {
+      closeHeadingSheet();
+      closeStanceSheet();
+      stanceButton.setAttribute("aria-expanded", "false");
+    }
+  }
+
+  function daySightKmForClass(classId: string | undefined): number {
+    return classId === "fireShip"
+      ? settings.research.effects.fireShipSightKm
+      : settings.research.effects.shipSightKm;
+  }
+
+  function ownSightFor(row: OwnShipSnapshot, light = sightLightNow()): number {
+    return sightRangeKm(
+      { daySightKm: daySightKmForClass(row.classId), lightsOn: false },
+      light.daylight,
+      light.moon,
+      false,
+    );
+  }
+
+  function selectedSightKm(): number {
+    const row = selectedFleetShip();
+    return row ? ownSightFor(row) : 0;
+  }
+
+  function updateToolWindMarker(): void {
+    const row = selectedFleetShip();
+    const visible = windToolOn && mode === "ship" && !!row;
+    toolWindMarker.hidden = !visible;
+    if (!visible) return;
+    const speed = Math.round(settings.weather.windStrengthKnots);
+    toolWindMarker.style.left = `${app.screen.width / 2}px`;
+    toolWindMarker.style.top = `${app.screen.height / 2}px`;
+    toolWindArrow.style.transform = `rotate(${(windFrom + 180) % 360}deg)`;
+    toolWindText.textContent = `${compassPoint(windFrom)} · ${speed} kn`;
+  }
+
+  function toggleWindTool(): void {
+    windToolOn = !windToolOn;
+    toolWind.setAttribute("aria-pressed", String(windToolOn));
+    updateToolWindMarker();
+  }
+
+  function toggleRangeCheck(): void {
+    rangeCheckOn = !rangeCheckOn;
+    toolRange.setAttribute("aria-pressed", String(rangeCheckOn));
+    drawCombatRange();
+    showNotice(rangeCheckOn
+      ? "Range check: sight, cannon range and hit-chance bands."
+      : "Range check off.");
+  }
+
+  function openScaleTool(): void {
+    toggleToolsSheet(false);
+    openSailorsLog("chart");
+    armLogRuler();
+  }
+
   function renderFormationsSheet(): void {
     const fleet = fleetById(selectedFleetId);
     formationsChoices.replaceChildren();
@@ -9715,7 +9888,20 @@ async function start(): Promise<void> {
     if (sailorsLogOpen) closeSailorsLog();
     else openSailorsLog("chart");
   });
-  toolsButton.addEventListener("click", () => openHeading(null));
+  toolsButton.addEventListener("click", () => toggleToolsSheet());
+  toolsClose.addEventListener("click", () => toggleToolsSheet(false));
+  toolHeading.addEventListener("click", () => {
+    toggleToolsSheet(false);
+    openHeading(null);
+  });
+  toolWind.addEventListener("click", toggleWindTool);
+  toolRange.addEventListener("click", toggleRangeCheck);
+  toolScale.addEventListener("click", openScaleTool);
+  testMoonSet.addEventListener("click", () => {
+    const phase = Number(testMoonPhase.value);
+    sendCommand({ t: "testMoonPhase", phase });
+    showNotice(`Moon phase set to ${testMoonPhase.selectedOptions[0]?.textContent ?? "phase"}.`);
+  });
   stanceButton.addEventListener("click", () => {
     if (stanceSheetPanel.hidden) openStanceSheet();
     else closeStanceSheet();
@@ -10368,6 +10554,10 @@ async function start(): Promise<void> {
       closeSailorsLog();
       return;
     }
+    if (!toolsSheet.hidden) {
+      toggleToolsSheet(false);
+      return;
+    }
     menuPanel.hidden = true;
     menuButton.setAttribute("aria-expanded", "false");
     closePortPanel();
@@ -10740,6 +10930,10 @@ async function start(): Promise<void> {
       armLogRuler: () => void;
       queueLines: () => string[];
       logDebug: () => Record<string, unknown>;
+      sightCircle: () => { km: number; px: number; scale: number };
+      rangeCheck: () => boolean;
+      windTool: () => boolean;
+      moonPhase: () => number;
     };
   };
   (window as ArmadaTestWindow).__armadaTest = {
@@ -10820,6 +11014,13 @@ async function start(): Promise<void> {
     logRuler: () => ({ points: logRulerPoints.length, text: logRulerText.textContent ?? "" }),
     armLogRuler,
     queueLines: () => [...logQueueList.querySelectorAll<HTMLElement>(".log-queue-row")].map((node) => node.textContent ?? ""),
+    sightCircle: () => {
+      const km = selectedSightKm();
+      return { km, px: km * scale(), scale: scale() };
+    },
+    rangeCheck: () => rangeCheckOn,
+    windTool: () => windToolOn,
+    moonPhase: () => sightLightNow().moon,
     logDebug: () => {
       const pane = logPaneRect();
       const s = scale();

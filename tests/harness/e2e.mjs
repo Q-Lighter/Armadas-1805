@@ -16,7 +16,7 @@ import { build } from "esbuild";
 import { JSDOM, VirtualConsole } from "jsdom";
 
 import { settings } from "@naval/shared/settings";
-import { addPlayer, shipsForOwner, spawnTestFireShips } from "@naval/shared/world";
+import { addPlayer, removeTestDummies, shipsForOwner, spawnTestFireShips } from "@naval/shared/world";
 import { towSpeedKnots } from "../../shared/dist/fireShip.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -238,6 +238,11 @@ function zoomBy(client, deltaY) {
 function shipById(client, id) {
   return client.window.__armadaTest.fleet().find((ship) => ship.id === id);
 }
+function selectedFleetIdForTest(client) {
+  const id = client.window.__armadaTest.selectedShipId();
+  const row = client.window.__armadaTest.fleet().find((ship) => ship.id === id);
+  return row?.fleetId ?? null;
+}
 function drawShip(client, id) {
   return client.window.__armadaTest.drawPlan().find((ship) => ship.id === id);
 }
@@ -382,7 +387,7 @@ assert.equal(towerWorld.towedShipId, secondFireWorld.id, "server stores the tow"
 assert.equal(towWorld.towerShipId, tower.id, "fire ship knows its tower");
 // Sail the pair: both move at the same pair speed, tower speed less 2 knots.
 const pairTargetY = towerWorld.y - 0.6;
-tapWorld(alpha, towerWorld.x, pairTargetY);
+alpha.window.__armadaTest.sailTo(towerWorld.x, pairTargetY);
 advanceMs(3_000);
 towerWorld = worldFleet(bootRoom, alphaId).find((ship) => ship.id === tower.id);
 towWorld = worldFleet(bootRoom, alphaId).find((ship) => ship.id === secondFireWorld.id);
@@ -473,7 +478,7 @@ advanceMs(300);
 tapWorld(alpha, flagship.x, flagship.y);
 advanceMs(300);
 const ownDraw = drawShip(alpha, flagship.id);
-tapWorld(alpha, approachX, approachY);
+alpha.window.__armadaTest.sailTo(approachX, approachY);
 advanceMs(1_000);
 const serverFlagship = worldFleet(bootRoom, alphaId).find((ship) => ship.id === flagship.id);
 let closestKm = Number.POSITIVE_INFINITY;
@@ -492,15 +497,49 @@ sailedFlagship.x -= 2;
 sailedFlagship.order = null;
 sailedFlagship.route = null;
 advanceMs(2_000);
-// Open the real enemy order menu and press Attack: Sink.
-alpha.window.__armadaTest.openOrders(enemyCentre.x, enemyCentre.y);
-const sinkButton = [...alpha.document.querySelectorAll("#order-menu-actions button")]
+// Tap the enemy to select it, then use the battle bar's Attack: Sink.
+tapWorld(alpha, enemyCentre.x, enemyCentre.y);
+advanceMs(300);
+const sinkButton = [...alpha.document.querySelectorAll("#battle-bar button")]
   .find((button) => (button.textContent ?? "").trim().startsWith("Attack: Sink"));
-assert.ok(sinkButton, "Attack: Sink appears on the enemy menu");
+assert.ok(sinkButton, "Attack: Sink appears on the enemy battle bar");
 sinkButton.click();
 advanceMs(1_000);
 const flagshipNow = shipById(alpha, flagship.id);
 assert.equal(flagshipNow?.engagement?.targetId, enemyCentre.id, "Attack order accepted on the enemy");
+
+// ---- 3K-b: stance sheet, Sink toggle and its feedback --------------------
+
+clickButton(alpha, "Stance");
+assert.equal(alpha.document.getElementById("stance-sheet").hidden, false, "Stance sheet opens");
+assert.equal(alpha.document.querySelectorAll("#stance-options [data-stance]").length, 4,
+  "four stance choices");
+assert.equal(alpha.document.querySelector("#stance-options [data-stance=\"fightIfAttacked\"]").getAttribute("aria-pressed"),
+  "true", "the current stance is marked");
+const sinkToggle = alpha.document.querySelector('#battle-orders [data-order="attackSink"]');
+assert.ok(sinkToggle, "Sink toggle is visible");
+assert.equal(sinkToggle.disabled, false, "Sink is enabled with an enemy in sight");
+sinkToggle.click();
+assert.equal(alpha.document.getElementById("armed-order").hidden, false, "Sink shows the armed banner");
+assert.match(alpha.document.getElementById("armed-order-text").textContent, /Sink armed: tap an enemy ship in sight/,
+  "the banner names the target rule");
+tapWorld(alpha, enemyCentre.x, enemyCentre.y);
+advanceMs(1_000);
+assert.equal(alpha.document.getElementById("armed-order").hidden, true, "the toggle switches off after the order");
+assert.equal(alpha.document.querySelector('#battle-orders [data-order="attackSink"]').getAttribute("aria-pressed"),
+  "false", "Sink is no longer armed");
+assert.equal(shipById(alpha, flagship.id)?.engagement?.targetId, enemyCentre.id,
+  "the Sink order reached the server");
+clickButton(alpha, "Close");
+
+// An empty sea tap never sails the selected ship and never opens a palette.
+const beforeSeaTap = worldFleet(bootRoom, alphaId).find((ship) => ship.id === flagship.id);
+const seaTarget = { x: beforeSeaTap.x + 4, y: beforeSeaTap.y + 4 };
+tapWorld(alpha, seaTarget.x, seaTarget.y);
+advanceMs(500);
+const afterSeaTap = worldFleet(bootRoom, alphaId).find((ship) => ship.id === flagship.id);
+assert.equal(afterSeaTap.route, null, "empty sea tap left the route alone");
+assert.equal(alpha.document.getElementById("order-menu"), null, "the sea-tap palette no longer exists");
 
 // ---- b. Ignite on contact ------------------------------------------------
 
@@ -533,6 +572,69 @@ assert.equal(shipById(alpha, secondFire.id)?.fireShipMode, "contact", "contact o
 advanceMs(100_000);
 assert.equal(shipById(alpha, secondFire.id)?.fireShipIgnited, true,
   "fire ship reached and ignited on the target");
+
+// ---- 3K-b: Run, Surrender and the exact heading order --------------------
+
+const runEnemy = enemyFleet.find((ship) => ship.damage.hull > 0) ?? enemyFleet[0];
+const runFlagshipWorld = worldFleet(bootRoom, alphaId)
+  .find((ship) => ship.id !== flagship.id && !ship.dockedPortId && ship.damage.crew > 20) ??
+  worldFleet(bootRoom, alphaId).find((ship) => ship.id === flagship.id);
+assert.ok(runEnemy && runFlagshipWorld, "a live enemy and a crewing ship exist for Run");
+runEnemy.x = runFlagshipWorld.x + 2;
+runEnemy.y = runFlagshipWorld.y;
+runEnemy.speedKnots = 0;
+runEnemy.hoveTo = true;
+advanceMs(1_000);
+clickButton(alpha, "Stance");
+const runToggle = alpha.document.querySelector('#battle-orders [data-order="run"]');
+assert.ok(runToggle && !runToggle.disabled, "Run is available");
+runToggle.click();
+const runTarget = shipById(alpha, runFlagshipWorld.id);
+assert.ok(runTarget, "my ship is still drawn");
+tapWorld(alpha, runTarget.x, runTarget.y);
+advanceMs(500);
+assert.notEqual(worldFleet(bootRoom, alphaId).find((ship) => ship.id === runFlagshipWorld.id)?.runState, undefined,
+  "Run on my ship reached the server");
+assert.equal(alpha.document.getElementById("armed-order").hidden, true, "Run switches off after the order");
+
+alpha.window.__armadaTest.selectShip(flagship.id);
+advanceMs(300);
+const surrenderToggle = alpha.document.querySelector('#battle-orders [data-order="surrender"]');
+surrenderToggle.click();
+const cameraCentre = alpha.window.__armadaTest.centreScreen();
+alpha.window.__armadaTest.tapScreen(cameraCentre.x, cameraCentre.y);
+advanceMs(200);
+assert.equal(alpha.document.getElementById("surrender-confirm").hidden, false, "Surrender asks first");
+assert.match(alpha.document.getElementById("surrender-confirm-text").textContent, /flagship.*eliminates you/i,
+  "the confirm warns about a flagship");
+clickButton(alpha, "Keep fighting");
+assert.equal(alpha.document.getElementById("surrender-confirm").hidden, true, "Keep fighting closes the confirm");
+clickButton(alpha, "Close");
+
+clickButton(alpha, "Tools");
+assert.equal(alpha.document.getElementById("heading-sheet").hidden, false, "Tools opens Heading and distance");
+const headingInput = alpha.document.getElementById("heading-degrees");
+const distanceInput = alpha.document.getElementById("heading-distance");
+headingInput.value = "90";
+headingInput.dispatchEvent(new alpha.window.Event("input", { bubbles: true }));
+distanceInput.value = "6";
+distanceInput.dispatchEvent(new alpha.window.Event("input", { bubbles: true }));
+clickButton(alpha, "Set course");
+advanceMs(500);
+removeTestDummies(bootRoom.world);
+advanceMs(1_000);
+clickButton(alpha, "Stance");
+const noEnemySink = alpha.document.querySelector('#battle-orders [data-order="attackSink"]');
+assert.equal(noEnemySink.disabled, true, "Sink is disabled when no enemy is in sight");
+assert.match(noEnemySink.title, /No enemy in sight/, "the disabled reason names the missing enemy");
+clickButton(alpha, "Close");
+
+const headingCommand = alpha.window.__armadaTest.lastCommand();
+assert.ok(headingCommand.t === "fleetOrder" || headingCommand.t === "shipOrder",
+  `the heading was sent for the selection (${headingCommand.t})`);
+assert.equal(headingCommand.order?.type, "heading", "a heading order was sent");
+assert.equal(headingCommand.order?.headingDeg, 90, "the exact heading left the client");
+assert.equal(headingCommand.order?.distanceKm, 6, "the exact distance left the client");
 
 // ---- 3K-a: fixed slots, measured audit and centred camera ----------------
 

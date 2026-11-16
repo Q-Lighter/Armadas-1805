@@ -416,13 +416,13 @@
       </div>
       <section class="controls-help" id="controls-help" hidden aria-labelledby="controls-help-title">
         <h3 id="controls-help-title">Controls</h3>
-        <p><strong>Tap</strong> a ship to select it; tap it again for its sheet; double-tap for its fleet.</p>
-        <p><strong>Tap the sea</strong> to sail there when Tap is on. When Tap is off, a palette opens: Sail, Heading, Patrol, Rendezvous, Hold, Anchor.</p>
-        <p><strong>Orders</strong> lists every order. Pick one, then tap its target. The armed banner cancels it.</p>
-        <p><strong>Enemy</strong> tap shows Attack: Sink, Attack: Capture, Loot, Board. One tap starts it.</p>
+        <p><strong>Tap</strong> a ship to select it; tap it again for its sheet; double-tap for its fleet. A tap on empty sea does nothing.</p>
+        <p><strong>Tools</strong> opens Heading and distance. Set a compass heading and kilometres, preview the line, then Set course.</p>
+        <p><strong>Stance</strong> sets one of four stances and arms one battle order or action. Tap its target in sight. The armed banner cancels it.</p>
+        <p><strong>Enemy</strong> tap still shows Attack: Sink, Attack: Capture, Loot, Board. One tap starts it.</p>
         <p><strong>Bulk:</strong> Select all, Select nearby, class chips, or drag a box in Multi. Save group keeps the selection; 1–9 recall it.</p>
-        <p><strong>Camera:</strong> drag to pan, pinch or wheel to zoom, Follow and Back to ship. Esc cancels an armed order.</p>
-        <p><strong>Desktop:</strong> Esc cancel, H hold, A attack nearest, F select fleet, O orders, U undo sail, Space centre, +/− zoom, 1–9 groups, ? this sheet.</p>
+        <p><strong>Camera:</strong> your ship is always centred. Pinch or wheel zooms from about 4 to 30 km; no drag, Follow or Back to ship. Esc cancels an armed order.</p>
+        <p><strong>Desktop:</strong> Tab cycles ships, Esc cancel, H hold, A attack nearest, F select fleet, +/− zoom, 1–9 groups, ? this sheet.</p>
       </section>
       <details class="debug-info" id="debug-info" hidden>
         <summary>Debug info</summary>
@@ -647,19 +647,6 @@
       </div>
     </section>
 
-    <!-- Long-press or right-click orders. On a phone it is a bottom sheet. -->
-    <section class="order-menu paper" id="order-menu" role="dialog" aria-labelledby="order-menu-title" hidden>
-      <div class="panel-head">
-        <div>
-          <p class="kicker">Orders</p>
-          <h2 id="order-menu-title">Orders</h2>
-        </div>
-        <button class="btn panel-close" id="order-menu-close" type="button">Close</button>
-      </div>
-      <p class="order-menu-where" id="order-menu-where"></p>
-      <div class="order-menu-actions" id="order-menu-actions"></div>
-    </section>
-
     <!-- 3K: small formation sheet for the selected fleet. -->
     <section class="formation-sheet paper" id="formations-sheet" role="dialog" aria-labelledby="formations-title" hidden>
       <div class="panel-head">
@@ -668,6 +655,22 @@
       </div>
       <p class="surrender-offer-detail" id="formations-detail">Select a fleet to set its formation.</p>
       <div class="formation-grid" id="formations-choices"></div>
+    </section>
+
+    <!-- Stance and battle-order toggles for the selected ship or fleet. -->
+    <section class="stance-sheet paper" id="stance-sheet" role="dialog" aria-labelledby="stance-title" hidden>
+      <div class="panel-head">
+        <div><p class="kicker">Orders</p><h2 id="stance-title">Stance</h2></div>
+        <button class="btn panel-close" id="stance-close" type="button">Close</button>
+      </div>
+      <p class="surrender-offer-detail" id="stance-selection">Select a ship or fleet.</p>
+      <div class="stance-options" id="stance-options"></div>
+      <h3 class="stance-heading">Battle orders</h3>
+      <div class="stance-toggles" id="battle-orders"></div>
+      <h3 class="stance-heading">Actions</h3>
+      <div class="stance-toggles" id="action-orders"></div>
+      <label class="stance-lights"><input id="lights-switch" type="checkbox" /> <span id="lights-switch-label">Lights on</span></label>
+      <p class="stance-note" id="stance-note">One toggle can be armed at a time. Tap its target on the sea, or Cancel in the banner.</p>
     </section>
 
     <!-- Heading and distance order. The preview line is drawn on the map. -->
@@ -690,7 +693,7 @@
       <p class="heading-preview" id="heading-preview">0° · 10 km</p>
       <div class="heading-actions">
         <button class="btn" id="heading-cancel" type="button">Cancel</button>
-        <button class="btn btn-seal" id="heading-confirm" type="button">Send heading</button>
+        <button class="btn btn-seal" id="heading-confirm" type="button">Set course</button>
       </div>
     </section>
 

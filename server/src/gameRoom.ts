@@ -36,6 +36,7 @@ import {
   cancelShipSurrender,
   setFleetBattleOrder,
   setShipBattleOrder,
+  setShipStance,
   applyFleetOrder,
   applyOrder,
   applyPortOrder,
@@ -1075,6 +1076,8 @@ export class GameRoom {
     } else if (order.t === "resign") {
       const to = typeof order.to === "string" ? order.to : null;
       resignPlayer(this.world, playerId, to);
+    } else if (order.t === "shipStance") {
+      accepted = setShipStance(this.world, playerId, order.ship, order.stance);
     } else if (order.t === "battleOrder") {
       accepted = setShipBattleOrder(this.world, playerId, order.ship, order.order);
     } else if (order.t === "fleetBattleOrder") {

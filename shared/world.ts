@@ -273,7 +273,7 @@ import {
   type ShipStores,
   type TransferDirection,
 } from "./trade.js";
-import { DEFAULT_STANCE, type Stance } from "./stances.js";
+import { DEFAULT_STANCE, STANCES, type Stance } from "./stances.js";
 
 const DEG = Math.PI / 180;
 const RAD = 180 / Math.PI;
@@ -3852,6 +3852,21 @@ export function setShipBattleOrder(
   const objective = objectiveForOrder(order);
   if (!objective) return false;
   return setBattleObjective(world, playerId, ship, objective);
+}
+
+/** Set one ship's stance without changing its fleet. */
+export function setShipStance(
+  world: World,
+  playerId: string,
+  shipId: unknown,
+  stance: unknown,
+): boolean {
+  if (typeof shipId !== "string" || typeof stance !== "string") return false;
+  if (!STANCES.includes(stance as Stance)) return false;
+  const ship = shipsForOwner(world, playerId).find((candidate) => candidate.id === shipId);
+  if (!ship || ship.deliveryPortId) return false;
+  ship.stance = stance as Stance;
+  return true;
 }
 
 /** Fleet Capture/Sink/Run; Surrender is deliberately only per ship. */

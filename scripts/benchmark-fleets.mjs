@@ -1,4 +1,4 @@
-// Local Node benchmark for eight players, each with a twelve-ship fleet in
+// Local Node benchmark for eight players, each with a thirty-ship fleet in
 // formation. This is a proxy for Cloudflare CPU, not a deployed measurement.
 
 import { settings } from "@naval/shared/settings";
@@ -21,7 +21,7 @@ function run() {
   for (let index = 0; index < PLAYERS; index += 1) {
     const id = `fleet-player-${index}`;
     const leader = addPlayer(world, id);
-    spawnTestFleet(world, id, "frigate:11");
+    spawnTestFleet(world, id, "frigate:29");
     const own = world.fleets.get(id) ?? [];
     const fleet = createPlayerFleet(world, id, own.map((ship) => ship.id));
     if (!fleet) throw new Error("Could not create benchmark fleet");
@@ -51,7 +51,7 @@ function run() {
   const elapsedMs = Number(process.hrtime.bigint() - started) / 1_000_000;
   return {
     players: PLAYERS,
-    ships: PLAYERS * 12,
+    ships: PLAYERS * 30,
     steps: STEPS,
     totalMs: Number(elapsedMs.toFixed(1)),
     perWorldStepMs: Number((elapsedMs / STEPS).toFixed(2)),

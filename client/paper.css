@@ -4370,3 +4370,83 @@ body {
     gap: 4px;
   }
 }
+
+/* Stance, battle-order and action toggles. Disabled rows stay visible and
+   print the reason under the button. */
+.stance-sheet {
+  position: fixed;
+  z-index: 56;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  width: min(460px, calc(100vw - 24px));
+  max-height: min(82dvh, 680px);
+  overflow: auto;
+}
+
+.stance-options,
+.stance-toggles {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+}
+
+.stance-options .btn,
+.stance-toggles .btn {
+  min-height: 44px;
+  width: 100%;
+}
+
+.stance-options .btn[aria-pressed="true"],
+.stance-toggles .btn[aria-pressed="true"] {
+  background: #a79d78;
+  text-decoration: underline;
+}
+
+.stance-toggle {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.stance-reason {
+  margin: 0;
+  min-height: 0.9rem;
+  color: #6d5136;
+  font-size: 0.62rem;
+  line-height: 1.1;
+}
+
+.stance-heading {
+  margin: 8px 0 4px;
+  color: var(--ink);
+  font-size: 0.72rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.stance-lights {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 44px;
+  margin-top: 8px;
+  font-size: 0.85rem;
+}
+
+.stance-lights input {
+  width: 22px;
+  height: 22px;
+}
+
+.stance-note {
+  margin: 6px 0 0;
+  font-size: 0.7rem;
+  line-height: 1.3;
+}
+
+@media (max-width: 420px) {
+  .stance-toggles {
+    grid-template-columns: 1fr;
+  }
+}

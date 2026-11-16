@@ -30,12 +30,13 @@ Read this file at the start of every prompt, then follow it for the whole sessio
 
 - No action is press-and-hold. A tap selects, a second tap opens the selection's sheet, and a double tap selects its fleet. A long press does nothing anywhere: sea, ship or port.
 - The fixed slots are the only chrome: top-right money, date/time and moon with Menu, Sailor's Log and Formations; top-left the ship strip; bottom-left the wind compass with Tools, Multi and Stance; bottom-right the title mark. The armed banner and at most two toasts sit at the top centre.
-- Every other order is verb then target. The Orders list groups Move, Fight, Support and Special; picking one arms it, the armed-order banner names it, and the next tap chooses its target. Cancel is always present.
-- With Tap-to-sail on, a sea tap sends a Sail order at once and shows an Undo sail chip for five seconds. With it off, the same tap drops a point marker and opens a palette: Sail here, Heading and distance, Patrol, Rendezvous, Hold, Anchor and Cancel.
+- Every other order is verb then target. Stance opens the four stances plus Battle orders (Sink, Capture, Loot, Run, Surrender) and Actions (Board, Claim, Ignite, Tow, Cast off, Attack port). One toggle can be armed at a time; the armed banner names its target and Cancel is always present. An order that needs a target rejects a tap outside every friendly sight circle with "Target not in sight".
+- A tap on empty sea does nothing: there is no tap-to-sail, no Undo sail and no sea palette. Sailing comes from the Tools heading order, a port, the queue or the chart. Run and Surrender are armed from Stance, then aimed at one of the player's own ships.
+- A fleet may contain every ship its player owns, up to the 30-ship player cap. A ship belongs to at most one fleet.
 - Bulk selection has Select all, Select nearby, class chips (frigates, line ships), Fleet panel checkboxes and the Multi box drag. Make fleet is one tap. Save group stores the selection in a numbered slot; a numbered button recalls it in one tap.
 - The selected ship is always at the exact map centre; a fleet centres on its leader and an empty selection keeps the last ship. The camera cannot be dragged, followed or sent Back to ship. Pinch or wheel zooms from about 4 km to about 30 km. Tab cycles ships. Desktop extras: Esc cancels, +/− zooms and 1–9 recalls groups.
 - Every action gives a readable accepted or rejected notice. Disabled actions stay visible with the reason. Sheets stay open until closed, scroll on short screens and keep 44 px targets with no overlaps.
-- Menu, Controls is the same cheat sheet in the game. Five first-use hints explain selection, the sea palette, Orders, enemy actions and bulk selection; each is dismissable and never blocks the map.
+- Menu, Controls is the same cheat sheet in the game. Five first-use hints explain selection, the heading order, Stance, enemy actions and bulk selection; each is dismissable and never blocks the map.
 
 ## Temporary load test
 

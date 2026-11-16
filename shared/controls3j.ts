@@ -28,8 +28,8 @@ export const CONTROL_ORDERS: readonly ControlOrder[] = [
   { id: "loot", label: "Loot", group: "Fight", target: "enemy" },
   { id: "board", label: "Board", group: "Fight", target: "enemy" },
   { id: "attackPort", label: "Attack port", group: "Fight", target: "port" },
-  { id: "run", label: "Run", group: "Fight", target: "none" },
-  { id: "surrender", label: "Surrender", group: "Fight", target: "none" },
+  { id: "run", label: "Run", group: "Fight", target: "own" },
+  { id: "surrender", label: "Surrender", group: "Fight", target: "own" },
   { id: "follow", label: "Follow", group: "Support", target: "own" },
   { id: "escort", label: "Escort", group: "Support", target: "own" },
   { id: "tow", label: "Tow", group: "Support", target: "own" },
@@ -80,8 +80,8 @@ export interface ControlHint {
 
 export const CONTROL_HINTS: readonly ControlHint[] = [
   { id: "select", text: "Tap a ship to select it. Tap it again for its sheet; double-tap for its whole fleet." },
-  { id: "sea", text: "Tap the sea to sail there. With Tap off, a palette opens instead: Sail, Heading, Patrol, Rendezvous, Hold or Anchor." },
-  { id: "orders", text: "Orders lists every command. Pick one, then tap its target. The banner tells you what is armed and lets you cancel." },
+  { id: "sea", text: "A tap on empty sea does nothing. Use Tools for Heading and distance, or a port, the queue or the chart to sail." },
+  { id: "orders", text: "Stance arms one battle order or action; tap its target in sight. The banner tells you what is armed and lets you cancel." },
   { id: "enemy", text: "Tap an enemy to see Attack: Sink, Attack: Capture, Loot and Board. One tap starts the attack." },
   { id: "bulk", text: "Use Select all, Select nearby, class chips or a Multi box. Save a control group and recall it with one tap." },
 ];

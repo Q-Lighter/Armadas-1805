@@ -84,7 +84,8 @@ export const REMOVED_3K_IDS: ReadonlySet<string> = new Set([
   "dock", "dock-collapse", "dock-menu-btn", "dock-tab-fleet", "dock-tab-log",
   "dock-tab-ports", "dock-tab-research", "dock-tab-ship", "dock-tabs",
   "fleet-btn", "fleet-count", "follow-btn", "group-bar", "move-btn",
-  "orders-btn", "orders-list-btn", "orders-sheet", "queue-btn", "tap-btn",
+  "orders-btn", "orders-list-btn", "orders-sheet", "order-menu", "order-menu-actions",
+  "order-menu-close", "order-menu-title", "order-menu-where", "queue-btn", "tap-btn",
   "tap-mode-label", "undo-chip", "undo-sail", "wind-chip", "wind-chip-label",
 ]);
 

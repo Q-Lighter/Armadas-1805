@@ -404,7 +404,8 @@ export const settings = {
   /** Fleets, formations and the first order rules. Draft values. */
   fleets: {
     /** A fleet never contains more than this many ships. */
-    maxShipsPerFleet: 12,
+    /** 3K: a fleet may hold every ship the player owns, still capped at 30. */
+    maxShipsPerFleet: 30,
     /** Traditional line-of-battle gap between neighbouring ships. Draft: 185 m. */
     defaultGapM: 185,
     /** Never close up below this gap. Draft: 60 m. */
@@ -1273,6 +1274,8 @@ export const settings = {
   fog: {
     /** How far every ship can see in daylight, in km. */
     sightRangeKm: 25,
+    /** 3K Draft: the moon and lights change sight. The Developer sheet can turn it off. */
+    nightSightEnabled: true,
     /** Width of the soft edge of the live sight circle, in km. */
     sightFeatherKm: 2,
     /** Discovery grid cell, and the map block sent for chart painting, in km. */

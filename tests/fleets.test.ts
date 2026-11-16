@@ -149,15 +149,15 @@ test("fleet speed is the slowest current speed", () => {
   assert.equal(fleetSpeedKnots([]), 0);
 });
 
-test("a fleet defaults its name and enforces the twelve-ship limit", () => {
+test("a fleet defaults its name and holds every owned ship up to thirty", () => {
   assert.equal(defaultFleetName(2), "Fleet 2");
   assert.equal(nextFleetName([]), "Fleet 1");
-  const twelve = createFleet({ id: "f1", members: members(12).map((entry) => entry.id) });
-  assert.equal(twelve.name, "Fleet 1");
-  assert.equal(validateFleet(twelve), null);
-  assert.throws(() => addFleetMember(twelve, "s13"));
+  const thirty = createFleet({ id: "f1", members: members(30).map((entry) => entry.id) });
+  assert.equal(thirty.name, "Fleet 1");
+  assert.equal(validateFleet(thirty), null);
+  assert.throws(() => addFleetMember(thirty, "s31"));
   assert.throws(() =>
-    createFleet({ id: "f2", members: Array.from({ length: 13 }, (_, index) => `x${index}`) }),
+    createFleet({ id: "f2", members: Array.from({ length: 31 }, (_, index) => `x${index}`) }),
   );
 });
 
@@ -208,4 +208,20 @@ test("control groups are numbered one to nine and replace cleanly", () => {
   assert.throws(() => saveControlGroup({}, 10, ["a"]));
   groups = saveControlGroup(groups, 9, ["a", "a"]);
   assert.deepEqual(groups[9], ["a"]);
+});
+
+test("3K a thirty-ship fleet forms every slot once", () => {
+  const fleet = createFleet({ id: "big", members: members(30).map((entry) => entry.id) });
+  assert.equal(fleet.members.length, 30);
+  for (const formation of ["lineAhead", "lineAbreast", "wedge", "convoy"] as const) {
+    const slots = formationSlots({
+      formation,
+      members: members(30),
+      headingRad: Math.PI / 4,
+      gapM: 60,
+    });
+    assert.equal(slots.length, 30, `${formation} slot count`);
+    assert.equal(new Set(slots.map((slot) => `${slot.x.toFixed(3)}:${slot.y.toFixed(3)}`)).size, 30,
+      `${formation} slots are unique`);
+  }
 });

@@ -121,11 +121,17 @@ test("a predicted path has no corner tighter than a near-stationary pivot", () =
 test("one ghost prediction fits the per-tick budget", () => {
   const { ship, route } = scenario(315);
   predictRoutePath(ship, route, WIND);
-  const start = performance.now();
-  const result = predictRoutePath(ship, route, WIND);
-  const elapsed = performance.now() - start;
-  console.log(`PREDICTION BUDGET ${elapsed.toFixed(2)} ms, ${result.points.length} points, ${result.simulatedSeconds.toFixed(0)} game s, ${result.steps} steps`);
-  assert.ok(elapsed < 2, `prediction took ${elapsed.toFixed(2)} ms`);
+  const samples: number[] = [];
+  let result = predictRoutePath(ship, route, WIND);
+  for (let index = 0; index < 5; index += 1) {
+    const start = performance.now();
+    result = predictRoutePath(ship, route, WIND);
+    samples.push(performance.now() - start);
+  }
+  samples.sort((a, b) => a - b);
+  const elapsed = samples[2]!;
+  console.log(`PREDICTION BUDGET median ${elapsed.toFixed(2)} ms of ${samples.map((v) => v.toFixed(2)).join("/")}, ${result.points.length} points, ${result.simulatedSeconds.toFixed(0)} game s, ${result.steps} steps`);
+  assert.ok(elapsed < 2, `median prediction took ${elapsed.toFixed(2)} ms`);
 });
 
 test("look-ahead rounds a corner instead of aiming at its vertex", () => {

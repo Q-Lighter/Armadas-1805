@@ -131,7 +131,18 @@ export function chooseManoeuvre(input: ManoeuvreInput): ManoeuvreKind | "none" {
   }
   if (change < settings.manoeuvres.largeTurnDeg) return "none";
   if (input.confined && input.coastDownwind) return "boxHaul";
-  if (input.speedKnots < settings.manoeuvres.steerageSpeedKnots) return "irons";
+  // A completely stopped hull has no steerage for a large turn at all.
+  if (input.speedKnots <= 0.05) return "irons";
+  // A hull that has not got way on yet is not "in irons". With the eased
+  // acceleration every tack briefly drops below steerage; if the new course
+  // is sailable, let the normal helm build way again. Only a target inside
+  // the no-sail angle needs the backed-sail recovery.
+  if (input.speedKnots > 0.05 && input.speedKnots < settings.manoeuvres.steerageSpeedKnots) {
+    const targetOffWind = Math.abs(
+      shortestTurnDegrees(input.desiredHeadingRad, input.windFromDeg * DEG),
+    );
+    return targetOffWind < input.closestAngleDeg ? "irons" : "none";
+  }
   if (
     input.speedKnots < settings.manoeuvres.minTackSpeed ||
     input.sailsPercent < settings.manoeuvres.manoeuvreRigPercent ||

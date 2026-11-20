@@ -41,7 +41,7 @@ function place(ship: Ship, lonDeg: number, latDeg: number, headingDeg: number): 
 /** Sail until the order ends, with a tick budget so a bug cannot hang. */
 function sailUntilStopped(world: ReturnType<typeof createWorld>, ship: Ship, maxTicks: number): number {
   let ticks = 0;
-  while (ship.order && ticks < maxTicks) {
+  while ((ship.order || ship.speedKnots > 0.001) && ticks < maxTicks) {
     stepWorld(world, TICK);
     ticks += 1;
   }
@@ -122,13 +122,21 @@ test("an upwind order along the Jamaican coast tacks, arrives and stops", () => 
   assert.equal(isSeaAt(target.x, target.y), true, "target is at sea");
   assert.equal(applyOrder(world, "alpha", target.x, target.y), true);
 
-  const ticks = sailUntilStopped(world, ship, 6_000);
-  assert.ok(ticks > 0 && ticks < 6_000, "the ship should arrive without the budget");
+  const ticks = sailUntilStopped(world, ship, 48_000);
+  assert.ok(ticks > 0 && ticks < 48_000, "the ship should arrive without the budget");
 
   assert.equal(ship.order, null);
   assert.equal(ship.arrived, true);
   assert.equal(ship.speedKnots, 0);
-  assert.equal(takeNotice(world, "alpha"), null, "no coast or edge message");
+  const notices: string[] = [];
+  for (let notice = takeNotice(world, "alpha"); notice !== null; notice = takeNotice(world, "alpha")) {
+    notices.push(notice);
+  }
+  assert.equal(
+    notices.some((notice) => notice === COAST_NOTICE || notice === EDGE_NOTICE),
+    false,
+    `no coast or edge message, got ${notices.join(" | ")}`,
+  );
   assert.ok(
     distanceTo(ship, target) <= settings.sailing.arrivalRadiusKm + 0.01,
     "arrived inside the arrival radius",

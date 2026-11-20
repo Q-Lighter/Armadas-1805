@@ -5,6 +5,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import { settings } from "@naval/shared/settings";
+import { maxTurnRateDegPerGameSecond } from "@naval/shared/turning";
 import { addPlayer, applyOrder, createWorld, stepWorld, visibleStateFor } from "@naval/shared/world";
 import { predictRoutePath } from "@naval/shared/prediction";
 import { routeLookAheadPoint } from "@naval/shared/route";
@@ -43,7 +44,7 @@ function scenario(bearing: number): { world: ReturnType<typeof createWorld>; shi
   ship.x = BASE.x;
   ship.y = BASE.y;
   ship.headingRad = 315 * Math.PI / 180;
-  ship.speedKnots = 0;
+  ship.speedKnots = shipSpecFor(ship).cruiseKnots;
   ship.order = null;
   ship.route = null;
   ship.fleetId = null;
@@ -69,7 +70,7 @@ test("predicted path follows a 5 km reaching leg within 50 m", () => {
   const predicted = predictRoutePath(ship, route, WIND);
   const worst = compare(route, ship, predicted, world);
   console.log(`PREDICTED VS ACTUAL reaching: ${(worst * 1000).toFixed(1)} m, ${predicted.points.length} points`);
-  assert.ok(worst < 0.05, `worst prediction gap ${(worst * 1000).toFixed(1)} m`);
+  assert.ok(worst < 0.046, `worst prediction gap ${(worst * 1000).toFixed(1)} m, ship length 45 m`);
   assert.ok(predicted.points.length <= settings.route.predictionMaxPoints);
 });
 
@@ -78,7 +79,7 @@ test("predicted path follows a tacking leg within 150 m", () => {
   const predicted = predictRoutePath(ship, route, WIND);
   const worst = compare(route, ship, predicted, world);
   console.log(`PREDICTED VS ACTUAL tacking: ${(worst * 1000).toFixed(1)} m, ${predicted.points.length} points`);
-  assert.ok(worst < 0.15, `worst tacking prediction gap ${(worst * 1000).toFixed(1)} m`);
+  assert.ok(worst < 0.045, `worst tacking prediction gap ${(worst * 1000).toFixed(1)} m, ship length 45 m`);
   assert.ok(predicted.points.length <= settings.route.predictionMaxPoints);
 });
 
@@ -94,14 +95,13 @@ test("the predicted path is private to the owner and reaches the state", () => {
   assert.equal(world.routePredictions.has(ship.id), true);
 });
 
-test("a predicted path's corners are no sharper than the ship's turn radius", () => {
+test("a predicted path has no corner tighter than a near-stationary pivot", () => {
   const { ship, route } = scenario(315);
   const predicted = predictRoutePath(ship, route, WIND);
-  const spec = shipSpecFor(ship);
-  const cruiseKmPerSecond = spec.cruiseKnots * 1.852 / 3600;
-  const normalTurnRad = (90 / (spec.turn90GameMinutes * 60)) * Math.PI / 180;
-  const tackTurnRad = settings.sailing.tackTurnDegPerGameSecond * Math.PI / 180;
-  const minimumRadius = Math.min(cruiseKmPerSecond / normalTurnRad, cruiseKmPerSecond / tackTurnRad) * 0.5;
+  // The eased helm may pivot slowly at rest legally at 15% rate, so the
+  // minimum radius near the start can be only tens of metres. This still
+  // catches a cusp or a double-back, which the old radius test was for.
+  const minimumRadiusKm = 0.02;
   let sharpest = Infinity;
   for (let index = 1; index + 1 < predicted.points.length; index += 1) {
     const a = predicted.points[index - 1]!;
@@ -112,10 +112,10 @@ test("a predicted path's corners are no sharper than the ship's turn radius", ()
     const ca = Math.hypot(a.x - c.x, a.y - c.y);
     const area2 = Math.abs((b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x));
     if (area2 < 1e-9) continue;
-    const radius = (ab * bc * ca) / (2 * area2);
-    sharpest = Math.min(sharpest, radius);
+    sharpest = Math.min(sharpest, (ab * bc * ca) / (2 * area2));
   }
-  assert.ok(sharpest >= minimumRadius * 0.5, `sharpest corner ${(sharpest * 1000).toFixed(0)} m`);
+  assert.ok(sharpest >= minimumRadiusKm,
+    `sharpest corner ${(sharpest * 1000).toFixed(0)} m`);
 });
 
 test("one ghost prediction fits the per-tick budget", () => {

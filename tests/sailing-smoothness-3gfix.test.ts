@@ -64,7 +64,7 @@ function straightRun(withForty: boolean): { sidewaysKm: number; minKnots: number
   let samples = 0;
   for (let tick = 0; tick < 100 && ship.route; tick += 1) {
     stepWorld(world, TICK);
-    if (tick < 10 || !ship.route || ship.speedKnots < 0.5) continue;
+    if (tick < 30 || !ship.route || ship.speedKnots < 0.5) continue;
     sidewaysKm = Math.max(sidewaysKm, Math.abs(ship.y - BASE.y));
     minKnots = Math.min(minKnots, ship.speedKnots);
     maxKnots = Math.max(maxKnots, ship.speedKnots);

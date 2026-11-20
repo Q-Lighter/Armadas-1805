@@ -8,6 +8,7 @@ import { test } from "node:test";
 
 import { settings } from "@naval/shared/settings";
 import { shipTypeFor } from "@naval/shared/ships";
+import { maxTurnRateDegPerGameSecond } from "@naval/shared/turning";
 import {
   angleOffWindDeg,
   createShip,
@@ -38,7 +39,7 @@ function pointAt(bearingDeg: number, distanceKm: number): Point {
 function sailUntilArrived(ship: Ship, target: Point, dt: number, maxSteps = 200_000): number {
   assert.equal(sailTo(ship, target.x, target.y), true, "order should be accepted");
   let steps = 0;
-  while (ship.order && steps < maxSteps) {
+  while ((ship.order || ship.speedKnots > 0.001) && steps < maxSteps) {
     stepShip(ship, dt);
     steps += 1;
   }
@@ -61,11 +62,11 @@ test("a ship cannot sail inside its no-sail angle", () => {
 test("turning takes the time in the settings for every ship", () => {
   for (const classId of CLASSES) {
     const raw = shipTypeFor("British", classId);
-    // 3H raises the underway turn rate so a frigate circles in 4-6 lengths.
+    // 3L replaces the historical minutes with a real-second feel.
     const spec = shipSpecFor(createShip("turn-spec", classId, 0, 0, 0));
-    const expectedRate = 90 / (spec.turn90GameMinutes * 60);
+    const expectedRate = maxTurnRateDegPerGameSecond(classId);
     assert.equal(turnRateDegPerSecond(spec), expectedRate);
-    assert.equal(spec.turn90GameMinutes, raw.turn90GameMinutes / settings.manoeuvres.cruiseTurnRateMultiplier);
+    assert.ok(raw.turn90GameMinutes > 0);
 
     // Start on a broad reach, with way on, and order a 90 degree turn.
     const startHeading = (WIND_FROM + 180) * RAD;
@@ -81,10 +82,10 @@ test("turning takes the time in the settings for every ship", () => {
       seconds += 1;
     }
 
-    const expectedSeconds = spec.turn90GameMinutes * 60;
+    const expectedSeconds = settings.sailing.turn90RealSeconds[classId]! * settings.time.sailingTimeScale;
     assert.ok(
-      Math.abs(seconds - expectedSeconds) <= 3,
-      `${classId}: 90 degree turn took ${seconds}s, expected about ${expectedSeconds}s`,
+      Math.abs(seconds - expectedSeconds) <= expectedSeconds * 0.1,
+      `${classId}: 90 degree turn took ${seconds}s of game time, expected about ${expectedSeconds}s`,
     );
   }
 });
@@ -115,7 +116,7 @@ test("an upwind trip tacks, arrives and stops for every ship", () => {
     const sides = new Set<number>();
     assert.equal(sailTo(ship, target.x, target.y), true);
     let steps = 0;
-    while (ship.order && steps < 200_000) {
+    while ((ship.order || ship.speedKnots > 0.001) && steps < 200_000) {
       stepShip(ship, 5);
       if (steps % 20 === 0) {
         sides.add(Math.sign(shortestTurnDegrees(WIND_FROM * RAD, ship.headingRad)));
@@ -154,7 +155,7 @@ test("an upwind trip also works at the server tick length", () => {
 });
 
 test("the same inputs always give the same results", () => {
-  const target = pointAt(WIND_FROM, 20);
+  const target = pointAt(WIND_FROM + 180, 20);
 
   const first = createShip("same", "frigate", 0, 0, 0);
   const second = createShip("same", "frigate", 0, 0, 0);

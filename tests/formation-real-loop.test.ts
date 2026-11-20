@@ -109,7 +109,7 @@ function runPreset(formation: FormationId): Row[] {
   const rows: Row[] = [];
   const marks = new Set([300, 600, 1_200]);
   let smallestPair = Infinity;
-  for (let step = 0; step < 120 / TICK; step += 1) {
+  for (let step = 0; step < 180 / TICK; step += 1) {
     stepWorld(world, GAME_DT, WIND_FROM_DEG);
     const active = shipsForOwner(world, "formation-owner").filter((ship) => !ship.detached);
     for (let a = 0; a < active.length; a += 1) {
@@ -148,8 +148,8 @@ test("real loop: every formation holds station and keeps 40 m apart", () => {
   }
   for (const row of all) {
     assert.ok(row.closestPairM >= 40, `${row.formation} at ${row.seconds}s: ships ${row.closestPairM.toFixed(0)} m apart`);
-    if (row.seconds === 120 && row.formation !== "freeChase") {
-      assert.ok(row.inStation >= 8, `${row.formation} at 120s: only ${row.inStation}/10 in station`);
+    if (row.seconds === 180 && row.formation !== "freeChase") {
+      assert.ok(row.inStation >= 8, `${row.formation} at 180s: only ${row.inStation}/10 in station`);
     }
   }
 });

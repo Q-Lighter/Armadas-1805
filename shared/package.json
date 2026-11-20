@@ -22,6 +22,10 @@
       "types": "./dist/sailing.d.ts",
       "default": "./dist/sailing.js"
     },
+    "./turning": {
+      "types": "./dist/turning.d.ts",
+      "default": "./dist/turning.js"
+    },
     "./manoeuvres": {
       "types": "./dist/manoeuvres.d.ts",
       "default": "./dist/manoeuvres.js"

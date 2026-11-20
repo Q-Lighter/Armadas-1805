@@ -35,6 +35,10 @@ import {
   type ManoeuvreOutput,
   type ManoeuvreState,
 } from "./manoeuvres.js";
+import {
+  easeHeading,
+  maxTurnRateDegPerGameSecond,
+} from "./turning.js";
 
 /** One knot is 1.852 km/h. A definition, not a tuning value. */
 export const KM_PER_HOUR_PER_KNOT = 1.852;
@@ -95,6 +99,8 @@ export interface Ship {
   headingRad: number;
   /** Current speed in knots. */
   speedKnots: number;
+  /** Last applied turn rate in degrees per game second, for smooth prediction. */
+  turnRateDegPerSec?: number;
   /** The current order, or null when the ship is holding position. */
   order: SailToOrder | null;
   /** Look-ahead point used to steer a planned route; order keeps the goal. */
@@ -294,9 +300,9 @@ export function angleOffWindDeg(headingRad: number, windFromDeg: number): number
   return Math.abs(shortestTurnDegrees(headingRad, windFromDeg * DEG));
 }
 
-/** Turn rate in degrees per game second for a ship class. */
+/** Maximum sustained turn rate in degrees per game second for a ship class. */
 export function turnRateDegPerSecond(spec: ShipSpec): number {
-  return 90 / (spec.turn90GameMinutes * 60);
+  return maxTurnRateDegPerGameSecond(spec.classId);
 }
 
 /**
@@ -371,7 +377,7 @@ export function speedForHeading(
   windFromDeg: number = settings.weather.windFromDeg,
 ): number {
   const angle = angleOffWindDeg(headingRad, windFromDeg);
-  if (angle + 1e-9 < spec.closestAngleDeg) return 0;
+  if (angle + settings.sailing.noSailToleranceDeg < spec.closestAngleDeg) return 0;
   return spec.cruiseKnots * speedFactorAtAngle(angle);
 }
 
@@ -402,6 +408,7 @@ export function createShip(
     y,
     headingRad,
     speedKnots: 0,
+    turnRateDegPerSec: 0,
     order: null,
     stance: DEFAULT_STANCE,
     fightingStyle: DEFAULT_FIGHTING_STYLE,
@@ -724,13 +731,22 @@ export function stepShip(
 
   if (!order) {
     if (performance.driftSpeedKnots > 0) {
-      const maxTurnDeg = performance.turnRateDegPerSecond * dtGameSeconds;
-      const turnDeg = Math.max(
-        -maxTurnDeg,
-        Math.min(maxTurnDeg, shortestTurnDegrees(ship.headingRad, performance.driftHeadingRad)),
+      easeHeading(
+        ship,
+        performance.driftHeadingRad,
+        performance.turnRateDegPerSecond,
+        dtGameSeconds,
       );
-      ship.headingRad += turnDeg * DEG;
       ship.speedKnots = performance.driftSpeedKnots;
+      const travelKm = ship.speedKnots * KM_PER_HOUR_PER_KNOT * (dtGameSeconds / 3600);
+      ship.x += Math.sin(ship.headingRad) * travelKm;
+      ship.y -= Math.cos(ship.headingRad) * travelKm;
+      return;
+    }
+    if (ship.speedKnots > 0) {
+      const maxChange = settings.sailing.speedChangeKnotsPerRealSecond *
+        dtGameSeconds / settings.time.sailingTimeScale;
+      ship.speedKnots = Math.max(0, ship.speedKnots - maxChange);
       const travelKm = ship.speedKnots * KM_PER_HOUR_PER_KNOT * (dtGameSeconds / 3600);
       ship.x += Math.sin(ship.headingRad) * travelKm;
       ship.y -= Math.cos(ship.headingRad) * travelKm;
@@ -745,9 +761,13 @@ export function stepShip(
   const distanceKm = Math.hypot(dx, dy);
 
   if (distanceKm <= arrivalRadiusKm) {
-    // Arrived: stop exactly here. Never keep circling a near target. A route
-    // look-ahead point passes stopOnArrival=false and keeps its way on.
-    if (stopOnArrival) ship.speedKnots = 0;
+    // Arrived: shed way over the next few seconds instead of stopping dead.
+    // A route look-ahead point passes stopOnArrival=false and keeps its way on.
+    if (stopOnArrival) {
+      const stopChange = settings.sailing.speedChangeKnotsPerRealSecond *
+        dtGameSeconds / settings.time.sailingTimeScale;
+      if (ship.speedKnots <= stopChange) ship.speedKnots = 0;
+    }
     ship.order = null;
     ship.tackLine = undefined;
     ship.arrived = true;
@@ -822,20 +842,21 @@ export function stepShip(
   const steerage = settings.manoeuvres.steerageSpeedKnots;
   const pivotShare = settings.combat.pivotRateAtRestShare *
     Math.max(0, 1 - ship.speedKnots / Math.max(1e-9, steerage));
+  const boardingPivot = ship.boardingShipId && ship.speedKnots < steerage
+    ? settings.combat.boardingPivotRateShare
+    : 0;
   const steerShare = backing
-    ? Math.max(0.5, pivotShare)
-    : Math.max(steerageTurnFactor(ship.speedKnots), pivotShare);
-  const maxTurnDeg = Math.max(
-    performance.turnRateDegPerSecond * dtGameSeconds * steerShare,
-    (ship.tackManoeuvreSeconds ?? 0) > 0
-      ? settings.sailing.tackTurnDegPerGameSecond * dtGameSeconds
-      : 0,
+    ? Math.max(0.5, pivotShare, boardingPivot)
+    : Math.max(steerageTurnFactor(ship.speedKnots), pivotShare, boardingPivot);
+  // The same eased helm is used by the live ship, the route ghost and the
+  // manoeuvres. There is no special fast tack rate: tacking obeys the ship's
+  // real turn limit too.
+  easeHeading(
+    ship,
+    wantedRad,
+    performance.turnRateDegPerSecond * steerShare,
+    dtGameSeconds,
   );
-  const turnDeg = Math.max(
-    -maxTurnDeg,
-    Math.min(maxTurnDeg, shortestTurnDegrees(ship.headingRad, wantedRad)),
-  );
-  ship.headingRad += turnDeg * DEG;
 
   // A ship with no effective sail drifts downwind. Otherwise the effective
   // sail product and the loaded cargo hold reduce the normal speed.
@@ -859,23 +880,17 @@ export function stepShip(
     targetSpeed = Math.min(targetSpeed, ship.stationSpeedLimit);
   }
 
-  // 3J-fix-a: sails and the rudder take a moment to answer. A rate limit keeps
-  // sail shortening and manoeuvre transitions from stepping the speed in one
-  // tick. The steady speed is unchanged, so open-sea passages keep their pace.
-  const maxSpeedChange = settings.sailing.speedChangeKnotsPerGameSecond * dtGameSeconds;
-  const easing = Boolean(manoeuvre) || ship.shortenedSail || wasShortened;
-  if (easing && ship.speedKnots > 0.05) {
-    const speedChange = Math.max(
-      -maxSpeedChange,
-      Math.min(maxSpeedChange, targetSpeed - ship.speedKnots),
-    );
-    ship.speedKnots += speedChange;
-  } else {
-    // Normal acceleration and station keeping stay immediate. Only the sail
-    // and manoeuvre transitions, which used to halve or double speed in one
-    // tick, are eased.
-    ship.speedKnots = targetSpeed;
-  }
+  // Sails take a moment to answer. Every speed change, including getting
+  // under way, stopping and slowing for a tack, uses the same limited
+  // acceleration. The steady speed is unchanged.
+  const maxSpeedChange = settings.sailing.speedChangeKnotsPerRealSecond *
+    dtGameSeconds / settings.time.sailingTimeScale;
+  const speedChange = Math.max(
+    -maxSpeedChange,
+    Math.min(maxSpeedChange, targetSpeed - ship.speedKnots),
+  );
+  ship.speedKnots += speedChange;
+  void wasShortened;
 
   const travelSign = manoeuvre?.travelSign ?? 1;
   const travelKm = travelSign * ship.speedKnots * KM_PER_HOUR_PER_KNOT * (dtGameSeconds / 3600);

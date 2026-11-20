@@ -7,6 +7,7 @@
 
 import { settings } from "./settings.js";
 import type { ShipClassId, ShipType } from "./data/ships.js";
+import { maxTurnRateDegPerGameSecond } from "./turning.js";
 
 const DEG = Math.PI / 180;
 const COM = settings.combat;
@@ -780,7 +781,7 @@ export function shipPerformance(
     ? 0
     : COM.zeroRudderTurnShare +
       (1 - COM.zeroRudderTurnShare) * (percents.rudder / 100);
-  const baseTurn = 90 / (spec.turn90GameMinutes * 60);
+  const baseTurn = maxTurnRateDegPerGameSecond(spec.classId);
   const driftHeadingRad = (windFromDeg + 180) * DEG;
   return {
     crewPercent: percents.crew,

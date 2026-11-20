@@ -30,6 +30,7 @@ import {
   type ShipRoute,
 } from "./sailing.js";
 import { isLandAt } from "./land.js";
+import { maxTurnRateDegPerGameSecond } from "./turning.js";
 import {
   MAP_HEIGHT_KM,
   MAP_WIDTH_KM,
@@ -5121,7 +5122,7 @@ function installRoute(
   }
 
   const spec = shipSpecFor(ship);
-  const turnRateRad = (90 / (spec.turn90GameMinutes * 60)) * (Math.PI / 180);
+  const turnRateRad = maxTurnRateDegPerGameSecond(spec.classId) * (Math.PI / 180);
   const cruiseKmPerSecond = (spec.cruiseKnots * 1.852) / 3600;
   const minRadiusKm =
     (cruiseKmPerSecond / turnRateRad) * settings.route.curveRadiusFactor;
@@ -8592,15 +8593,19 @@ function planBoardingGoal(
     : Infinity;
   if (!force && lastPlan !== undefined &&
     nowRealSeconds * 1000 - lastPlan < settings.combat.boardingInterceptSeconds * 1000 &&
-    ship.order && (ship.route || goalMovedM < 20)) return;
+    ship.order) return;
   // A stopped target's point does not move; keep the planned tacking route.
   if (!force && ship.route && currentGoal && goalMovedM < settings.combat.boardingReplanDistanceM) return;
+  // Re-planning a moving intercept must not throw away the way already on the
+  // ship; with eased acceleration that would stop it every couple of seconds.
+  const carriedSpeedKnots = ship.speedKnots;
   ship.route = null;
   ship.order = null;
   if (isInsideMapFrame(point.x, point.y) && !isLandAt(point.x, point.y)) {
     installRoute(world, ownerId, ship, point, "point", null);
     if (!ship.order) ship.order = { type: "sailTo", x: point.x, y: point.y };
   }
+  ship.speedKnots = carriedSpeedKnots;
   ship.boardingLastPlanRealMs = nowRealSeconds * 1000;
 }
 
@@ -8846,7 +8851,15 @@ function updateBoarding(world: World, nowRealSeconds: number, windFromDeg: numbe
       ship.boardingLastProgressRealMs = nowRealSeconds * 1000;
     }
     const lastProgress = ship.boardingLastProgressRealMs ?? nowRealSeconds * 1000;
-    if (nowRealSeconds - lastProgress / 1000 >= settings.combat.boardingNoProgressSeconds) {
+    // Once alongside, pivoting onto the target's heading can take several
+    // seconds with the eased helm even though the approach is working. Do not
+    // mistake that alignment pause for being stuck.
+    const reachedAlongside = (ship.boardingBestDistanceM ?? Infinity) <=
+      settings.combat.boardingAlongsideRangeM;
+    if (
+      !reachedAlongside &&
+      nowRealSeconds - lastProgress / 1000 >= settings.combat.boardingNoProgressSeconds
+    ) {
       const faster = target.speedKnots > spec.cruiseKnots + 0.5;
       boardingFailure(world, ship, faster
         ? "Cannot reach: target is faster"
@@ -8910,12 +8923,28 @@ function updateBoarding(world: World, nowRealSeconds: number, windFromDeg: numbe
     const growingFor = ship.boardingStuckSinceRealMs === null
       ? 0
       : nowRealSeconds - ship.boardingStuckSinceRealMs / 1000;
-    const wrongWay = distanceM < settings.combat.boardingTurnBackRangeM &&
-      offBowDeg > settings.combat.boardingTurnBackAngleDeg;
+    // A stopped hull alongside can pivot on the spot; turning away would only
+    // restart the approach. Only a hull still carrying way needs to go round.
+    // A parallel hull sliding past the target's beam is still on a boarding
+    // course; only a hull pointing across the bearing needs to go round again.
+    const wrongWay = distanceM > settings.combat.boardingRangeM &&
+      distanceM < settings.combat.boardingTurnBackRangeM &&
+      offBowDeg > settings.combat.boardingTurnBackAngleDeg &&
+      headingDifferenceDeg > settings.combat.boardingMaxHeadingDifferenceDeg &&
+      ship.speedKnots > 1;
     if (growingFor >= settings.combat.boardingOvershootSeconds || wrongWay) {
       ship.boardingTurningBackSinceRealMs ??= nowRealSeconds * 1000;
     }
     ship.boardingLastDistanceM = distanceM;
+
+    // Once stopped alongside, cancel any old turn-back timer: the hull can
+    // pivot in place instead of starting another retreat loop.
+    if (
+      distanceM <= settings.combat.boardingAlongsideRangeM &&
+      ship.speedKnots < 1
+    ) {
+      ship.boardingTurningBackSinceRealMs = null;
+    }
 
     if (ship.boardingTurningBackSinceRealMs !== null && ship.boardingTurningBackSinceRealMs !== undefined) {
       const turningFor = nowRealSeconds - ship.boardingTurningBackSinceRealMs / 1000;
@@ -9739,7 +9768,6 @@ function refreshOnePrediction(world: World, playerId: string, ship: Ship, windFr
         reached: path.reached,
         truncated: path.truncated,
       });
-      if (!path.reached) pushNotice(world, playerId, "No route to that point.");
     }
     return;
   }
@@ -9785,7 +9813,6 @@ function refreshOnePrediction(world: World, playerId: string, ship: Ship, windFr
     entry.windSpeedKnots = world.windSpeedKnots;
     entry.computedGameMs = world.gameMs;
     delete entry.job;
-    if (!path.reached) pushNotice(world, playerId, "No route to that point.");
   } else if (entry.points.length <= 1) {
     entry.points = predictionSendPoints(job.points);
   }
@@ -10475,7 +10502,7 @@ export function visibleStateFor(
         : normalSpeed * performance.speedFactor).toFixed(2)),
       normalSpeedKnots: Number(normalSpeed.toFixed(2)),
       effectiveTurnDegPerSecond: Number(performance.turnRateDegPerSecond.toFixed(3)),
-      normalTurnDegPerSecond: Number((90 / (spec.turn90GameMinutes * 60)).toFixed(3)),
+      normalTurnDegPerSecond: Number(performance.turnRateDegPerSecond.toFixed(3)),
       engagement: engagement
         ? { targetId: engagement.targetShipId, objective: engagement.objective }
         : null,

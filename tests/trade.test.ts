@@ -164,8 +164,10 @@ test("the sailing step applies the cargo speed multiplier", () => {
   addGoodToStores(loaded.stores, "sugar", type.cargoTonnes);
   sailTo(empty, 300, 0);
   sailTo(loaded, 300, 0);
-  stepShip(empty, 10);
-  stepShip(loaded, 10);
+  for (let step = 0; step < 20; step += 1) {
+    stepShip(empty, 250);
+    stepShip(loaded, 250);
+  }
   assert.ok(empty.speedKnots > 0);
   assert.ok(Math.abs(loaded.speedKnots / empty.speedKnots - 0.9) < 1e-9);
 });

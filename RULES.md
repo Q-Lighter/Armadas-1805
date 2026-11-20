@@ -288,12 +288,22 @@ Read this file at the start of every prompt, then follow it for the whole sessio
 
 ## Sailing and manoeuvres
 
-- The helm needs way on. A hull below 2 knots (Draft) loses turn rate in
-  proportion to speed; at rest only backing the sails can pivot it, at 15% of the
-  normal rate. Every class turns about three times faster than the old 90-degree
-  time, so a frigate at cruise circles in about 5.2 ship lengths rather than
-  15.7. The measured table is in the 3H-b1 build log. No AGREED turning number
-  changed.
+- The helm is defined by feel in real seconds. A 90-degree turn at cruise takes
+  raider 2.0 s, escort 2.5, frigate 3.0, trade 4.0, fire ship 4.0, line 5.0 and
+  flagship 5.5 (Draft). Heading changes at a maximum turn rate with limited
+  angular acceleration: the rate eases in over about 0.8 s and eases off as the
+  target bearing approaches, so there are no heading snaps. Speed changes use
+  the same limited acceleration instead of jumping, including starting,
+  stopping, arrival and slowing for a tack. Rudder damage still reduces the
+  maximum rate. The live ship, client sprite, route planner, route dots,
+  heading preview and manoeuvres all use these limits, so a plotted path is the
+  path sailed. Fleet station-keeping uses the same helm.
+- The helm still needs way on. Below steerage the rate falls with speed; at rest
+  a hull pivots at 15% of its rate, and a boarding hull alongside may use 35%
+  (Draft) so the eased helm can line up. A low-speed hull with a sailable target
+  uses the normal helm and builds way again; only a target inside the no-sail
+  angle or a dead stop for a large turn enters irons recovery. The measured
+  before/after table is in the 3L-a build log. No AGREED turning number changed.
 - A course change of 110 degrees or more is a manoeuvre. If the shorter turn
   crosses the wind the ship tacks; otherwise it wears round. A damaged or very
   slow hull wears instead of tacking. A clean tack can miss stays; damaged rig,

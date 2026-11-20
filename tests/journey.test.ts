@@ -75,7 +75,7 @@ test("a first order at sea starts a journey and moves add trail points", () => {
   assert.equal(applyOrder(world, "alpha", start.x + 10, start.y), true);
   const owner = world.owners.get("alpha")!;
   assert.ok(owner.journeys.has(ship.id));
-  for (let tick = 0; tick < 80; tick += 1) stepWorld(world, TICK, 315);
+  for (let tick = 0; tick < 160; tick += 1) stepWorld(world, TICK, 315);
   const journey = owner.journeys.get(ship.id)!;
   assert.ok(journey.distanceKm > 0.5);
   assert.ok(journey.trail.length > 1);

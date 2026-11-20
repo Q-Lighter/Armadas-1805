@@ -249,27 +249,31 @@ export const settings = {
     /** A change larger than this is a manoeuvre, not an ordinary helm turn. */
     largeTurnDeg: 110,
     /** A tack needs at least this much way on. */
-    minTackSpeed: 3.5,
+    minTackSpeed: 3.0,
     /** Speed share while the bow is in the wind during a tack. */
     tackSpeedShare: 0.4,
     /** Speed share while paying off after a tack. */
     tackPayOffSpeedShare: 0.65,
-    /** Longest time to hold the bow into the wind before paying off. */
-    tackPhaseSeconds: 45,
+    /** Longest time to hold the bow into the wind before paying off, in game
+     *  seconds. Draft: 45 real seconds. */
+    tackPhaseSeconds: 12 * 144,
     /** Speed share through a wear's downwind loop. */
     wearSpeedShare: 0.8,
-    /** Longest time for the downwind half of a wear. */
-    wearPhaseSeconds: 60,
+    /** Longest time for the downwind half of a wear, in game seconds.
+     *  Draft: 60 real seconds. */
+    wearPhaseSeconds: 15 * 144,
     /** Speed share while box-hauling. */
     boxHaulSpeedShare: 0.5,
-    /** Longest time for the box-haul's backed-sail phase. */
-    boxHaulSeconds: 60,
+    /** Longest time for the box-haul's backed-sail phase, in game seconds.
+     *  Draft: 60 real seconds. */
+    boxHaulSeconds: 60 * 144,
     /** Speed given by backing the sails for sternway. */
     backingSailsKnots: 1,
     /** Sternway gained while recovering from irons. */
     ironsSternwayLengths: 1,
-    /** Recovery timer for in-irons backing and paying off. */
-    ironsRecoverySeconds: 60,
+    /** Recovery timer for in-irons backing and paying off, in game seconds.
+     *  Draft: 60 real seconds. */
+    ironsRecoverySeconds: 20 * 144,
     /** Speed share while paying off from irons. */
     ironsPayOffSpeedShare: 0.4,
     /** Warping speed in port waters, independent of the wind. */
@@ -379,17 +383,32 @@ export const settings = {
     /** A target this close to dead upwind still needs both tacks; do not
      *  commit to a single final tack. Draft: 15 degrees. */
     finalApproachMinOffWindDeg: 15,
-    /** A tack is allowed to turn at least this fast, so it finishes in about
-     *  the manoeuvre time below. Draft: 6 degrees per game second. */
-    tackTurnDegPerGameSecond: 6,
-    /** How quickly a ship's speed may change, in knots per game second. This
-     *  smooths sail shortening and manoeuvre transitions. Draft: 0.12. */
-    speedChangeKnotsPerGameSecond: 0.12,
+    /** How quickly a ship's speed may change, in knots per real second.
+     *  Starting, stopping and tacking all build or shed way over a few
+     *  seconds. Draft: 2.5. */
+    speedChangeKnotsPerRealSecond: 2.5,
+    /** Draft: target time for a 90 degree turn at cruise, in REAL seconds. */
+    turn90RealSeconds: {
+      raider: 2,
+      escort: 2.5,
+      trade: 4,
+      frigate: 3,
+      line: 5,
+      flagship: 5.5,
+      fireShip: 4,
+    } as Record<string, number>,
+    /** The turn rate builds and brakes over this many REAL seconds. Draft: 0.8. */
+    angularEaseRealSeconds: 0.8,
+    /** A heading this close is treated as on target. Draft: 0.5 degrees. */
+    turnArrivalDeg: 0.0001,
     /** Time a tack is allowed to take. Draft: 20 game seconds. */
     tackManoeuvreGameSeconds: 20,
     /** Every ship's closest-to-wind angle is reduced by this much. Draft: 9
      *  degrees, within the requested 8-10 degree range. */
     closestAngleAdjustDeg: -9,
+    /** A heading this close to the no-sail edge still draws sail. Draft: 0.05
+     *  degrees; without it the close-hauled boundary flickers to zero speed. */
+    noSailToleranceDeg: 0.05,
 
     /** Orders closer than this do nothing. Draft: 0.2 km. */
     minOrderDistanceKm: 0.2,
@@ -593,7 +612,7 @@ export const settings = {
     /** Draft: boarding approach phases and recovery (3E). */
     boardingInterceptSeconds: 2,
     boardingInterceptCapGameSeconds: 60,
-    boardingClosingRangeM: 300,
+    boardingClosingRangeM: 1000,
     boardingAlongsideRangeM: 100,
     boardingAbeamM: 45,
     boardingClosingSpeedBonusKnots: 1.5,
@@ -603,8 +622,11 @@ export const settings = {
     boardingTurnBackAngleDeg: 100,
     boardingTurnBackRangeM: 300,
     boardingTurnBackSeconds: 12,
-    boardingNoProgressSeconds: 45,
-    boardingApproachTimeoutSeconds: 150,
+    boardingNoProgressSeconds: 90,
+    boardingApproachTimeoutSeconds: 360,
+    /** A hull alongside may pivot at this share of its turn rate while slow,
+     *  so the eased helm can line up for a grapple. Draft: 0.35. */
+    boardingPivotRateShare: 0.35,
     boardingIronsSeconds: 60,
     /** Draft: final approach speed against a stopped target, in knots. */
     boardingApproachSpeedKnots: 2,

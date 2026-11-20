@@ -85,7 +85,8 @@ test("shortening sail never changes speed by an instant jump", () => {
       nearCoast: true,
     });
     const change = Math.abs(ship.speedKnots - before);
-    const limit = settings.sailing.speedChangeKnotsPerGameSecond * TICK + 1e-9;
+    const limit = settings.sailing.speedChangeKnotsPerRealSecond * TICK /
+      settings.time.sailingTimeScale + 1e-9;
     assert.ok(change <= limit,
       `${classId}: ${change.toFixed(2)} knot jump, limit ${limit.toFixed(2)}`);
     assert.ok(ship.speedKnots > 0 && ship.speedKnots < before, "sail shortening should reduce speed");

@@ -94,7 +94,7 @@ test("heading order stops after its literal distance", () => {
     headingDeg,
     distanceKm: 2,
   }), true);
-  for (let tick = 0; tick < 400; tick += 1) {
+  for (let tick = 0; tick < 800; tick += 1) {
     stepWorld(world, settings.time.sailingTimeScale / settings.server.tickHz);
   }
   const travelled = Math.hypot(leader.x - start.x, leader.y - start.y);
@@ -112,7 +112,7 @@ test("a direct heading order and follow order use the special-order path", () =>
     headingDeg: 90,
     distanceKm: 2,
   }), true);
-  for (let tick = 0; tick < 400; tick += 1) {
+  for (let tick = 0; tick < 800; tick += 1) {
     stepWorld(world, settings.time.sailingTimeScale / settings.server.tickHz);
   }
   assert.ok(Math.hypot(ship.x - start.x, ship.y - start.y) >= 1.5);

@@ -16,7 +16,7 @@ import { build } from "esbuild";
 import { JSDOM, VirtualConsole } from "jsdom";
 
 import { settings } from "@naval/shared/settings";
-import { addPlayer, removeTestDummies, shipsForOwner, spawnTestFireShips } from "@naval/shared/world";
+import { addPlayer, removeTestDummies, shipsForOwner, spawnRouteHelper, spawnTestFireShips } from "@naval/shared/world";
 import { towSpeedKnots } from "../../shared/dist/fireShip.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -680,9 +680,9 @@ assert.equal(log.logTab(), "queued", "the chosen tab survives state updates");
 alpha.document.querySelector('[data-log-tab="fleets"]').click();
 assert.ok(alpha.document.querySelector("#log-fleets-host .fleet-panel"), "Fleet panel lives in the log");
 alpha.document.querySelector('[data-log-tab="trade"]').click();
-assert.match(alpha.document.getElementById("log-panel-trade").textContent, /Arrives with trade links/,
-  "trade links are disabled with the agreed reason");
-assert.equal(alpha.document.querySelector("#log-trade-links button").disabled, true, "Trade links is disabled");
+assert.match(alpha.document.getElementById("log-panel-trade").textContent, /Trade routes/,
+  "the Trade routes tab shows the route list");
+assert.equal(alpha.document.getElementById("route-new").disabled, false, "New route is available");
 
 log.openLog("chart");
 log.armLogRuler();
@@ -784,6 +784,38 @@ for (const size of [
   const issues = alpha.window.__armadaTest.layoutAudit();
   assert.equal(issues.length, 0, `${size.width}x${size.height} measured layout: ${JSON.stringify(issues)}`);
 }
+
+// ---- g. New trade route from the Trade routes tab ----------------------
+assert.equal(spawnRouteHelper(bootRoom.world, alphaId), true, "route helper spawned a trade ship");
+advanceMs(300);
+alpha.document.getElementById("sailors-log-btn").click();
+advanceMs(100);
+alpha.document.querySelector('[data-log-tab="trade"]').click();
+advanceMs(100);
+const routeListEl = alpha.document.getElementById("log-route-list");
+assert.ok(routeListEl.querySelector("[data-route-id]"), "helper route is listed");
+// Cancel the helper route through its visible button, then make a new one.
+routeListEl.querySelector(".log-route-row button:last-child").click();
+advanceMs(200);
+assert.equal(bootRoom.world.owners.get(alphaId).tradeRoutes.size, 0, "Cancel removed the route");
+alpha.document.getElementById("route-new").click();
+assert.equal(alpha.document.getElementById("log-route-form").hidden, false, "New route opened the form");
+const tradeShip = shipsForOwner(bootRoom.world, alphaId).find((ship) => ship.classId === "trade");
+assert.ok(tradeShip);
+alpha.document.getElementById("route-ship").value = tradeShip.id;
+const portValues = [...alpha.document.getElementById("route-port-a").options]
+  .map((option) => option.value).filter((id) => id !== alpha.document.getElementById("route-port-b").value);
+alpha.document.getElementById("route-port-a").value = portValues[0];
+alpha.document.getElementById("route-port-b").value = [...alpha.document.getElementById("route-port-b").options]
+  .map((option) => option.value).find((id) => id !== portValues[0]);
+alpha.document.getElementById("route-good").value = "timber";
+alpha.document.getElementById("route-tonnes").value = "10";
+alpha.document.getElementById("route-minutes").value = "30";
+alpha.document.getElementById("route-save").click();
+advanceMs(300);
+assert.equal(alpha.document.getElementById("log-route-form").hidden, true, "Start route closed the form");
+const startedRoutes = bootRoom.world.owners.get(alphaId).tradeRoutes;
+assert.equal(startedRoutes.size, 1, "the new route is running on the server");
 
 console.log("HARNESS OK");
 process.exit(0);

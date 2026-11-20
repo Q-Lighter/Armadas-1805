@@ -93,6 +93,10 @@ import {
   setPlayerRepair,
   spawnTestEnemyFleet,
   spawnTestFleet,
+  spawnRouteHelper,
+  setTradeRoute,
+  cancelTradeRoute,
+  runTradeRoutesFast,
   stepWorld,
   updatePlayerFleet,
   takeNotice,
@@ -385,6 +389,9 @@ export class GameRoom {
       ]);
     }
     if (displayName) setPlayerName(this.world, playerId, displayName);
+    if (kind !== "normal" && url.searchParams.get("routes") === "1") {
+      spawnRouteHelper(this.world, playerId);
+    }
     const rawFleet = url.searchParams.get("fleet");
     if (kind !== "normal" && rawFleet !== null) {
       if (spawnTestFleet(this.world, playerId, rawFleet) < 0) {
@@ -745,6 +752,11 @@ export class GameRoom {
       count?: unknown;
       good?: unknown;
       amount?: unknown;
+      route?: unknown;
+      portA?: unknown;
+      portB?: unknown;
+      tonnes?: unknown;
+      minutes?: unknown;
       fleet?: unknown;
       ships?: unknown;
       formation?: unknown;
@@ -1054,6 +1066,20 @@ export class GameRoom {
       accepted = buyGoods(this.world, playerId, order.ship, order.port, order.good, order.amount);
     } else if (order.t === "sellGoods") {
       accepted = sellGoods(this.world, playerId, order.ship, order.port, order.good, order.amount);
+    } else if (order.t === "routeNew" || order.t === "routeEdit") {
+      accepted = setTradeRoute(this.world, playerId, {
+        id: order.route,
+        ship: order.ship,
+        portA: order.portA,
+        portB: order.portB,
+        good: order.good,
+        tonnes: order.tonnes,
+        minutes: order.minutes,
+      }) !== null;
+    } else if (order.t === "routeCancel") {
+      accepted = cancelTradeRoute(this.world, playerId, order.route);
+    } else if (order.t === "routeFast" && this.world.kind !== "normal") {
+      accepted = runTradeRoutesFast(this.world, playerId) > 0;
     } else if (order.t === "load") {
       accepted = transferGoods(this.world, playerId, order.ship, order.port, order.good, order.amount, "load");
     } else if (order.t === "unload") {

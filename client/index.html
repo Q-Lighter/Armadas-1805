@@ -509,6 +509,7 @@
       </div>
       <div class="test-tools-actions">
         <button class="btn btn-seal" id="test-spawn" type="button">Spawn enemies</button>
+        <button class="btn" id="test-route-fast" type="button">Run route trips fast</button>
         <label class="test-inline">Anchored fleet stance
           <select id="test-anchored-stance">
             <option value="fightIfAttacked" selected>Fight only if attacked</option>
@@ -816,10 +817,30 @@
             <h2>Ship cargo</h2>
             <ul class="log-ship-list" id="log-cargo-list"></ul>
             <div class="log-host" id="log-trade-host"></div>
-            <div class="log-disabled" id="log-trade-links">
-              <button class="btn" type="button" disabled>Trade links</button>
-              <p>Arrives with trade links</p>
-            </div>
+            <section class="log-route-links" id="log-trade-links">
+              <div class="log-route-head">
+                <h2>Trade routes</h2>
+                <button class="btn" id="route-new" type="button">New route</button>
+                <button class="btn" id="route-fast" type="button" hidden>Run route trips fast</button>
+              </div>
+              <ul class="log-route-list" id="log-route-list"></ul>
+              <form class="log-route-form" id="log-route-form" hidden>
+                <label>Ship <select id="route-ship"></select></label>
+                <label>Port A <select id="route-port-a"></select></label>
+                <button class="btn" id="route-pick-a" type="button">Pick A on chart</button>
+                <label>Port B <select id="route-port-b"></select></label>
+                <button class="btn" id="route-pick-b" type="button">Pick B on chart</button>
+                <label>Cargo <select id="route-good"></select></label>
+                <label>Tonnes <input id="route-tonnes" type="number" min="1" step="1" /></label>
+                <label>Time limit, minutes <input id="route-minutes" type="number" min="1" step="1" /></label>
+                <p class="log-note" id="route-estimate"></p>
+                <p class="log-note" id="route-edit-note" hidden></p>
+                <div class="log-order-actions">
+                  <button class="btn btn-seal" id="route-save" type="button">Start route</button>
+                  <button class="btn" id="route-edit-cancel" type="button">Cancel edit</button>
+                </div>
+              </form>
+            </section>
           </section>
           <section class="log-panel" id="log-panel-research" hidden>
             <div class="log-host" id="log-research-host"></div>

@@ -1074,6 +1074,13 @@ export const settings = {
     testHungerMultiplier: 10,
     /** Normal rooms consume provisions at the ordinary rate. */
     normalHungerMultiplier: 1,
+    /** 3L-d Draft: a trade route may never hold more than this share in silver. */
+    routeSilverShare: 0.05,
+    /** 3L-d Draft: default and maximum round-trip time limit in real minutes. */
+    routeDefaultLimitMinutes: 30,
+    routeMaxLimitMinutes: 180,
+    /** 3L-d test/dev: how many route trips the developer shortcut settles. */
+    routeFastTrips: 3,
     /** The largest &hunger= multiplier a test/dev room accepts. */
     maxTestHungerMultiplier: 1_000,
   },

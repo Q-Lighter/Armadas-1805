@@ -53,6 +53,7 @@ import type {
   OwnShipSnapshot,
   ShipSnapshot,
   StateMessage,
+  TradeRouteSnapshot,
 } from "@naval/shared/world";
 import type { FleetOrder } from "@naval/shared/fleet-orders";
 import {
@@ -198,6 +199,7 @@ import {
 import {
   CARGO_GOOD_IDS,
   GOOD_IDS,
+  goodName,
   type GoodId,
 } from "@naval/shared/goods";
 import type { ShipStoreCapacities, ShipStores } from "@naval/shared/trade";
@@ -1197,6 +1199,23 @@ async function start(): Promise<void> {
   const logFleetsHost = element<HTMLElement>("log-fleets-host");
   const logTradeHost = element<HTMLElement>("log-trade-host");
   const logCargoList = element<HTMLUListElement>("log-cargo-list");
+  const routeNew = element<HTMLButtonElement>("route-new");
+  const routeFast = element<HTMLButtonElement>("route-fast");
+  const routeList = element<HTMLUListElement>("log-route-list");
+  const routeForm = element<HTMLFormElement>("log-route-form");
+  const routeShip = element<HTMLSelectElement>("route-ship");
+  const routePortA = element<HTMLSelectElement>("route-port-a");
+  const routePortB = element<HTMLSelectElement>("route-port-b");
+  const routeGood = element<HTMLSelectElement>("route-good");
+  const routeTonnes = element<HTMLInputElement>("route-tonnes");
+  const routeMinutes = element<HTMLInputElement>("route-minutes");
+  const routeEstimate = element<HTMLElement>("route-estimate");
+  const routeEditNote = element<HTMLElement>("route-edit-note");
+  const routeSave = element<HTMLButtonElement>("route-save");
+  const routeEditCancel = element<HTMLButtonElement>("route-edit-cancel");
+  const routePickA = element<HTMLButtonElement>("route-pick-a");
+  const routePickB = element<HTMLButtonElement>("route-pick-b");
+  const testRouteFast = element<HTMLButtonElement>("test-route-fast");
   const logGrid = element<HTMLElement>("log-grid");
   const logPickHint = element<HTMLElement>("log-pick-hint");
   const logRuler = element<HTMLElement>("log-ruler");
@@ -1579,6 +1598,9 @@ async function start(): Promise<void> {
   let logRulerArmed = false;
   let logChartCentred = false;
   let serverMoonPhase: number | null = null;
+  let latestRoutes: TradeRouteSnapshot[] = [];
+  let editingRouteId: string | null = null;
+  let routePick: "a" | "b" | null = null;
   let windToolOn = false;
   let rangeCheckOn = false;
   let showFlagshipPennant = readSavedFlagshipPennant();
@@ -5647,10 +5669,16 @@ async function start(): Promise<void> {
     refreshPortPanel();
   }
 
+  function confirmRouteCancel(ids: string[]): boolean {
+    if (!ids.some((id) => latestRoutes.some((route) => route.shipId === id))) return true;
+    return window.confirm("This ship is running a trade route. Give the direct order and cancel the route?");
+  }
+
   function sendPortOrder(portId: string): void {
     const port = portData.get(portId);
     const ids = groupShipIds();
     if (!port || ids.length === 0) return;
+    if (!confirmRouteCancel(ids)) return;
     target = { x: port.x, y: port.y };
     const screen = toScreen(port.x, port.y);
     marker.position.set(screen.x, screen.y);
@@ -7772,6 +7800,13 @@ async function start(): Promise<void> {
     if (Array.isArray(state.fleets)) {
       playerFleets = state.fleets.map(parseFleet).filter((fleet): fleet is FleetSnapshot => fleet !== null);
     }
+    if (Array.isArray(state.routes)) {
+      latestRoutes = state.routes.filter((row): row is TradeRouteSnapshot =>
+        !!row && typeof row.id === "string" && typeof row.shipId === "string" &&
+        typeof row.portA === "string" && typeof row.portB === "string" &&
+        (CARGO_GOOD_IDS as readonly string[]).includes(row.good));
+      if (sailorsLogOpen && activeLogTab === "trade") renderRouteList();
+    }
     if (state.groups && typeof state.groups === "object") {
       controlGroups = {};
       for (const [rawSlot, ids] of Object.entries(state.groups)) {
@@ -8224,6 +8259,7 @@ async function start(): Promise<void> {
   function sendOrder(x: number, y: number): void {
     const ids = groupShipIds();
     if (ids.length === 0) return;
+    if (!confirmRouteCancel(ids)) return;
     const previousSail = selectedSailPoint();
     target = { x, y };
     const screen = toScreen(x, y);
@@ -9618,7 +9654,128 @@ async function start(): Promise<void> {
     }
   }
 
+  function routePortOptions(select: HTMLSelectElement, selectedId: string): void {
+    select.replaceChildren();
+    const ports = [...portData.values()]
+      .filter((port) => port.npc || port.buyable)
+      .sort((a, b) => a.name.localeCompare(b.name));
+    for (const port of ports) {
+      const option = document.createElement("option");
+      option.value = port.id;
+      option.textContent = port.name;
+      option.selected = port.id === selectedId;
+      select.append(option);
+    }
+  }
+
+  function openRouteForm(route?: TradeRouteSnapshot): void {
+    editingRouteId = route?.id ?? null;
+    routeForm.hidden = false;
+    routeEditNote.hidden = !route;
+    routeEditNote.textContent = route ? `Editing ${route.shipName}'s route.` : "";
+    routeSave.textContent = route ? "Save route" : "Start route";
+    const tradeShips = fleetShips.filter((ship) => ship.classId === "trade" && ship.status !== "delivery");
+    routeShip.replaceChildren();
+    for (const ship of tradeShips) {
+      const option = document.createElement("option");
+      option.value = ship.id;
+      option.textContent = `${ship.name} · ${formatTonnesWithUnit(ship.capacities.cargo)} hold`;
+      option.selected = route ? ship.id === route.shipId : ship.id === selectedShipId;
+      routeShip.append(option);
+    }
+    routePortOptions(routePortA, route?.portA ?? "");
+    routePortOptions(routePortB, route?.portB ?? "");
+    if (!routeGood.childElementCount) {
+      for (const good of CARGO_GOOD_IDS) {
+        const option = document.createElement("option");
+        option.value = good;
+        option.textContent = goodName(good);
+        routeGood.append(option);
+      }
+    }
+    routeGood.value = route?.good ?? "timber";
+    const ship = tradeShips.find((row) => row.id === routeShip.value) ?? tradeShips[0];
+    routeTonnes.max = String(Math.max(1, Math.floor(ship?.capacities.cargo ?? 1)));
+    routeTonnes.value = String(Math.max(1, Math.floor(route?.tonnes ?? ship?.capacities.cargo ?? 1)));
+    routeMinutes.value = String(route?.limitMinutes ?? settings.trade.routeDefaultLimitMinutes);
+    if (tradeShips.length === 0) {
+      routeSave.disabled = true;
+      routeSave.title = "Buy a trade ship first";
+    } else {
+      routeSave.disabled = false;
+      routeSave.title = "";
+    }
+    updateRouteEstimate();
+  }
+
+  function closeRouteForm(): void {
+    editingRouteId = null;
+    routePick = null;
+    routeForm.hidden = true;
+  }
+
+  function updateRouteEstimate(): void {
+    const a = portData.get(routePortA.value);
+    const b = portData.get(routePortB.value);
+    const tonnes = Number(routeTonnes.value);
+    const buy = a?.prices?.[routeGood.value as GoodId];
+    const sell = b?.prices?.[routeGood.value as GoodId];
+    if (buy === undefined || sell === undefined || !(tonnes > 0)) {
+      routeEstimate.textContent = "Estimated profit: prices not known until both ports are usable.";
+      return;
+    }
+    const profit = (sell - buy) * Math.min(tonnes, Number(routeTonnes.max) || tonnes);
+    routeEstimate.textContent = `Estimated profit per trip: ${formatMoney(profit)} pieces (buy ${formatMoney(buy)}, sell ${formatMoney(sell)} per tonne).`;
+  }
+
+  function renderRouteList(): void {
+    routeList.replaceChildren();
+    routeFast.hidden = roomKind === "normal" || latestRoutes.length === 0;
+    if (latestRoutes.length === 0) {
+      const item = document.createElement("li");
+      item.className = "log-note";
+      item.textContent = "No trade routes yet.";
+      routeList.append(item);
+      return;
+    }
+    for (const route of latestRoutes) {
+      const item = document.createElement("li");
+      item.className = "log-route-row";
+      item.dataset.routeId = route.id;
+      const title = document.createElement("strong");
+      title.textContent = `${route.shipName} · ${route.portAName} → ${route.portBName}`;
+      const detail = document.createElement("span");
+      detail.textContent = `${goodName(route.good)} ${formatTonnesWithUnit(route.tonnes)} · limit ${route.limitMinutes} min · last trip ${formatMoney(route.lastProfit)} pieces`;
+      const status = document.createElement("span");
+      status.className = route.late ? "log-route-late" : "log-route-status";
+      status.textContent = route.status === "late" ? `Late${route.reason ? ` · ${route.reason}` : ""}`
+        : route.status === "paused" ? `Paused · ${route.reason ?? "waiting"}`
+        : route.status === "outbound" ? "Outbound"
+        : route.status === "returning" ? "Returning"
+        : "Loading";
+      const actions = document.createElement("span");
+      actions.className = "log-order-actions";
+      const edit = document.createElement("button");
+      edit.type = "button";
+      edit.className = "btn";
+      edit.textContent = "Edit";
+      edit.addEventListener("click", () => openRouteForm(route));
+      const cancel = document.createElement("button");
+      cancel.type = "button";
+      cancel.className = "btn";
+      cancel.textContent = "Cancel";
+      cancel.addEventListener("click", () => {
+        sendCommand({ t: "routeCancel", route: route.id });
+        if (editingRouteId === route.id) closeRouteForm();
+      });
+      actions.append(edit, cancel);
+      item.append(title, detail, status, actions);
+      routeList.append(item);
+    }
+  }
+
   function renderLogTrade(): void {
+    renderRouteList();
     logCargoList.replaceChildren();
     for (const ship of fleetShips.filter((row) => row.status !== "delivery")) {
       const item = document.createElement("li");
@@ -9768,6 +9925,21 @@ async function start(): Promise<void> {
 
   function handleLogChartTap(screenX: number, screenY: number): boolean {
     if (!sailorsLogOpen) return false;
+    if (routePick) {
+      const marker = portAt(screenX, screenY);
+      if (!marker) {
+        showNotice("Tap a discovered port marker to pick it.");
+        return true;
+      }
+      const select = routePick === "a" ? routePortA : routePortB;
+      select.value = marker.id;
+      routePick = null;
+      routePickA.setAttribute("aria-pressed", "false");
+      routePickB.setAttribute("aria-pressed", "false");
+      logPickHint.hidden = true;
+      updateRouteEstimate();
+      return true;
+    }
     const point = toWorld(screenX, screenY);
     if (logRulerArmed) {
       if (logRulerPoints.length >= 2) logRulerPoints = [];
@@ -10065,6 +10237,45 @@ async function start(): Promise<void> {
     renderStanceSheet();
   });
 
+  routeForm.addEventListener("submit", (event) => event.preventDefault());
+  routeNew.addEventListener("click", () => openRouteForm());
+  routeEditCancel.addEventListener("click", closeRouteForm);
+  routeFast.addEventListener("click", () => sendCommand({ t: "routeFast" }));
+  testRouteFast.addEventListener("click", () => sendCommand({ t: "routeFast" }));
+  routePickA.addEventListener("click", () => {
+    routePick = routePick === "a" ? null : "a";
+    routePickA.setAttribute("aria-pressed", String(routePick === "a"));
+    routePickB.setAttribute("aria-pressed", "false");
+    logPickHint.hidden = routePick === null;
+    if (routePick) logPickHint.textContent = "New route: tap port A on the chart.";
+  });
+  routePickB.addEventListener("click", () => {
+    routePick = routePick === "b" ? null : "b";
+    routePickB.setAttribute("aria-pressed", String(routePick === "b"));
+    routePickA.setAttribute("aria-pressed", "false");
+    logPickHint.hidden = routePick === null;
+    if (routePick) logPickHint.textContent = "New route: tap port B on the chart.";
+  });
+  for (const control of [routeShip, routePortA, routePortB, routeGood, routeTonnes]) {
+    control.addEventListener("input", updateRouteEstimate);
+  }
+  routeSave.addEventListener("click", () => {
+    if (!routeShip.value || !routePortA.value || !routePortB.value) {
+      showNotice("Pick a trade ship and two ports.");
+      return;
+    }
+    const sent = sendCommand({
+      t: editingRouteId ? "routeEdit" : "routeNew",
+      route: editingRouteId ?? undefined,
+      ship: routeShip.value,
+      portA: routePortA.value,
+      portB: routePortB.value,
+      good: routeGood.value,
+      tonnes: Number(routeTonnes.value),
+      minutes: Number(routeMinutes.value),
+    });
+    if (sent) closeRouteForm();
+  });
   menuButton.addEventListener("click", () => {
     menuPanel.hidden = !menuPanel.hidden;
     menuButton.setAttribute("aria-expanded", String(!menuPanel.hidden));

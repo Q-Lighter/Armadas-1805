@@ -4896,3 +4896,22 @@ body {
   transform-origin: 50% 80%;
 }
 .tool-wind-marker b { display: block; margin-top: 2px; font-weight: 600; }
+
+/* 3L-d trade routes in the Sailor's Log Trade tab. */
+.log-route-links { display: grid; gap: 8px; }
+.log-route-head { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.log-route-head h2 { margin: 0; flex: 1 1 auto; }
+.log-route-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 7px; }
+.log-route-row { display: grid; gap: 3px; padding: 7px 8px; border: 1px solid rgba(92, 57, 33, 0.4); background: rgba(255, 251, 236, 0.5); }
+.log-route-row strong { font-size: 0.85rem; }
+.log-route-row > span { font-size: 0.72rem; }
+.log-route-status { opacity: 0.78; }
+.log-route-late { color: #8c1d1d; font-weight: 700; }
+.log-route-form { display: grid; gap: 6px; padding: 8px; border: 1px dashed rgba(92, 57, 33, 0.45); }
+.log-route-form[hidden] { display: none; }
+.log-route-form label { display: grid; gap: 2px; font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.04em; }
+.log-route-form select, .log-route-form input { min-height: 32px; font: inherit; padding: 3px 5px; }
+@media (max-width: 640px) {
+  .log-route-head { align-items: stretch; }
+  .log-route-row .log-order-actions { display: flex; gap: 6px; }
+}

@@ -285,6 +285,43 @@ export const EDGE_NOTICE = "Edge of the charted world.";
 export const PORT_FULL_NOTICE = "Port is full: waiting at anchor.";
 
 /** One player's money and current selection. */
+export type TradeRoutePhase = "toA" | "toB";
+
+/** One player-run trading loop. Owned by the player, never shared. */
+export interface TradeRoute {
+  id: string;
+  shipId: string;
+  portA: string;
+  portB: string;
+  good: CargoGoodId;
+  tonnes: number;
+  limitMinutes: number;
+  phase: TradeRoutePhase;
+  startedGameMs: number;
+  lateNotified: boolean;
+  lastProfit: number;
+  cargoTonnes: number;
+  cargoCost: number;
+  pausedReason: string | null;
+}
+
+export interface TradeRouteSnapshot {
+  id: string;
+  shipId: string;
+  shipName: string;
+  portA: string;
+  portB: string;
+  portAName: string;
+  portBName: string;
+  good: CargoGoodId;
+  tonnes: number;
+  limitMinutes: number;
+  lastProfit: number;
+  status: "loading" | "outbound" | "returning" | "paused" | "late";
+  late: boolean;
+  reason: string | null;
+}
+
 export interface OwnerState {
   money: number;
   selectedShipId: string | null;
@@ -294,6 +331,9 @@ export interface OwnerState {
   lostMarks: MapPoint[];
   /** Menu setting; off stops route prediction work and sending. */
   routeLineEnabled: boolean;
+  /** 3L-d: this player's trade routes, keyed by route id. */
+  tradeRoutes: Map<string, TradeRoute>;
+  nextTradeRouteId?: number;
 }
 
 /** One human player's identity and game record, kept after their ships go. */
@@ -937,6 +977,8 @@ export interface StateMessage {
     levels: Record<string, number>;
     capturePoints: Record<string, number>;
   };
+  /** 3L-d: only this player's trade routes. Never another player's. */
+  routes?: TradeRouteSnapshot[];
   /** This player's selected ship id, if one is selectable. */
   sel: string | null;
   /** Full private detail for this player's own fleet only. */
@@ -2199,7 +2241,7 @@ export function addPlayer(
     // room created before charts or fleets existed.
     if (!world.fleets.has(playerId)) world.fleets.set(playerId, [existing]);
     if (!world.owners.has(playerId)) {
-      world.owners.set(playerId, { money: startMoney, selectedShipId: existing.id, journeys: new Map(), lostMarks: [], routeLineEnabled: true });
+      world.owners.set(playerId, { money: startMoney, selectedShipId: existing.id, journeys: new Map(), lostMarks: [], routeLineEnabled: true, tradeRoutes: new Map() });
     }
     if (!world.charts.has(playerId)) {
       const chart = createChart(world.kind);
@@ -2258,7 +2300,7 @@ export function addPlayer(
   ship.isFlagship = true;
   world.players.set(playerId, ship);
   world.fleets.set(playerId, [ship]);
-  world.owners.set(playerId, { money: startMoney, selectedShipId: ship.id, journeys: new Map(), lostMarks: [], routeLineEnabled: true });
+  world.owners.set(playerId, { money: startMoney, selectedShipId: ship.id, journeys: new Map(), lostMarks: [], routeLineEnabled: true, tradeRoutes: new Map() });
   world.playerRecords.set(playerId, {
     id: playerId,
     name: playerId,
@@ -4416,9 +4458,9 @@ export function applyFleetOrder(
  * TEMP-DEBUG test/dev helper: spawn a fully crewed, fully stocked group from
  * &fleet=frigate:4,trade:3,line:1. It never runs in a normal room.
  */
-export function spawnTestFleet(world: World, playerId: string, spec: string): number {
+export function spawnTestFleet(world: World, playerId: string, spec: string, force = false): number {
   if (world.kind === "normal") return 0;
-  if (world.testFleetsSpawned.has(playerId)) return 0;
+  if (!force && world.testFleetsSpawned.has(playerId)) return 0;
   world.testFleetsSpawned.add(playerId);
   const owner = shipsForOwner(world, playerId);
   if (owner.length === 0) return 0;
@@ -4472,6 +4514,58 @@ export function spawnTestFleet(world: World, playerId: string, spec: string): nu
     }
   }
   return made;
+}
+
+/** &routes=1: a trade ship and a ready route near the player's start. */
+export function spawnRouteHelper(world: World, playerId: string): boolean {
+  if (world.kind === "normal") return false;
+  let ship = shipsForOwner(world, playerId).find((candidate) => candidate.classId === "trade");
+  if (!ship) {
+    spawnTestFleet(world, playerId, "trade:1", true);
+    ship = shipsForOwner(world, playerId).find((candidate) => candidate.classId === "trade");
+  }
+  if (!ship) return false;
+  const chart = world.charts.get(playerId);
+  if (!chart) return false;
+  const ports = [...world.ports.values()]
+    .filter((port) => portUsableForTradeRoute(world, port, playerId))
+    .sort((a, b) => distanceKm(ship!, a.anchorage) - distanceKm(ship!, b.anchorage));
+  if (ports.length < 2) return false;
+  const [a, b] = ports;
+  chart.foundPorts.add(a!.id);
+  chart.foundPorts.add(b!.id);
+  if (!ship.dockedPortId) dockAt(world, playerId, ship, a!);
+  return setTradeRoute(world, playerId, {
+    ship: ship.id,
+    portA: a!.id,
+    portB: b!.id,
+    good: "timber",
+    tonnes: shipStoreCapacities(shipSpecFor(ship)).cargo,
+    minutes: settings.trade.routeDefaultLimitMinutes,
+  }) !== null;
+}
+
+/** TEMP-DEBUG: settle route trips without waiting for the sailing loop. */
+export function runTradeRoutesFast(world: World, playerId: string): number {
+  if (world.kind === "normal") return 0;
+  const owner = world.owners.get(playerId);
+  if (!owner) return 0;
+  let trips = 0;
+  for (const route of [...owner.tradeRoutes.values()]) {
+    const ship = shipsForOwner(world, playerId).find((candidate) => candidate.id === route.shipId);
+    const a = world.ports.get(route.portA);
+    const b = world.ports.get(route.portB);
+    if (!ship || !a || !b) continue;
+    for (let index = 0; index < settings.trade.routeFastTrips; index += 1) {
+      dockAt(world, playerId, ship, a);
+      updateTradeRoutes(world);
+      dockAt(world, playerId, ship, b);
+      updateTradeRoutes(world);
+      trips += 1;
+    }
+  }
+  if (trips > 0) pushNotice(world, playerId, `Ran ${trips} route trips fast.`);
+  return trips;
 }
 
 export function applyShipSpecialOrder(
@@ -5245,6 +5339,7 @@ export function applyOrder(
 
   const ship = shipForOrder(world, playerId, shipId);
   if (!ship || ship.deliveryPortId) return false;
+  if (!fromFleet) cancelTradeRouteForShip(world, playerId, ship.id);
   wakeAutoAnchor(world, playerId, ship);
   if (ship.anchored) {
     pushNotice(world, playerId, "Weigh anchor before sailing.");
@@ -6082,9 +6177,13 @@ export function applyPortOrder(
   portId: unknown,
   shipId?: unknown,
   fromFleet = false,
+  fromTradeRoute = false,
 ): boolean {
   if (world.gameOver || typeof portId !== "string") return false;
   const ship = shipForOrder(world, playerId, shipId);
+  if (ship && !fromFleet && !fromTradeRoute) {
+    cancelTradeRouteForShip(world, playerId, ship.id);
+  }
   if (ship && !fromFleet) {
     if (ship.runState) clearRun(ship);
     detachForDirectOrder(world, playerId, ship);
@@ -6192,7 +6291,7 @@ export function portUsableForBuying(
 ): boolean {
   if (port.npc) return false;
   const owner = world.portOwners.get(port.id);
-  if (owner) return owner === playerId;
+  if (owner) return owner === playerId || sameSide(world, owner, playerId);
   return world.kind !== "normal";
 }
 
@@ -6489,6 +6588,318 @@ export function sellGoods(
     `Sold ${tonnesText(quote.amount)} of ${goodName(good)} for ${quote.total} pieces of eight.`,
   );
   return true;
+}
+
+/** A route may use an NPC port, an owned port, or a test/dev port. */
+export function portUsableForTradeRoute(world: World, port: PlacedPort, playerId: string): boolean {
+  return port.npc || portUsableForBuying(world, port, playerId);
+}
+
+export function tradeRouteForShip(world: World, playerId: string, shipId: string): TradeRoute | null {
+  const owner = world.owners.get(playerId);
+  if (!owner) return null;
+  for (const route of owner.tradeRoutes.values()) {
+    if (route.shipId === shipId) return route;
+  }
+  return null;
+}
+
+function tradeRouteStatus(route: TradeRoute): TradeRouteSnapshot["status"] {
+  if (route.pausedReason) return "paused";
+  if (route.phase === "toB") return "outbound";
+  if (route.cargoTonnes > 0) return "returning";
+  return "loading";
+}
+
+export function tradeRouteSnapshotsFor(world: World, playerId: string): TradeRouteSnapshot[] {
+  const owner = world.owners.get(playerId);
+  if (!owner) return [];
+  const rows: TradeRouteSnapshot[] = [];
+  for (const route of owner.tradeRoutes.values()) {
+    const ship = shipsForOwner(world, playerId).find((candidate) => candidate.id === route.shipId);
+    if (!ship) continue;
+    const a = world.ports.get(route.portA);
+    const b = world.ports.get(route.portB);
+    const limitGameMs = route.limitMinutes * 60_000 * settings.time.sailingTimeScale;
+    const late = !route.pausedReason && world.gameMs - route.startedGameMs > limitGameMs;
+    rows.push({
+      id: route.id,
+      shipId: route.shipId,
+      shipName: ship.name,
+      portA: route.portA,
+      portB: route.portB,
+      portAName: a?.name ?? route.portA,
+      portBName: b?.name ?? route.portB,
+      good: route.good,
+      tonnes: route.tonnes,
+      limitMinutes: route.limitMinutes,
+      lastProfit: Number(route.lastProfit.toFixed(2)),
+      status: late ? "late" : tradeRouteStatus(route),
+      late,
+      reason: route.pausedReason,
+    });
+  }
+  return rows;
+}
+
+/** Create or replace the one route run by a trade-class ship. */
+export function setTradeRoute(
+  world: World,
+  playerId: string,
+  raw: {
+    id?: unknown;
+    ship?: unknown;
+    portA?: unknown;
+    portB?: unknown;
+    good?: unknown;
+    tonnes?: unknown;
+    minutes?: unknown;
+  },
+): TradeRoute | null {
+  const owner = world.owners.get(playerId);
+  if (!owner) return null;
+  if (typeof raw.ship !== "string" || typeof raw.portA !== "string" ||
+    typeof raw.portB !== "string" || !isCargoGoodId(raw.good)) {
+    pushNotice(world, playerId, "Pick a trade ship, two ports and a cargo.");
+    return null;
+  }
+  if (typeof raw.tonnes !== "number" || !Number.isFinite(raw.tonnes) || raw.tonnes <= 0) {
+    pushNotice(world, playerId, "Choose how many tonnes to carry.");
+    return null;
+  }
+  const ship = shipsForOwner(world, playerId).find((candidate) => candidate.id === raw.ship);
+  if (!ship || ship.deliveryPortId) {
+    pushNotice(world, playerId, "That ship cannot run a trade route.");
+    return null;
+  }
+  if (ship.classId !== "trade") {
+    pushNotice(world, playerId, "Only a trade ship can run a trade route.");
+    return null;
+  }
+  if (raw.portA === raw.portB) {
+    pushNotice(world, playerId, "Pick two different ports.");
+    return null;
+  }
+  const chart = world.charts.get(playerId);
+  const portA = world.ports.get(raw.portA);
+  const portB = world.ports.get(raw.portB);
+  if (!portA || !portB || !chart?.foundPorts.has(portA.id) || !chart.foundPorts.has(portB.id)) {
+    pushNotice(world, playerId, "Both ports must be on your chart.");
+    return null;
+  }
+  if (!portUsableForTradeRoute(world, portA, playerId) ||
+    !portUsableForTradeRoute(world, portB, playerId)) {
+    pushNotice(world, playerId, "Both ports must be usable by you.");
+    return null;
+  }
+  const limits = settings.trade;
+  const minutes = typeof raw.minutes === "number" && Number.isFinite(raw.minutes)
+    ? Math.max(1, Math.min(limits.routeMaxLimitMinutes, raw.minutes))
+    : limits.routeDefaultLimitMinutes;
+  const capacity = shipStoreCapacities(shipSpecFor(ship)).cargo;
+  let tonnes = Math.min(raw.tonnes, capacity);
+  if (raw.good === "silver") tonnes = Math.min(tonnes, capacity * limits.routeSilverShare);
+  if (tonnes <= 0) {
+    pushNotice(world, playerId, "There is no room for that cargo.");
+    return null;
+  }
+  detachForDirectOrder(world, playerId, ship);
+  ship.stance = "avoid";
+  const existing = tradeRouteForShip(world, playerId, ship.id);
+  const editId = typeof raw.id === "string" ? raw.id : null;
+  if (existing && existing.id !== editId) {
+    pushNotice(world, playerId, "That ship already has a trade route.");
+    return null;
+  }
+  const route: TradeRoute = existing ?? {
+    id: `route-${playerId}-${owner.nextTradeRouteId ?? 1}`,
+    shipId: ship.id,
+    portA: portA.id,
+    portB: portB.id,
+    good: raw.good,
+    tonnes,
+    limitMinutes: minutes,
+    phase: "toA",
+    startedGameMs: world.gameMs,
+    lateNotified: false,
+    lastProfit: 0,
+    cargoTonnes: 0,
+    cargoCost: 0,
+    pausedReason: null,
+  };
+  if (!existing) owner.nextTradeRouteId = (owner.nextTradeRouteId ?? 1) + 1;
+  route.portA = portA.id;
+  route.portB = portB.id;
+  route.good = raw.good;
+  route.tonnes = tonnes;
+  route.limitMinutes = minutes;
+  route.pausedReason = null;
+  route.lateNotified = false;
+  owner.tradeRoutes.set(route.id, route);
+  if (ship.dockedPortId === portB.id) route.phase = "toB";
+  if (ship.dockedPortId !== portA.id && ship.dockedPortId !== portB.id) route.phase = "toA";
+  pushNotice(world, playerId, existing
+    ? `${ship.name}: trade route updated.`
+    : `${ship.name}: trade route started.`);
+  return route;
+}
+
+export function cancelTradeRoute(world: World, playerId: string, routeId: unknown): boolean {
+  const owner = world.owners.get(playerId);
+  if (!owner || typeof routeId !== "string") return false;
+  const route = owner.tradeRoutes.get(routeId);
+  if (!route) return false;
+  owner.tradeRoutes.delete(routeId);
+  const ship = shipsForOwner(world, playerId).find((candidate) => candidate.id === route.shipId);
+  if (ship) {
+    ship.order = null;
+    ship.route = null;
+    ship.portOrderId = null;
+    pushNotice(world, playerId, `${ship.name}: trade route cancelled. Cargo kept.`);
+  }
+  return true;
+}
+
+/** Direct orders cancel a route only after the client's confirmation. */
+export function cancelTradeRouteForShip(world: World, playerId: string, shipId: string): boolean {
+  const route = tradeRouteForShip(world, playerId, shipId);
+  return route ? cancelTradeRoute(world, playerId, route.id) : false;
+}
+
+function routeLoad(
+  world: World,
+  playerId: string,
+  ship: Ship,
+  route: TradeRoute,
+  port: PlacedPort,
+): void {
+  if (route.cargoTonnes > 0) return;
+  const capacity = shipStoreCapacities(shipSpecFor(ship)).cargo;
+  const wanted = route.good === "silver"
+    ? Math.min(route.tonnes, capacity * settings.trade.routeSilverShare)
+    : route.tonnes;
+  const beforeMoney = world.owners.get(playerId)?.money ?? 0;
+  const before = goodAmount(ship.stores, route.good);
+  if (port.npc) {
+    buyGoods(world, playerId, ship.id, port.id, route.good, wanted);
+  } else {
+    transferGoods(world, playerId, ship.id, port.id, route.good, wanted, "load");
+  }
+  const loaded = Math.max(0, goodAmount(ship.stores, route.good) - before);
+  if (loaded <= 0) {
+    route.pausedReason = `Waiting for ${goodName(route.good)} at ${port.name}.`;
+    return;
+  }
+  route.pausedReason = null;
+  route.cargoTonnes = loaded;
+  const afterMoney = world.owners.get(playerId)?.money ?? 0;
+  route.cargoCost = Math.max(0, beforeMoney - afterMoney);
+  route.startedGameMs = world.gameMs;
+  route.lateNotified = false;
+}
+
+function routeSell(world: World, playerId: string, ship: Ship, route: TradeRoute, port: PlacedPort): void {
+  if (route.cargoTonnes <= 0) return;
+  const beforeMoney = world.owners.get(playerId)?.money ?? 0;
+  const before = goodAmount(ship.stores, route.good);
+  sellGoods(world, playerId, ship.id, port.id, route.good, before);
+  const sold = Math.max(0, before - goodAmount(ship.stores, route.good));
+  if (sold <= 0) {
+    route.pausedReason = `Cannot sell ${goodName(route.good)} at ${port.name} for now.`;
+    return;
+  }
+  const afterMoney = world.owners.get(playerId)?.money ?? 0;
+  const revenue = Math.max(0, afterMoney - beforeMoney);
+  const cost = route.cargoTonnes > 0 ? route.cargoCost * (sold / route.cargoTonnes) : 0;
+  route.lastProfit = revenue - cost;
+  route.cargoTonnes = Math.max(0, route.cargoTonnes - sold);
+  route.cargoCost = Math.max(0, route.cargoCost - cost);
+  route.pausedReason = null;
+  pushNotice(world, playerId, `${ship.name}: trip profit ${Math.round(route.lastProfit)} pieces of eight.`);
+}
+
+/** Run every owned route once per world step. */
+export function updateTradeRoutes(world: World): void {
+  if (world.gameOver) return;
+  for (const [playerId, owner] of world.owners) {
+    if (owner.tradeRoutes.size === 0) continue;
+    const ships = shipsForOwner(world, playerId);
+    for (const route of [...owner.tradeRoutes.values()]) {
+      const ship = ships.find((candidate) => candidate.id === route.shipId);
+      if (!ship) {
+        owner.tradeRoutes.delete(route.id);
+        continue;
+      }
+      const portA = world.ports.get(route.portA);
+      const portB = world.ports.get(route.portB);
+      const chart = world.charts.get(playerId);
+      if (!portA || !portB || !chart?.foundPorts.has(portA.id) || !chart.foundPorts.has(portB.id) ||
+        !portUsableForTradeRoute(world, portA, playerId) ||
+        !portUsableForTradeRoute(world, portB, playerId)) {
+        owner.tradeRoutes.delete(route.id);
+        const nearest = nearestOwnPort(world, playerId, ship);
+        if (nearest) applyPortOrder(world, playerId, nearest.id, ship.id, false, true);
+        pushNotice(world, playerId, `${ship.name}: route cancelled; a port is no longer usable. Cargo kept.`);
+        continue;
+      }
+
+      const days = provisionsDaysLeft(
+        ship.stores.provisions,
+        ship.crew,
+        world.hungerMultiplier,
+        shipResearchModifiers(ship).supplies,
+      );
+      if (ship.crew <= 0 || days <= 0) {
+        route.pausedReason = ship.crew <= 0 ? "No crew to sail." : "No supplies to sail.";
+        ship.order = null;
+        ship.route = null;
+        ship.portOrderId = null;
+        continue;
+      }
+      if (route.pausedReason) route.pausedReason = null;
+
+      const limitGameMs = route.limitMinutes * 60_000 * settings.time.sailingTimeScale;
+      if (!route.lateNotified && world.gameMs - route.startedGameMs > limitGameMs) {
+        route.lateNotified = true;
+        pushNotice(world, playerId, `${ship.name}: the trade trip is running late.`);
+      }
+
+      if (route.phase === "toA") {
+        if (ship.dockedPortId === portA.id) {
+          routeSell(world, playerId, ship, route, portA);
+          if (route.pausedReason) continue;
+          routeLoad(world, playerId, ship, route, portA);
+          if (route.pausedReason) continue;
+          route.phase = "toB";
+          applyPortOrder(world, playerId, portB.id, ship.id, false, true);
+          continue;
+        }
+        if (ship.dockedPortId === portB.id) {
+          routeSell(world, playerId, ship, route, portB);
+          if (route.pausedReason) continue;
+          routeLoad(world, playerId, ship, route, portB);
+          if (route.pausedReason) continue;
+        }
+        applyPortOrder(world, playerId, portA.id, ship.id, false, true);
+        continue;
+      }
+
+      if (ship.dockedPortId === portB.id) {
+        routeSell(world, playerId, ship, route, portB);
+        if (route.pausedReason) continue;
+        routeLoad(world, playerId, ship, route, portB);
+        if (route.pausedReason) continue;
+        route.phase = "toA";
+        applyPortOrder(world, playerId, portA.id, ship.id, false, true);
+        continue;
+      }
+      if (ship.dockedPortId === portA.id && route.cargoTonnes <= 0) {
+        routeLoad(world, playerId, ship, route, portA);
+        if (route.pausedReason) continue;
+      }
+      applyPortOrder(world, playerId, portB.id, ship.id, false, true);
+    }
+  }
 }
 
 /** Load from a usable port's storage, or unload into it. This is free. */
@@ -9685,6 +10096,7 @@ export function stepWorld(
   recordFleetPaths(world);
   refreshPredictedRoutes(world, windFromDeg);
   refreshBotOrders(world);
+  updateTradeRoutes(world);
   recordManoeuvreChanges(world);
   world.tick += 1;
   // Integer milliseconds avoid a slowly drifting clock. A tick always adds the
@@ -10742,6 +11154,7 @@ export function visibleStateFor(
     ports,
     portBattle,
     m: owner?.money ?? 0,
+    routes: tradeRouteSnapshotsFor(world, playerId),
     sel: owner?.selectedShipId ?? null,
     fleet,
     fleets: includeFleet ? fleetSnapshotsFor(world, playerId) : [],

@@ -3810,3 +3810,11 @@ Remove every press-and-hold path, make every order select-then-act or verb-then-
 - Test runner: `npm test` now runs `test:a` and `test:b`; each shard builds and runs half the compiled suite. The 100-ship guard now uses the median of 101 steps, so parallel load no longer fails it while the 16 ms Draft gameplay limit is unchanged.
 - Checks: new chart projection/zoom/fit/discovery tests pass; client DOM and layout tests pass; `npm run build` and `npm run test:e2e` pass.
 - Not tested in a real browser: wheel/pinch feel, drag panning with a real pointer and pixel sharpness while zooming. No discovered-ground regression was visible in the pure chart tests.
+
+## 3L-c — research web
+
+- Added the sixth Sailor's Log tab, Research. Menu → Research and the desktop dock Research tab now open the log on that tab; the existing research panel moved into the log host rather than being duplicated.
+- Replaced the accordion with a draggable/zoomable web: a centre hub with navy, points and units, and six branch groups (A–E plus the navy's six unique upgrades). Nodes show name, level pips and locked/available/owned state; lines are visual grouping only and no prerequisite was added.
+- Tapping a node opens a detail panel with settings-derived effect, cost in units and points, ship-or-port scope, capture progress (3 points per level), a Research Lx button disabled with its reason, the stored-effect note, and a shortcut to the ship's fit-upgrades flow. An open detail is restored after state updates instead of being wiped.
+- Phones stack the branch groups in one scrolling column; desktop uses two columns. Zoom buttons, wheel and drag panning are available without press-and-hold.
+- Checks: model tests confirm 31 upgrades for every navy, the five shared branches plus unique, and state/pip/cost behaviour; existing research and client DOM tests pass; build passes. Not tested in a real browser: pixel layout of the web at the four review sizes and real pinch/drag.

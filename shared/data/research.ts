@@ -117,6 +117,13 @@ const hook = (kind: ResearchEffectKind, key: ResearchEffectKey, system: string):
   hook: system,
 });
 
+/** 3L-e: income effects switched on; no hook text remains for these three. */
+const activeHook = (kind: ResearchEffectKind, key: ResearchEffectKey): ResearchEffectDef => ({
+  kind,
+  key,
+  active: true,
+});
+
 const three = (...effects: ResearchEffectDef[]): ResearchLevelDef[] => [
   { effects: effects.map((effect) => ({ ...effect })) },
   { effects: effects.map((effect) => ({ ...effect })) },
@@ -146,7 +153,7 @@ const shared: readonly ResearchUpgradeDef[] = [
   { id: "shipyard", name: "Shipyard", branch: "D", levels: three(shipEffect("portShipPrice", "shipyardDiscount"), shipEffect("portRepairTime", "shipyardDiscount"), shipEffect("portRepairCost", "shipyardDiscount"), shipEffect("portUpgradeCost", "shipyardDiscount")) },
   { id: "warehouse", name: "Warehouse", branch: "D", levels: three(shipEffect("portStorage", "warehouseStorage")) },
   { id: "harbour", name: "Harbour", branch: "D", levels: three(shipEffect("portRepairSpeed", "harbourSpeed"), hook("portResupplySpeed", "harbourSpeed", "resupply")) },
-  { id: "market", name: "Market", branch: "D", levels: three(hook("portIncome", "marketIncome", "port income")) },
+  { id: "market", name: "Market", branch: "D", levels: three(activeHook("portIncome", "marketIncome")) },
   { id: "hospital", name: "Hospital", branch: "D", levels: three(hook("portHealing", "hospitalCost", "healing")) },
   // Branch E
   { id: "fortification", name: "Fortification", branch: "E", fortification: true, levels: [{ effects: [] }, { effects: [] }, { effects: [] }] },
@@ -161,9 +168,9 @@ const unique: readonly ResearchUpgradeDef[] = [
   { id: "blockadeDiscipline", name: "Blockade discipline", branch: "unique", navy: "British", levels: three(shipEffect("supplies", "blockadeSupplies")) },
   { id: "dockyardMethods", name: "Dockyard methods", branch: "unique", navy: "British", levels: three(shipEffect("seaRepair", "dockyardSeaRepair")) },
   { id: "weatherlyShips", name: "Weatherly ships", branch: "unique", navy: "British", levels: three(hook("storm", "weatherlyStorm", "storms")) },
-  { id: "jamaicaStation", name: "Jamaica station", branch: "unique", navy: "British", levels: three(hook("portRegionalIncome", "jamaicaIncome", "port income")) },
+  { id: "jamaicaStation", name: "Jamaica station", branch: "unique", navy: "British", levels: three(activeHook("portRegionalIncome", "jamaicaIncome")) },
   { id: "hondurasMosquito", name: "Honduras and Mosquito Coast", branch: "unique", navy: "British", levels: three(shipEffect("portOutput", "hondurasTimber")) },
-  { id: "navigationActs", name: "Navigation Acts", branch: "unique", navy: "British", levels: three(hook("tradeIncome", "navigationActs", "trade routes")) },
+  { id: "navigationActs", name: "Navigation Acts", branch: "unique", navy: "British", levels: three(activeHook("tradeIncome", "navigationActs")) },
   // French
   { id: "saneHullLines", name: "Sane hull lines", branch: "unique", navy: "French", levels: three(shipEffect("speedWindBand", "saneHullSpeed")) },
   { id: "raidingDoctrine", name: "Raiding doctrine", branch: "unique", navy: "French", levels: three(shipEffect("raiderEscortSpeed", "raidingSpeed")) },

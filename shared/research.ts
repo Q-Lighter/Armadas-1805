@@ -47,6 +47,10 @@ export interface PortResearchModifiers {
   repairSpeed: number;
   resupplySpeed: number;
   income: number;
+  /** Regional income multiplier from Jamaica station-style effects. */
+  regionalIncome: number;
+  /** Share of base income added by each counted route. */
+  routeShare: number;
   healingCost: number;
   fortCost: number;
   fortHealth: number;
@@ -384,6 +388,8 @@ export function computeResearchModifiers(
       repairSpeed: 1,
       resupplySpeed: 1,
       income: 1,
+      regionalIncome: 1,
+      routeShare: settings.ports.incomeRouteShare,
       healingCost: 1,
       fortCost: 1,
       fortHealth: 1,
@@ -450,8 +456,8 @@ export function computeResearchModifiers(
         case "portFortHealth": modifiers.port.fortHealth *= 1 + value; break;
         case "portLookout": modifiers.port.lookout *= 1 + value; break;
         case "portOutput": break;
-        case "portRegionalIncome": break;
-        case "tradeIncome": break;
+        case "portRegionalIncome": modifiers.port.regionalIncome *= 1 + value; break;
+        case "tradeIncome": modifiers.port.routeShare = value; break;
         case "resupplyPrice": break;
         case "silverShare": break;
         default: break;

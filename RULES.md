@@ -225,9 +225,18 @@ Read this file at the start of every prompt, then follow it for the whole sessio
   another side entering resets it, all capturers leaving resets it, and any
   healing above zero resets it. On capture the owner changes, buildings and
   tier stay, stored resources stay and now belong to the captor, upgrades
-  unlock for the captor and income starts from the next cycle hook. There is no
-  unfriendly period; health becomes 25% of maximum. A flagship may take a
+  unlock for the captor and income starts from the next payment cycle. There is
+  no unfriendly period; health becomes 25% of maximum. A flagship may take a
   small weak port.
+- Owned ports pay every 3 game days (30 real minutes). AGREED base income is
+  400 small, 800 medium and 1,200 large pieces. Each trade route ending at the
+  port adds 15% of that base, counting at most 4 routes. Money is created by
+  the game. NPC ports pay nothing. A captured port stops paying its old owner
+  and pays the captor from the next cycle. One quiet notice reports each
+  payment total, not one per port.
+- Port income research: Market adds 10/20/30% to every owned port; Jamaica
+  station adds 10/20/30% at Greater and Lesser Antilles ports for Britain;
+  Navigation Acts makes Britain's route share 18/21/25% instead of 15%.
 - Docked ships when a port falls: ships that do not fight back are captured
   with the port, their crew joining. A ship fights back with Engage anything or
   Fight only if attacked, at least 10% crew and guns; those and any docked
@@ -487,8 +496,9 @@ Read this file at the start of every prompt, then follow it for the whole sessio
 - Each effect is ACTIVE or a HOOK. ACTIVE effects are wired into sailing, sight,
   gunnery, boarding, fitting, prices, storage, repairs, supplies and cargo. A
   HOOK stores and reports its level but changes nothing until its system arrives
-  (weather, night sight, depth, income, healing, port log, alliances, trade
-  routes, silver shares).
+  (weather, night sight, depth, other nations' regional income, healing, port
+  log, alliances, trade routes, silver shares). Market, Jamaica station and
+  Navigation Acts are now ACTIVE port-income effects.
 - Every ship has its own sight radius: 25 km base, 15 km for a fire ship,
   multiplied by Chronometer and charts. It is used for discovery and spotting.
   The night multiplier is a hook.

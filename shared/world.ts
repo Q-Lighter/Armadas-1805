@@ -322,6 +322,22 @@ export interface TradeRouteSnapshot {
   reason: string | null;
 }
 
+export interface PortIncomeRow {
+  id: string;
+  name: string;
+  size: PortSize;
+  income: number;
+  routes: number;
+}
+
+export interface PortIncomeSnapshot {
+  total: number;
+  nextGameMs: number;
+  nextGameDays: number;
+  nextRealMinutes: number;
+  ports: PortIncomeRow[];
+}
+
 export interface OwnerState {
   money: number;
   selectedShipId: string | null;
@@ -444,6 +460,8 @@ export interface World {
   portAttackTargets: Map<string, string>;
   /** Real second when each port's batteries can fire again. */
   portBatteryReady: Map<string, number>;
+  /** 3L-e: next game millisecond each port pays its owner. */
+  portIncomeNextGameMs: Map<string, number>;
   /** Test-room &capturehold override; AGREED default is 300. */
   captureHoldRealSeconds: number;
   /** Cached and in-progress ghost paths for the owner's chart, by ship id. */
@@ -979,6 +997,8 @@ export interface StateMessage {
   };
   /** 3L-d: only this player's trade routes. Never another player's. */
   routes?: TradeRouteSnapshot[];
+  /** 3L-e: this player's owned-port income and next payment. */
+  pi?: PortIncomeSnapshot;
   /** This player's selected ship id, if one is selectable. */
   sel: string | null;
   /** Full private detail for this player's own fleet only. */
@@ -1138,6 +1158,7 @@ export function createWorld(roomCode = "main", options: WorldOptions = {}): Worl
     portResearch: new Map(),
     portAttackTargets: new Map(),
     portBatteryReady: new Map(),
+    portIncomeNextGameMs: new Map(),
     captureHoldRealSeconds: settings.ports.battle.captureHoldRealSeconds,
     windFromDeg: settings.weather.windFromDeg,
     windSpeedKnots: settings.weather.windStrengthKnots,
@@ -6128,8 +6149,12 @@ export function setTestPortOwner(world: World, playerId: string, portId: unknown
   else if (owner === "nobody" || owner === null) state.ownerId = null;
   else if (typeof owner === "string") state.ownerId = owner;
   else return false;
-  if (state.ownerId) world.portOwners.set(port.id, state.ownerId);
-  else world.portOwners.delete(port.id);
+  if (state.ownerId) {
+    world.portOwners.set(port.id, state.ownerId);
+    world.portIncomeNextGameMs.set(port.id, world.gameMs + portIncomeCycleGameMs());
+  } else {
+    world.portOwners.delete(port.id);
+  }
   return true;
 }
 
@@ -6640,6 +6665,102 @@ export function tradeRouteSnapshotsFor(world: World, playerId: string): TradeRou
     });
   }
   return rows;
+}
+
+function portIncomeCycleGameMs(): number {
+  return gameCycleMs(settings.ports.incomeCycleGameDays);
+}
+
+function routesEndingAt(world: World, portId: string, playerId: string): number {
+  const owner = world.owners.get(playerId);
+  if (!owner) return 0;
+  let count = 0;
+  for (const route of owner.tradeRoutes.values()) {
+    if (route.portB === portId) count += 1;
+  }
+  return count;
+}
+
+/** One owned port's payment before the next cycle. NPC and unowned ports pay 0. */
+export function portIncomeFor(world: World, port: PlacedPort, ownerId: string): number {
+  if (port.npc) return 0;
+  const battle = world.portBattles.get(port.id);
+  if (!battle || battle.ownerId !== ownerId) return 0;
+  const base = settings.ports.sizes[port.size].incomePer30Minutes;
+  const routes = Math.min(settings.ports.incomeRouteCap, routesEndingAt(world, port.id, ownerId));
+  const modifiers = portModifiersFor(world, port.id);
+  const british = navyForPlayer(world, ownerId) === "British";
+  const routeShare = british ? modifiers.routeShare : settings.ports.incomeRouteShare;
+  const regional = british &&
+    (port.region === "Greater Antilles" || port.region === "Lesser Antilles")
+    ? modifiers.regionalIncome
+    : 1;
+  return Math.round(base * (1 + routes * routeShare) * modifiers.income * regional);
+}
+
+/** Pay every owned port that has reached its next three-game-day boundary. */
+export function updatePortIncome(world: World, force = false): number {
+  if (world.gameOver) return 0;
+  const cycle = portIncomeCycleGameMs();
+  const dueByOwner = new Map<string, { total: number; ports: number }>();
+  for (const port of PLACED_PORTS) {
+    if (port.npc) continue;
+    const battle = world.portBattles.get(port.id);
+    const ownerId = battle?.ownerId ?? null;
+    if (!ownerId || !world.owners.has(ownerId)) continue;
+    let next = world.portIncomeNextGameMs.get(port.id);
+    if (next === undefined) {
+      next = world.gameMs + cycle;
+      world.portIncomeNextGameMs.set(port.id, next);
+    }
+    if (!force && world.gameMs < next) continue;
+    const income = portIncomeFor(world, port, ownerId);
+    if (income > 0) {
+      const owner = world.owners.get(ownerId)!;
+      owner.money += income;
+      const total = dueByOwner.get(ownerId) ?? { total: 0, ports: 0 };
+      total.total += income;
+      total.ports += 1;
+      dueByOwner.set(ownerId, total);
+    }
+    const advanced = force ? world.gameMs + cycle : next + cycle;
+    world.portIncomeNextGameMs.set(port.id, advanced > world.gameMs ? advanced : world.gameMs + cycle);
+  }
+  for (const [ownerId, due] of dueByOwner) {
+    pushNotice(world, ownerId, `Port income: ${due.total} pieces from ${due.ports} port${due.ports === 1 ? "" : "s"}.`);
+  }
+  let paid = 0;
+  for (const due of dueByOwner.values()) paid += due.total;
+  return paid;
+}
+
+export function portIncomeSnapshotFor(world: World, playerId: string): PortIncomeSnapshot | null {
+  const rows: PortIncomeRow[] = [];
+  let total = 0;
+  let next = Number.POSITIVE_INFINITY;
+  const cycle = portIncomeCycleGameMs();
+  for (const port of PLACED_PORTS) {
+    if (port.npc) continue;
+    const battle = world.portBattles.get(port.id);
+    if (battle?.ownerId !== playerId) continue;
+    const income = portIncomeFor(world, port, playerId);
+    const routes = routesEndingAt(world, port.id, playerId);
+    rows.push({ id: port.id, name: port.name, size: port.size, income, routes });
+    total += income;
+    const scheduled = world.portIncomeNextGameMs.get(port.id) ?? world.gameMs + cycle;
+    next = Math.min(next, scheduled);
+  }
+  if (rows.length === 0) return null;
+  if (!Number.isFinite(next)) next = world.gameMs + cycle;
+  const remainingMs = Math.max(0, next - world.gameMs);
+  return {
+    total,
+    nextGameMs: Math.round(next),
+    nextGameDays: Number((remainingMs / gameCycleMs(1)).toFixed(2)),
+    nextRealMinutes: Number((remainingMs / 1000 /
+      (settings.time.sailingTimeScale * 60)).toFixed(2)),
+    ports: rows,
+  };
 }
 
 /** Create or replace the one route run by a trade-class ship. */
@@ -10112,6 +10233,7 @@ export function stepWorld(
   updateCrewPools(world, dtGameSeconds);
   deliverReadyShips(world);
   stepPortBattles(world, dtGameSeconds);
+  updatePortIncome(world);
   updateFog(world);
   tryWaitingShips(world);
 }
@@ -10433,6 +10555,7 @@ function stepPortBattles(world: World, dtGameSeconds: number): void {
     if (!status.capturedBy) continue;
     const previousOwner = state.ownerId;
     world.portOwners.set(port.id, status.capturedBy);
+    world.portIncomeNextGameMs.set(port.id, world.gameMs + portIncomeCycleGameMs());
     const capturedLevels = new Map(world.portResearch.get(port.id) ?? []);
     if (previousOwner) {
       const previousNavy = navyForPlayer(world, previousOwner);
@@ -11155,6 +11278,7 @@ export function visibleStateFor(
     portBattle,
     m: owner?.money ?? 0,
     routes: tradeRouteSnapshotsFor(world, playerId),
+    pi: portIncomeSnapshotFor(world, playerId) ?? undefined,
     sel: owner?.selectedShipId ?? null,
     fleet,
     fleets: includeFleet ? fleetSnapshotsFor(world, playerId) : [],

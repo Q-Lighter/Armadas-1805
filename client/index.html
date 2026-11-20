@@ -510,6 +510,7 @@
       <div class="test-tools-actions">
         <button class="btn btn-seal" id="test-spawn" type="button">Spawn enemies</button>
         <button class="btn" id="test-route-fast" type="button">Run route trips fast</button>
+        <button class="btn" id="test-port-income" type="button">Pay port income now</button>
         <label class="test-inline">Anchored fleet stance
           <select id="test-anchored-stance">
             <option value="fightIfAttacked" selected>Fight only if attacked</option>
@@ -822,7 +823,9 @@
                 <h2>Trade routes</h2>
                 <button class="btn" id="route-new" type="button">New route</button>
                 <button class="btn" id="route-fast" type="button" hidden>Run route trips fast</button>
+                <button class="btn" id="route-pay-now" type="button" hidden>Pay port income now</button>
               </div>
+              <div class="log-route-income" id="log-route-income"></div>
               <ul class="log-route-list" id="log-route-list"></ul>
               <form class="log-route-form" id="log-route-form" hidden>
                 <label>Ship <select id="route-ship"></select></label>

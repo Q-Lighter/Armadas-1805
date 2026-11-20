@@ -97,6 +97,7 @@ import {
   setTradeRoute,
   cancelTradeRoute,
   runTradeRoutesFast,
+  updatePortIncome,
   stepWorld,
   updatePlayerFleet,
   takeNotice,
@@ -1080,6 +1081,8 @@ export class GameRoom {
       accepted = cancelTradeRoute(this.world, playerId, order.route);
     } else if (order.t === "routeFast" && this.world.kind !== "normal") {
       accepted = runTradeRoutesFast(this.world, playerId) > 0;
+    } else if (order.t === "portIncomeNow" && this.world.kind !== "normal") {
+      accepted = updatePortIncome(this.world, true) > 0;
     } else if (order.t === "load") {
       accepted = transferGoods(this.world, playerId, order.ship, order.port, order.good, order.amount, "load");
     } else if (order.t === "unload") {

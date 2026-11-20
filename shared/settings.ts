@@ -834,6 +834,12 @@ export const settings = {
     startDistanceKm: 40,
     /** Real seconds between a waiting ship's attempts for a free place. */
     dockingRetrySeconds: 5,
+    /** 3L-e Draft: one payment cycle is three game days (30 real minutes). */
+    incomeCycleGameDays: 3,
+    /** AGREED: each counted route adds 15% of base income. */
+    incomeRouteShare: 0.15,
+    /** AGREED: at most four routes count at one port. */
+    incomeRouteCap: 4,
     /** Draft port values, by size. Only docking capacity is used yet. */
     battle: {
       /** AGREED guns by class: heavy/medium/light. */

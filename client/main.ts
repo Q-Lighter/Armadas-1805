@@ -52,6 +52,7 @@ import type {
   ScenarioStatus,
   OwnShipSnapshot,
   ShipSnapshot,
+  PortIncomeSnapshot,
   StateMessage,
   TradeRouteSnapshot,
 } from "@naval/shared/world";
@@ -1201,6 +1202,8 @@ async function start(): Promise<void> {
   const logCargoList = element<HTMLUListElement>("log-cargo-list");
   const routeNew = element<HTMLButtonElement>("route-new");
   const routeFast = element<HTMLButtonElement>("route-fast");
+  const routePayNow = element<HTMLButtonElement>("route-pay-now");
+  const routeIncome = element<HTMLElement>("log-route-income");
   const routeList = element<HTMLUListElement>("log-route-list");
   const routeForm = element<HTMLFormElement>("log-route-form");
   const routeShip = element<HTMLSelectElement>("route-ship");
@@ -1216,6 +1219,7 @@ async function start(): Promise<void> {
   const routePickA = element<HTMLButtonElement>("route-pick-a");
   const routePickB = element<HTMLButtonElement>("route-pick-b");
   const testRouteFast = element<HTMLButtonElement>("test-route-fast");
+  const testPortIncome = element<HTMLButtonElement>("test-port-income");
   const logGrid = element<HTMLElement>("log-grid");
   const logPickHint = element<HTMLElement>("log-pick-hint");
   const logRuler = element<HTMLElement>("log-ruler");
@@ -1599,6 +1603,7 @@ async function start(): Promise<void> {
   let logChartCentred = false;
   let serverMoonPhase: number | null = null;
   let latestRoutes: TradeRouteSnapshot[] = [];
+  let latestPortIncome: PortIncomeSnapshot | null = null;
   let editingRouteId: string | null = null;
   let routePick: "a" | "b" | null = null;
   let windToolOn = false;
@@ -7800,6 +7805,7 @@ async function start(): Promise<void> {
     if (Array.isArray(state.fleets)) {
       playerFleets = state.fleets.map(parseFleet).filter((fleet): fleet is FleetSnapshot => fleet !== null);
     }
+    latestPortIncome = state.pi && Array.isArray(state.pi.ports) ? state.pi : null;
     if (Array.isArray(state.routes)) {
       latestRoutes = state.routes.filter((row): row is TradeRouteSnapshot =>
         !!row && typeof row.id === "string" && typeof row.shipId === "string" &&
@@ -9728,9 +9734,31 @@ async function start(): Promise<void> {
     routeEstimate.textContent = `Estimated profit per trip: ${formatMoney(profit)} pieces (buy ${formatMoney(buy)}, sell ${formatMoney(sell)} per tonne).`;
   }
 
+  function renderRouteIncome(): void {
+    routeIncome.replaceChildren();
+    if (!latestPortIncome) {
+      const empty = document.createElement("p");
+      empty.className = "log-note";
+      empty.textContent = "Port income: no owned ports. Captured ports pay from the next cycle.";
+      routeIncome.append(empty);
+      return;
+    }
+    const total = document.createElement("strong");
+    total.textContent = `Port income ${formatMoney(latestPortIncome.total)} pieces · next in ${latestPortIncome.nextGameDays.toFixed(2)} game days (${latestPortIncome.nextRealMinutes.toFixed(1)} real min)`;
+    const list = document.createElement("ul");
+    for (const port of latestPortIncome.ports) {
+      const item = document.createElement("li");
+      item.textContent = `${port.name} (${port.size}) · ${formatMoney(port.income)} pieces · ${port.routes} route${port.routes === 1 ? "" : "s"}`;
+      list.append(item);
+    }
+    routeIncome.append(total, list);
+  }
+
   function renderRouteList(): void {
+    renderRouteIncome();
     routeList.replaceChildren();
     routeFast.hidden = roomKind === "normal" || latestRoutes.length === 0;
+    routePayNow.hidden = roomKind === "normal" || !latestPortIncome;
     if (latestRoutes.length === 0) {
       const item = document.createElement("li");
       item.className = "log-note";
@@ -10241,7 +10269,9 @@ async function start(): Promise<void> {
   routeNew.addEventListener("click", () => openRouteForm());
   routeEditCancel.addEventListener("click", closeRouteForm);
   routeFast.addEventListener("click", () => sendCommand({ t: "routeFast" }));
+  routePayNow.addEventListener("click", () => sendCommand({ t: "portIncomeNow" }));
   testRouteFast.addEventListener("click", () => sendCommand({ t: "routeFast" }));
+  testPortIncome.addEventListener("click", () => sendCommand({ t: "portIncomeNow" }));
   routePickA.addEventListener("click", () => {
     routePick = routePick === "a" ? null : "a";
     routePickA.setAttribute("aria-pressed", String(routePick === "a"));

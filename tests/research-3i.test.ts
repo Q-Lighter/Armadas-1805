@@ -271,6 +271,7 @@ test("3I HOOK effects are reported but change nothing", () => {
     ["stormSeamanship", 3],
     ["lightningConductors", 3],
     ["market", 3],
+    ["pacificContacts", 3],
     ["hospital", 3],
     ["shallowDraughtHulls", 3],
   ]);
@@ -279,11 +280,11 @@ test("3I HOOK effects are reported but change nothing", () => {
   assert.equal(mods.groundingDamage, 1);
   assert.equal(mods.stormDamage, 1);
   assert.equal(mods.lightningChance, 1);
-  assert.equal(mods.port.income, 1);
+  assert.ok(Math.abs(mods.port.income - 1.3) < 1e-9);
   assert.equal(mods.port.healingCost, 1);
   assert.equal(mods.draughtReductionM, 0);
   assert.ok(mods.hooks.some((hook) => hook.kind === "nightSight" && hook.system === "night sight"));
-  assert.ok(mods.hooks.some((hook) => hook.kind === "portIncome" && hook.system === "port income"));
+  assert.ok(mods.hooks.some((hook) => hook.kind === "portRegionalIncome" && hook.system === "port income"));
 });
 
 test("3I regional output bonuses use the port region and good", () => {

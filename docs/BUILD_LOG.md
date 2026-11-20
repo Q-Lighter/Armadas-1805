@@ -3830,3 +3830,13 @@ Remove every press-and-hold path, make every order select-then-act or verb-then-
 - Server state keeps routes in the per-player owner record; `visibleStateFor` sends only that player's routes, and the delta stream carries route changes.
 - Checks: new route tests cover a full load/sail/sell/return trip with the exact profit formula, edit and cancel, direct-order cancellation, Late, lost-port cancellation with cargo kept, sunk-ship deletion, crew pause, silver cap, helper setup and no cross-player leak. The jsdom harness opens the Trade routes tab, cancels the helper route, creates a new route through the form and confirms it is running on the real server. `test:a`, `test:b`, build and e2e pass.
 - Not tested in a real browser: chart-marker picking with a real pointer, pinch/drag, and a multi-hour Late trip in wall-clock time. The Late value is tested through the same game-time comparison the server uses.
+
+## 3L-e — port income
+
+- Owned non-NPC ports now pay every 3 game days (30 real minutes). AGREED base: Small 400, Medium 800, Large 1,200 pieces. Each route whose B port is that port adds 15% of base, counting at most four. Money is created by the game.
+- A port's payment schedule resets on capture/ownership change, so the old owner receives nothing further and the captor is paid from the next cycle. One quiet notice reports each payment total across all that player's due ports.
+- Switched on Market (+10/20/30%), Jamaica station (+10/20/30% at Greater and Lesser Antilles for Britain) and Navigation Acts (Britain's route share 18/21/25% instead of 15%). Their Research detail rows no longer carry stored-effect text. Other nations' regional income upgrades remain stored hooks.
+- Trade routes tab now shows the owned-port income total, each port's income and counted routes, and the next payment in game days and real minutes. Test tools gained "Pay port income now"; the Trade routes tab shows it only in test/dev rooms with owned ports.
+- Settings hold the Draft payment cycle and the AGREED route share/cap. RULES.md records the payment and research rules.
+- Checks: tests cover S/M/L at 0–5 routes with the four-route cap, each level of Market, Jamaica station and Navigation Acts, payment through the real world step with one aggregated notice, captor/old-owner payment, and the Research view's hook note. `test:a`, `test:b`, build and e2e pass.
+- Not tested in a real browser: the visual countdown layout at all four review sizes, and a wall-clock 30-minute payment. Timing is tested through the same game-time cycle in the real world step.

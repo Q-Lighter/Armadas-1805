@@ -4915,3 +4915,7 @@ body {
   .log-route-head { align-items: stretch; }
   .log-route-row .log-order-actions { display: flex; gap: 6px; }
 }
+
+/* 3L-e port income summary in the Trade routes tab. */
+.log-route-income { display: grid; gap: 4px; padding: 7px 8px; border: 1px solid rgba(92, 57, 33, 0.35); background: rgba(255, 251, 236, 0.46); font-size: 0.76rem; }
+.log-route-income ul { margin: 0; padding-left: 18px; display: grid; gap: 2px; }

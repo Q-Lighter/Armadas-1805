@@ -19,6 +19,7 @@ import {
   type FireShape,
 } from "@naval/shared/fire-visuals";
 import { MAP_HEIGHT_KM, MAP_WIDTH_KM, lonLatToMap } from "@naval/shared/map";
+import { clampChartView, fitDiscoveredChart } from "@naval/shared/chart-view";
 import {
   blockIdForCell,
   chartBlockKm,
@@ -79,6 +80,7 @@ import {
 } from "@naval/shared/screen-layout";
 import { buildBlockCommands, findChartSuspects } from "@naval/shared/chart-paint";
 import { researchScreenView, shipUpgradeRows } from "@naval/shared/research-view";
+import { isShipUpgrade, researchUpgrade } from "@naval/shared/research-data";
 import { SCENARIOS, type ScenarioDefinition } from "@naval/shared/scenarios";
 import { isLandAt } from "@naval/shared/land";
 import { cameraScale, screenToWorld, worldToScreen } from "@naval/shared/camera";
@@ -1189,6 +1191,7 @@ async function start(): Promise<void> {
   const logPanelQueued = element<HTMLElement>("log-panel-queued");
   const logPanelFleets = element<HTMLElement>("log-panel-fleets");
   const logPanelTrade = element<HTMLElement>("log-panel-trade");
+  const logPanelResearch = element<HTMLElement>("log-panel-research");
   const logShips = element<HTMLUListElement>("log-ships");
   const logPortsHost = element<HTMLElement>("log-ports-host");
   const logFleetsHost = element<HTMLElement>("log-fleets-host");
@@ -1200,6 +1203,9 @@ async function start(): Promise<void> {
   const logRulerLine = element<HTMLElement>("log-ruler-line");
   const logRulerText = element<HTMLElement>("log-ruler-text");
   const logRulerButton = element<HTMLButtonElement>("log-ruler-btn");
+  const logZoomOut = element<HTMLButtonElement>("log-zoom-out");
+  const logZoomIn = element<HTMLButtonElement>("log-zoom-in");
+  const logFitDiscovered = element<HTMLButtonElement>("log-fit-discovered");
   const logRulerUse = element<HTMLButtonElement>("log-ruler-use");
   const logPatrol = element<HTMLButtonElement>("log-patrol");
   const logRendezvous = element<HTMLButtonElement>("log-rendezvous");
@@ -1220,6 +1226,22 @@ async function start(): Promise<void> {
   const researchUnitsOut = element<HTMLElement>("research-units");
   const researchOwnedOut = element<HTMLElement>("research-owned");
   const researchBranchesOut = element<HTMLElement>("research-branches");
+  const researchHubNavy = element<HTMLElement>("research-hub-navy");
+  const researchHubPoints = element<HTMLElement>("research-hub-points");
+  const researchWebViewport = element<HTMLElement>("research-web-viewport");
+  const researchWeb = element<HTMLElement>("research-web");
+  const researchZoomOut = element<HTMLButtonElement>("research-zoom-out");
+  const researchZoomIn = element<HTMLButtonElement>("research-zoom-in");
+  const researchDetail = element<HTMLElement>("research-detail");
+  const researchDetailName = element<HTMLElement>("research-detail-name");
+  const researchDetailEffect = element<HTMLElement>("research-detail-effect");
+  const researchDetailCost = element<HTMLElement>("research-detail-cost");
+  const researchDetailCapture = element<HTMLElement>("research-detail-capture");
+  const researchDetailStored = element<HTMLElement>("research-detail-stored");
+  const researchDetailBuy = element<HTMLButtonElement>("research-detail-buy");
+  const researchDetailFit = element<HTMLButtonElement>("research-detail-fit");
+  const researchDetailClose = element<HTMLButtonElement>("research-detail-close");
+  const logResearchHost = element<HTMLElement>("log-research-host");
   const researchButton = element<HTMLButtonElement>("research-btn");
   const researchClose = element<HTMLButtonElement>("research-close");
   const dockCollapseButton = element<HTMLButtonElement>("dock-collapse");
@@ -1548,7 +1570,7 @@ async function start(): Promise<void> {
   };
 
   let mode: ViewMode = "ship";
-  type LogTab = "chart" | "queued" | "fleets" | "trade";
+  type LogTab = "chart" | "queued" | "fleets" | "trade" | "research";
   let sailorsLogOpen = false;
   let activeLogTab: LogTab = "chart";
   let logChartPick: { kind: "patrol"; fleetId: string; points: Array<{ x: number; y: number }> } |
@@ -1663,6 +1685,10 @@ async function start(): Promise<void> {
   let researchUnitsSeen = -1;
   let lastResearchNoticeAt = 0;
   const openResearchBranches = new Set<string>(["A"]);
+  let researchDetailId: string | null = null;
+  let researchZoom = 1;
+  let researchPanX = 0;
+  let researchPanY = 0;
   let selectedPortId: string | null = null;
   let attackedPortId: string | null = null;
   let shipyardPortId: string | null = null;
@@ -4696,6 +4722,63 @@ async function start(): Promise<void> {
     return new Map(Object.entries(latestResearch?.levels ?? {}));
   }
 
+  function researchRowById(id: string) {
+    const view = researchScreenView({
+      navy: playerNavy,
+      points: latestResearch?.points ?? 0,
+      levels: researchLevelMap(),
+    });
+    for (const branch of view.branches) {
+      const row = branch.rows.find((entry) => entry.id === id);
+      if (row) return { branch, row };
+    }
+    return null;
+  }
+
+  function showResearchDetail(upgradeId: string): void {
+    const found = researchRowById(upgradeId);
+    if (!found) {
+      researchDetail.hidden = true;
+      researchDetailId = null;
+      return;
+    }
+    const { row } = found;
+    researchDetailId = upgradeId;
+    const upgrade = researchUpgrade(upgradeId);
+    researchDetail.hidden = false;
+    researchDetailName.textContent = `${row.name} · L${row.level}/${row.levels}`;
+    researchDetailEffect.textContent = row.effect;
+    researchDetailCost.textContent = row.nextLevel === null
+      ? "Fully researched."
+      : `Cost: ${row.costUnits} ${row.costUnits === 1 ? "unit" : "units"} · ${row.costPoints} points · ${isShipUpgrade(upgrade as never) ? "ships" : "ports"}`;
+    const captured = latestResearch?.capturePoints?.[upgradeId] ?? 0;
+    researchDetailCapture.textContent = `Capture progress: ${captured} of ${settings.research.capturePointsPerLevel} points for the next level.`;
+    researchDetailStored.hidden = !(row.hook && /stored/i.test(row.hook));
+    researchDetailBuy.textContent = row.nextLevel === null
+      ? "Fully researched"
+      : `Research L${row.nextLevel}`;
+    researchDetailBuy.disabled = row.disabled;
+    researchDetailBuy.title = row.reason ?? "";
+    if (row.reason) researchDetailBuy.textContent = `${researchDetailBuy.textContent} · ${row.reason}`;
+    researchDetailBuy.onclick = () => {
+      if (row.nextLevel === null || row.disabled) return;
+      sendCommand({ t: "research", upgrade: row.id, level: row.nextLevel });
+    };
+    const ship = selectedFleetShip();
+    researchDetailFit.disabled = !ship;
+    researchDetailFit.title = ship ? "Open this ship's upgrades" : "Select a ship first";
+    researchDetailFit.onclick = () => {
+      if (!ship) return;
+      closeSailorsLog();
+      updateSelectedShip(ship.id, true);
+      setShipExpanded(true);
+    };
+  }
+
+  function applyResearchWebTransform(): void {
+    researchWeb.style.transform = `translate(${researchPanX}px, ${researchPanY}px) scale(${researchZoom})`;
+  }
+
   function renderResearchPanel(force = false): void {
     const view = researchScreenView({
       navy: playerNavy,
@@ -4706,6 +4789,7 @@ async function start(): Promise<void> {
       navy: view.navy,
       points: view.points,
       levels: latestResearch?.levels ?? {},
+      captures: latestResearch?.capturePoints ?? {},
     });
     if (!force && key === researchRenderKey) return;
     researchRenderKey = key;
@@ -4713,6 +4797,8 @@ async function start(): Promise<void> {
     researchPointsOut.textContent = String(Math.floor(view.points));
     researchUnitsOut.textContent = String(view.units);
     researchOwnedOut.textContent = `${view.ownedLevels} of ${view.totalLevels} levels researched`;
+    researchHubNavy.textContent = `${view.navy} navy`;
+    researchHubPoints.textContent = `${Math.floor(view.points)} points · ${view.units} units`;
     researchBranchesOut.replaceChildren();
     if (!latestResearch) {
       const empty = document.createElement("p");
@@ -4721,25 +4807,20 @@ async function start(): Promise<void> {
       return;
     }
     for (const branch of view.branches) {
-      const details = document.createElement("details");
-      details.className = "research-branch";
-      details.dataset.researchBranch = branch.id;
-      details.open = openResearchBranches.has(branch.id);
-      details.addEventListener("toggle", () => {
-        if (details.open) openResearchBranches.add(branch.id);
-        else openResearchBranches.delete(branch.id);
-      });
-      const summary = document.createElement("summary");
+      const section = document.createElement("section");
+      section.className = "research-branch";
+      section.dataset.researchBranch = branch.id;
+      const summary = document.createElement("h3");
       const owned = branch.rows.reduce((sum, row) => sum + row.level, 0);
       const total = branch.rows.reduce((sum, row) => sum + row.levels, 0);
       summary.textContent = `${branch.name} · ${owned}/${total}`;
-      details.append(summary);
+      section.append(summary);
       for (const row of branch.rows) {
-        const item = document.createElement("article");
-        item.className = "research-row";
+        const item = document.createElement("button");
+        item.type = "button";
+        item.className = `research-node state-${row.state}`;
         item.dataset.researchUpgrade = row.id;
-        const head = document.createElement("div");
-        head.className = "research-row-head";
+        item.setAttribute("aria-pressed", String(researchDetailId === row.id));
         const name = document.createElement("strong");
         name.textContent = row.name;
         const pips = document.createElement("span");
@@ -4754,39 +4835,13 @@ async function start(): Promise<void> {
         const state = document.createElement("span");
         state.className = "research-state";
         state.textContent = row.state;
-        head.append(name, pips, state);
-        const effect = document.createElement("p");
-        effect.className = "research-effect";
-        effect.textContent = row.effect;
-        item.append(head, effect);
-        if (row.hook) {
-          const hook = document.createElement("p");
-          hook.className = "research-hook";
-          hook.textContent = row.hook;
-          item.append(hook);
-        }
-        const buy = document.createElement("button");
-        buy.type = "button";
-        buy.className = "btn";
-        buy.dataset.researchBuy = row.id;
-        buy.textContent = row.buttonText;
-        buy.disabled = row.disabled;
-        buy.title = row.reason ?? "";
-        if (row.reason) {
-          const why = document.createElement("span");
-          why.className = "research-state";
-          why.textContent = row.reason;
-          item.append(why);
-        }
-        buy.addEventListener("click", () => {
-          if (row.nextLevel === null) return;
-          sendCommand({ t: "research", upgrade: row.id, level: row.nextLevel });
-        });
-        item.append(buy);
-        details.append(item);
+        item.append(name, pips, state);
+        item.addEventListener("click", () => showResearchDetail(row.id));
+        section.append(item);
       }
-      researchBranchesOut.append(details);
+      researchBranchesOut.append(section);
     }
+    if (researchDetailId) showResearchDetail(researchDetailId);
   }
 
   function renderShipUpgrades(): void {
@@ -8371,12 +8426,47 @@ async function start(): Promise<void> {
     centreOnShip(selectedShipId);
   }
 
+  function applyChartClamp(): void {
+    if (mode !== "chart" || app.screen.width <= 0 || app.screen.height <= 0) return;
+    const clamped = clampChartView(
+      { x: view.x, y: view.y, kmAcross: view.kmAcross },
+      MAP_WIDTH_KM,
+      MAP_HEIGHT_KM,
+      app.screen.width,
+      app.screen.height,
+      minViewKmAcross(),
+    );
+    view.x = clamped.x;
+    view.y = clamped.y;
+    view.kmAcross = clamped.kmAcross;
+  }
+
   function zoomTo(kmAcross: number): void {
     view.kmAcross = clamp(kmAcross, minViewKmAcross(), maxViewKmAcross());
+    applyChartClamp();
     if (sailorsLogOpen) {
       renderLogGrid();
       if (!logRuler.hidden) logRulerCache();
     }
+  }
+
+  function fitDiscoveredChartView(): void {
+    const fit = fitDiscoveredChart(
+      discovered,
+      chartColumns,
+      chartRows,
+      chartCellKm,
+      app.screen.width,
+      app.screen.height,
+    );
+    if (!fit) {
+      showNotice("No charted ground to fit yet.");
+      return;
+    }
+    view.x = fit.x;
+    view.y = fit.y;
+    zoomTo(fit.kmAcross);
+    refreshMap(performance.now(), true);
   }
 
   app.canvas.addEventListener("pointerdown", (event) => {
@@ -8434,6 +8524,19 @@ async function start(): Promise<void> {
     const dx = next.x - previous.x;
     const dy = next.y - previous.y;
     dragDistance += Math.hypot(dx, dy);
+
+    // The chart is a paper you can drag; the ship view stays centred.
+    if (mode === "chart" && !multiSelect) {
+      const s = scale();
+      view.x -= dx / s;
+      view.y -= dy / s;
+      applyChartClamp();
+      if (sailorsLogOpen) {
+        renderLogGrid();
+        if (!logRuler.hidden) logRulerCache();
+      }
+      return;
+    }
 
     // 3K: the selected ship is always centred. Dragging never pans the map.
   });
@@ -9354,6 +9457,7 @@ async function start(): Promise<void> {
     if (fleetPanel.parentElement !== logFleetsHost) logFleetsHost.append(fleetPanel);
     if (tradePanel.parentElement !== logTradeHost) logTradeHost.append(tradePanel);
     if (knownPortsPanel.parentElement !== logPortsHost) logPortsHost.append(knownPortsPanel);
+    if (researchPanel.parentElement !== logResearchHost) logResearchHost.append(researchPanel);
   }
 
   function logPaneRect(): { left: number; top: number; width: number; height: number } {
@@ -9559,6 +9663,7 @@ async function start(): Promise<void> {
     logPanelQueued.hidden = tab !== "queued";
     logPanelFleets.hidden = tab !== "fleets";
     logPanelTrade.hidden = tab !== "trade";
+    logPanelResearch.hidden = tab !== "research";
     logPickHint.hidden = logChartPick === null;
     if (tab === "chart") {
       renderLogShips();
@@ -9568,6 +9673,9 @@ async function start(): Promise<void> {
       renderLogQueue();
     } else if (tab === "fleets") {
       renderLogFleets();
+    } else if (tab === "research") {
+      renderResearchPanel(true);
+      researchPanel.hidden = false;
     } else if (tab === "trade") {
       renderLogTrade();
     }
@@ -9762,6 +9870,44 @@ async function start(): Promise<void> {
     });
   }
   logRulerButton.addEventListener("click", armLogRuler);
+  logZoomOut.addEventListener("click", () => zoomTo(view.kmAcross * 1.25));
+  logZoomIn.addEventListener("click", () => zoomTo(view.kmAcross / 1.25));
+  logFitDiscovered.addEventListener("click", fitDiscoveredChartView);
+  researchZoomOut.addEventListener("click", () => {
+    researchZoom = Math.max(0.55, researchZoom - 0.15);
+    applyResearchWebTransform();
+  });
+  researchZoomIn.addEventListener("click", () => {
+    researchZoom = Math.min(2.2, researchZoom + 0.15);
+    applyResearchWebTransform();
+  });
+  researchDetailClose.addEventListener("click", () => {
+    researchDetail.hidden = true;
+    researchDetailId = null;
+  });
+  researchWebViewport.addEventListener("wheel", (event) => {
+    event.preventDefault();
+    researchZoom = Math.max(0.55, Math.min(2.2, researchZoom * Math.exp(-event.deltaY * 0.001)));
+    applyResearchWebTransform();
+  }, { passive: false });
+  let researchDrag: { id: number; x: number; y: number } | null = null;
+  researchWebViewport.addEventListener("pointerdown", (event) => {
+    researchDrag = { id: event.pointerId, x: event.clientX, y: event.clientY };
+    researchWebViewport.setPointerCapture(event.pointerId);
+  });
+  researchWebViewport.addEventListener("pointermove", (event) => {
+    if (!researchDrag || researchDrag.id !== event.pointerId) return;
+    researchPanX += event.clientX - researchDrag.x;
+    researchPanY += event.clientY - researchDrag.y;
+    researchDrag.x = event.clientX;
+    researchDrag.y = event.clientY;
+    applyResearchWebTransform();
+  });
+  const endResearchDrag = (event: PointerEvent): void => {
+    if (researchDrag?.id === event.pointerId) researchDrag = null;
+  };
+  researchWebViewport.addEventListener("pointerup", endResearchDrag);
+  researchWebViewport.addEventListener("pointercancel", endResearchDrag);
   logRulerUse.addEventListener("click", useRulerCourse);
   logPatrol.addEventListener("click", () => {
     beginLogPick("patrol");
@@ -9939,10 +10085,12 @@ async function start(): Promise<void> {
   dockMenuButton.addEventListener("click", showMenuPanel);
   researchButton.addEventListener("click", () => {
     closeMenuPanel();
-    showDockPanel("research");
+    hydrateLogHosts();
+    openSailorsLog("research");
   });
   researchClose.addEventListener("click", () => {
     researchPanel.hidden = true;
+    if (sailorsLogOpen) closeSailorsLog();
     activeDockPanel = "ship";
     scheduleScreenLayout();
   });
@@ -10056,7 +10204,10 @@ async function start(): Promise<void> {
   dockTabFleet.addEventListener("click", () => showDockPanel("fleet"));
   dockTabLog.addEventListener("click", () => showDockPanel("log"));
   dockTabPorts.addEventListener("click", () => showDockPanel("ports"));
-  dockTabResearch.addEventListener("click", () => showDockPanel("research"));
+  dockTabResearch.addEventListener("click", () => {
+    hydrateLogHosts();
+    openSailorsLog("research");
+  });
   dockCollapseButton.addEventListener("click", () => {
     dockCollapsed = !dockCollapsed;
     scheduleScreenLayout();

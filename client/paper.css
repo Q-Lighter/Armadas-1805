@@ -1938,13 +1938,13 @@ body.game {
 }
 
 .ship-name {
-  overflow: hidden;
+  min-width: 0;
   font-family: "IM Fell English", Georgia, serif;
   font-size: 1.1rem;
   font-weight: 400;
   line-height: 1.15;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow-wrap: anywhere;
+  white-space: normal;
 }
 
 .ship-strip-meta {
@@ -3393,10 +3393,12 @@ body.game {
 }
 .ship-lights {
   display: flex;
+  flex-wrap: nowrap;
   align-items: center;
   gap: 0.4rem;
   margin: 0.45rem 0;
   font-size: 0.86rem;
+  white-space: nowrap;
 }
 .ship-lights[data-on="false"] {
   color: var(--ink-faded);
@@ -3847,9 +3849,64 @@ body {
   opacity: 0.8;
 }
 
+.research-tools {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0.35rem 0;
+}
+
+.research-tools .btn {
+  min-width: 44px;
+  min-height: 44px;
+}
+
+.research-tools-note {
+  font-size: 0.72rem;
+  opacity: 0.75;
+}
+
+.research-web-viewport {
+  position: relative;
+  max-height: 52vh;
+  overflow: hidden;
+  border: 1px solid rgba(42, 28, 16, 0.45);
+  background: rgba(255, 255, 255, 0.18);
+  touch-action: none;
+  cursor: grab;
+}
+
+.research-web-viewport:active {
+  cursor: grabbing;
+}
+
+.research-web {
+  display: flex;
+  gap: 0.7rem;
+  align-items: flex-start;
+  padding: 0.7rem;
+  transform-origin: 0 0;
+}
+
+.research-hub {
+  position: sticky;
+  left: 0;
+  display: grid;
+  flex: 0 0 9rem;
+  gap: 0.2rem;
+  padding: 0.8rem;
+  border: 2px solid #5c3921;
+  border-radius: 50%;
+  background: var(--paper);
+  text-align: center;
+  font-family: "IM Fell English", Georgia, serif;
+}
+
 .research-branches {
   display: grid;
-  gap: 0.5rem;
+  grid-template-columns: repeat(2, minmax(15rem, 1fr));
+  gap: 0.55rem;
+  min-width: 34rem;
 }
 
 .research-branch {
@@ -3857,17 +3914,75 @@ body {
   padding: 0.35rem 0.45rem;
 }
 
-.research-branch > summary {
-  min-height: 44px;
+.research-branch h3 {
+  min-height: 32px;
+  margin: 0 0 0.25rem;
   display: flex;
   align-items: center;
-  cursor: pointer;
-  font-weight: 700;
+  font-size: 0.78rem;
 }
 
-.research-row {
-  border-top: 1px dashed rgba(42, 28, 16, 0.3);
-  padding: 0.4rem 0;
+.research-node {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 0.15rem 0.4rem;
+  width: 100%;
+  min-height: 44px;
+  margin: 0.2rem 0;
+  padding: 0.35rem 0.45rem;
+  border: 1px solid rgba(42, 28, 16, 0.4);
+  border-radius: 0;
+  background: rgba(236, 227, 200, 0.8);
+  color: var(--ink);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.research-node strong {
+  font-size: 0.84rem;
+}
+
+.research-node .research-pips {
+  grid-column: 1;
+}
+
+.research-node .research-state {
+  grid-column: 2;
+  grid-row: 1 / span 2;
+  align-self: center;
+}
+
+.research-node.state-available { border-color: #5c6e46; }
+.research-node.state-owned { background: #d7d0aa; }
+.research-node.state-locked { opacity: 0.66; }
+.research-node[aria-pressed="true"] { outline: 2px solid #8c1d1d; }
+
+.research-detail {
+  margin-top: 0.5rem;
+  padding: 0.5rem;
+  border: 1px solid #5c3921;
+  background: rgba(255, 255, 255, 0.22);
+}
+
+.research-detail-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+
+.research-detail-head h3 { margin: 0; }
+.research-detail p { margin: 0.3rem 0; font-size: 0.82rem; }
+
+.research-detail-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.research-detail-actions .btn {
+  min-height: 44px;
 }
 
 .research-row-head {
@@ -3972,11 +4087,11 @@ body {
   margin-top: 0.5rem;
 }
 
-@media (min-width: 700px) and (min-height: 600px) {
-  .research-branches {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    align-items: start;
-  }
+@media (max-width: 640px) {
+  .research-web { display: block; padding: 0.4rem; }
+  .research-hub { position: static; margin: 0 auto 0.6rem; }
+  .research-branches { grid-template-columns: 1fr; min-width: 0; }
+  .research-web-viewport { max-height: 58vh; overflow-y: auto; }
 }
 
 /* 3J-fix-c1/c2: armed order banner, controls sheet and first-use hints. */
@@ -4210,11 +4325,12 @@ body {
 
 /* The slim top-left strip. The full ship screen is the same panel expanded. */
 #ship-panel {
-  top: 12px;
-  left: 12px;
+  top: max(12px, env(safe-area-inset-top));
+  left: max(12px, env(safe-area-inset-left));
   bottom: auto;
   right: auto;
   z-index: 26;
+  min-height: 58px;
   max-height: none;
   padding: 0;
   background: var(--slot-paper);
@@ -4223,7 +4339,7 @@ body {
 }
 
 #ship-panel .ship-strip {
-  min-height: 44px;
+  min-height: 56px;
   padding: 0.3rem 0.55rem;
   border-bottom: 0;
 }
@@ -4574,7 +4690,8 @@ body {
 
 .log-port-host .known-ports-panel,
 .log-host > .fleet-panel,
-.log-host > .trade-panel {
+.log-host > .trade-panel,
+.log-host > .research-panel {
   position: static;
   inset: auto;
   width: 100%;

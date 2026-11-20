@@ -770,6 +770,7 @@
           <button class="log-tab" type="button" data-log-tab="queued" role="tab" aria-selected="false">Queued orders</button>
           <button class="log-tab" type="button" data-log-tab="fleets" role="tab" aria-selected="false">Fleets</button>
           <button class="log-tab" type="button" data-log-tab="trade" role="tab" aria-selected="false">Trade routes</button>
+          <button class="log-tab" type="button" data-log-tab="research" role="tab" aria-selected="false">Research</button>
         </nav>
       </header>
       <div class="log-body">
@@ -789,6 +790,9 @@
         <aside class="log-side">
           <section class="log-panel" id="log-panel-chart">
             <div class="log-order-actions">
+              <button class="btn" id="log-zoom-out" type="button" aria-label="Zoom out">−</button>
+              <button class="btn" id="log-zoom-in" type="button" aria-label="Zoom in">+</button>
+              <button class="btn" id="log-fit-discovered" type="button">Fit discovered area</button>
               <button class="btn" id="log-ruler-btn" type="button">Scale ruler</button>
             </div>
             <h2>Ship list</h2>
@@ -816,6 +820,9 @@
               <button class="btn" type="button" disabled>Trade links</button>
               <p>Arrives with trade links</p>
             </div>
+          </section>
+          <section class="log-panel" id="log-panel-research" hidden>
+            <div class="log-host" id="log-research-host"></div>
           </section>
         </aside>
       </div>
@@ -1007,7 +1014,31 @@
         <strong id="research-units">0</strong> units shared by the navy
       </p>
       <p class="research-owned" id="research-owned">0 of 0 levels researched</p>
-      <div class="research-branches" id="research-branches"></div>
+      <div class="research-tools">
+        <button class="btn" id="research-zoom-out" type="button" aria-label="Zoom research out">−</button>
+        <button class="btn" id="research-zoom-in" type="button" aria-label="Zoom research in">+</button>
+        <span class="research-tools-note">Drag to pan</span>
+      </div>
+      <div class="research-web-viewport" id="research-web-viewport">
+        <div class="research-web" id="research-web">
+          <div class="research-hub"><strong id="research-hub-navy">Navy</strong><span id="research-hub-points">0 points</span></div>
+          <div class="research-branches" id="research-branches"></div>
+        </div>
+      </div>
+      <section class="research-detail" id="research-detail" hidden>
+        <div class="research-detail-head">
+          <h3 id="research-detail-name">Upgrade</h3>
+          <button class="btn" id="research-detail-close" type="button">Close</button>
+        </div>
+        <p id="research-detail-effect"></p>
+        <p id="research-detail-cost"></p>
+        <p id="research-detail-capture"></p>
+        <p id="research-detail-stored" hidden>Effect stored until that system exists</p>
+        <div class="research-detail-actions">
+          <button class="btn btn-seal" id="research-detail-buy" type="button">Research L1</button>
+          <button class="btn" id="research-detail-fit" type="button">Fit upgrades at a port</button>
+        </div>
+      </section>
     </section>
 
     <!-- Shipyard cards and the permanent-name step. -->

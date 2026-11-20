@@ -23,4 +23,11 @@ function run(command, args) {
 
 run(tsc, ["-p", "shared/tsconfig.json"]);
 run(tsc, ["-p", "tests/tsconfig.json"]);
-run(process.execPath, ["--test", "tests/dist"]);
+
+const shardArg = process.argv.find((arg) => arg.startsWith("--shard="));
+const testArgs = ["--test"];
+if (shardArg) {
+  testArgs.push(`--test-shard=${shardArg.slice("--shard=".length)}`);
+}
+testArgs.push("tests/dist");
+run(process.execPath, testArgs);

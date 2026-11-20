@@ -86,6 +86,10 @@
       "types": "./dist/chartGrid.d.ts",
       "default": "./dist/chartGrid.js"
     },
+    "./chart-view": {
+      "types": "./dist/chartView.d.ts",
+      "default": "./dist/chartView.js"
+    },
     "./sight": {
       "types": "./dist/sight.d.ts",
       "default": "./dist/sight.js"

@@ -34,9 +34,36 @@ export interface AccountApi {
   keepalive(): Promise<{ ok: boolean; text: string }>;
 }
 
+/** Shown when /api/config had no Supabase URL or publishable key. */
+export const ACCOUNT_CONFIG_MISSING_MESSAGE =
+  "The game server is missing its Supabase settings. Tell the host.";
+
+/**
+ * An AccountApi for a server without Supabase settings. The screen still
+ * opens, so the login button is never a dead end, and every action says what
+ * the host has to fix.
+ */
+export function unavailableAccountApi(
+  message = ACCOUNT_CONFIG_MISSING_MESSAGE,
+): AccountApi {
+  return {
+    async signUp() { return message; },
+    async signIn() { return message; },
+    async signOut() {},
+    async session() { return null; },
+    async freshAccessToken() { return null; },
+    async updateDisplayName() { return message; },
+    async changePassword() { return message; },
+    async deleteAccount() { return message; },
+    async keepalive() { return { ok: false, text: message }; },
+  };
+}
+
 export interface AccountUiOptions {
   room: string;
   onSession?: (session: AccountSession | null) => void;
+  /** Shown whenever Account opens without a message, e.g. no Supabase config. */
+  unavailableMessage?: string;
 }
 
 function byId<T extends HTMLElement>(doc: Document, id: string): T {
@@ -242,7 +269,8 @@ export function createAccountUi(
   return {
     open: (message = "") => {
       screen.hidden = false;
-      say(message);
+      const text = message || options.unavailableMessage || "";
+      say(text, Boolean(text));
       void refresh();
     },
     close: () => {

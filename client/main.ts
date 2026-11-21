@@ -42,7 +42,13 @@ import {
   type StorageLike,
 } from "@naval/shared/player-identity";
 import { TAKEN_OVER_CLOSE_CODE } from "@naval/shared/player-sessions";
-import { createAccountUi, type AccountApi, type AccountSession } from "./account.js";
+import {
+  ACCOUNT_CONFIG_MISSING_MESSAGE,
+  createAccountUi,
+  unavailableAccountApi,
+  type AccountApi,
+  type AccountSession,
+} from "./account.js";
 import { createLobbyUi, type LobbyUiOptions } from "./lobby.js";
 import { createLobbyLogin } from "./lobbyLogin.js";
 import { createSupabaseAccountApi, loadAccountConfig } from "./supabaseAccount.js";
@@ -1231,6 +1237,7 @@ async function start(): Promise<void> {
   const testKeepalive = element<HTMLButtonElement>("test-keepalive");
   const testKeepaliveResult = element<HTMLElement>("test-keepalive-result");
   const loginState = element<HTMLElement>("login-state");
+  const configState = element<HTMLElement>("config-state");
   const logGrid = element<HTMLElement>("log-grid");
   const logPickHint = element<HTMLElement>("log-pick-hint");
   const logRuler = element<HTMLElement>("log-ruler");
@@ -1402,41 +1409,52 @@ async function start(): Promise<void> {
     query.get("as"),
     makePlayerId,
   );
-  const accountConfig = await loadAccountConfig();
-  const accountApi: AccountApi | null = accountConfig
+  const accountConfigResult = await loadAccountConfig();
+  const accountConfig = accountConfigResult.config;
+  const accountUnavailable = accountConfig ? "" : ACCOUNT_CONFIG_MISSING_MESSAGE;
+  const accountApi: AccountApi = accountConfig
     ? createSupabaseAccountApi(accountConfig)
-    : null;
+    : unavailableAccountApi(ACCOUNT_CONFIG_MISSING_MESSAGE);
+  configState.textContent = accountConfig
+    ? "Config loaded: yes"
+    : `Config loaded: no · ${accountConfigResult.error}`;
+  // The Debug log view is declared further down; it draws this line when opened.
+  lobbyDebugLog.push({
+    at: Date.now(),
+    text: accountConfig
+      ? "Config loaded: the Supabase settings are present."
+      : `Config was not loaded: ${accountConfigResult.error}`,
+  });
   let accountSession: AccountSession | null = null;
   let lastTokenCheck = "not checked yet";
   let connectedAccountId: string | null = null;
   let connectionAttempt = false;
   let lobbyUi: ReturnType<typeof createLobbyUi> | null = null;
-  const accountUi = accountApi
-    ? createAccountUi(document, accountApi, {
-        room,
-        onSession: (next) => {
-          accountSession = next;
-          refreshKeepaliveButton();
-          refreshLoginState();
-          lobbyUi?.refreshHome();
-          if (!room || roomKindForCode(room) !== "normal") return;
-          if (!next) {
-            connectedAccountId = null;
-            if (socket) {
-              socket.close(1000, "logged out");
-              socket = null;
-            }
-            setStatus("Log in to play online", true);
-            return;
-          }
-          if (socket && connectedAccountId !== next.user.id) {
-            socket.close(1000, "account changed");
-            socket = null;
-          }
-          if (!socket) void connect();
-        },
-      })
-    : null;
+  const accountUi = createAccountUi(document, accountApi, {
+    room,
+    unavailableMessage: accountUnavailable,
+    onSession: (next) => {
+      accountSession = next;
+      refreshKeepaliveButton();
+      refreshLoginState();
+      lobbyUi?.refreshHome();
+      if (!room || roomKindForCode(room) !== "normal") return;
+      if (!next) {
+        connectedAccountId = null;
+        if (socket) {
+          socket.close(1000, "logged out");
+          socket = null;
+        }
+        setStatus("Log in to play online", true);
+        return;
+      }
+      if (socket && connectedAccountId !== next.user.id) {
+        socket.close(1000, "account changed");
+        socket = null;
+      }
+      if (!socket) void connect();
+    },
+  });
   /** Ask the Worker to reserve a code and open its lobby. */
   async function createOnlineGame(): Promise<{ code?: string; error?: string }> {
     return lobbyLogin.createGame();
@@ -1504,7 +1522,7 @@ async function start(): Promise<void> {
       refreshKeepaliveButton();
       refreshLoginState();
     },
-    openAccount: (message) => accountUi?.open(message),
+    openAccount: (message) => accountUi.open(message),
     onExpired: (message) => {
       lobbyUi?.showHome(message);
       showNotice(message);
@@ -1518,7 +1536,7 @@ async function start(): Promise<void> {
 
   lobbyUi = createLobbyUi(document, {
     signedIn: () => accountSession !== null,
-    openAccount: (message) => accountUi?.open(message),
+    openAccount: (message) => accountUi.open(message),
     createGame: createOnlineGame,
     lookupGame: lookupOnlineGame,
     enterRoom,
@@ -1528,16 +1546,10 @@ async function start(): Promise<void> {
     },
   } satisfies LobbyUiOptions);
 
-  accountMenuButton.disabled = !accountUi;
-  accountMenuButton.title = accountUi ? "" : "Accounts are not configured.";
+  accountMenuButton.disabled = false;
+  accountMenuButton.title = "";
   refreshLoginState();
-  if (accountUi) void accountUi.refresh().then(() => lobbyUi?.refreshHome());
-  else {
-    element<HTMLElement>("account-menu-name").textContent = "Account (unavailable)";
-    testKeepalive.disabled = true;
-    testKeepalive.title = "Accounts are not configured.";
-    testKeepaliveResult.textContent = "Accounts are not configured.";
-  }
+  void accountUi.refresh().then(() => lobbyUi?.refreshHome());
   const roomPattern = new RegExp(`^[A-Za-z0-9_-]{1,${settings.server.maxRoomCodeLength}}$`);
   let homeStartMessage = "";
   if (room && !roomPattern.test(room)) {
@@ -10578,7 +10590,7 @@ async function start(): Promise<void> {
   accountMenuButton.addEventListener("click", () => {
     menuPanel.hidden = true;
     menuButton.setAttribute("aria-expanded", "false");
-    accountUi?.open();
+    accountUi.open();
     scheduleScreenLayout();
   });
   accountClose.addEventListener("click", () => {

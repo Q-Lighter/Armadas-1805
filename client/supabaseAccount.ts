@@ -12,19 +12,35 @@ export interface AccountConfig {
   accountEmailDomain: string;
 }
 
-export async function loadAccountConfig(): Promise<AccountConfig | null> {
+export interface AccountConfigResult {
+  config: AccountConfig | null;
+  /** Why the config could not be used; empty when it loaded. */
+  error: string;
+}
+
+export async function loadAccountConfig(): Promise<AccountConfigResult> {
   try {
     const response = await fetch("/api/config", { cache: "no-store" });
-    if (!response.ok) return null;
+    if (!response.ok) {
+      return { config: null, error: `The config request failed (HTTP ${response.status}).` };
+    }
     const config = await response.json() as Partial<AccountConfig>;
-    if (!config.supabaseUrl || !config.supabasePublishableKey) return null;
+    if (!config.supabaseUrl || !config.supabasePublishableKey) {
+      return {
+        config: null,
+        error: "The config has no Supabase URL or publishable key.",
+      };
+    }
     return {
-      supabaseUrl: config.supabaseUrl,
-      supabasePublishableKey: config.supabasePublishableKey,
-      accountEmailDomain: config.accountEmailDomain ?? "armadas-1805.carltonjamie714.workers.dev",
+      config: {
+        supabaseUrl: config.supabaseUrl,
+        supabasePublishableKey: config.supabasePublishableKey,
+        accountEmailDomain: config.accountEmailDomain ?? "armadas-1805.carltonjamie714.workers.dev",
+      },
+      error: "",
     };
   } catch {
-    return null;
+    return { config: null, error: "The config request could not reach the game server." };
   }
 }
 

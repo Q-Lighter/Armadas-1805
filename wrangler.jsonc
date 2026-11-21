@@ -5,6 +5,11 @@
   "main": "server/dist/worker.js",
   "compatibility_date": "2026-11-02",
 
+  // Never wipe variables and secrets that were set in the Cloudflare
+  // dashboard. SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY and SUPABASE_SECRET_KEY
+  // live there, not in this file, so a deploy must keep them.
+  "keep_vars": true,
+
   // Static page from `npm run build`. The Worker serves it for every path
   // except /ws.
   "assets": {

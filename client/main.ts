@@ -43,6 +43,7 @@ import {
 } from "@naval/shared/player-identity";
 import { TAKEN_OVER_CLOSE_CODE } from "@naval/shared/player-sessions";
 import { createAccountUi, type AccountApi, type AccountSession } from "./account.js";
+import { createLobbyUi, type LobbyUiOptions } from "./lobby.js";
 import { createSupabaseAccountApi, loadAccountConfig } from "./supabaseAccount.js";
 import type {
   EscortSnapshot,
@@ -1315,7 +1316,9 @@ async function start(): Promise<void> {
   let buildCommit = commitMeta?.content ?? "unknown";
 
   const query = new URLSearchParams(location.search);
-  const room = query.get("room") ?? "test";
+  // No room means the main menu. A room in the address opens that room directly,
+  // so every test and dev link keeps working exactly as before.
+  let room = query.get("room") ?? "";
   const layoutDebug = query.get("layoutdebug") === "1";
   const layoutPreferenceKey = "armadas.layout";
   const layoutStorage = browserStorage("localStorage");
@@ -1389,11 +1392,10 @@ async function start(): Promise<void> {
   const requestedShip = query.get("ship");
   const requestedCash = query.get("cash");
   let startPortName = requestedStart ?? "";
-  const initialRoomKind = roomKindForCode(room);
   const identity: PlayerIdentity = resolvePlayerIdentity(
     browserStorage("localStorage"),
     browserStorage("sessionStorage"),
-    initialRoomKind,
+    room ? roomKindForCode(room) : "normal",
     query.get("as"),
     makePlayerId,
   );
@@ -1404,13 +1406,15 @@ async function start(): Promise<void> {
   let accountSession: AccountSession | null = null;
   let connectedAccountId: string | null = null;
   let connectionAttempt = false;
+  let lobbyUi: ReturnType<typeof createLobbyUi> | null = null;
   const accountUi = accountApi
     ? createAccountUi(document, accountApi, {
         room,
         onSession: (next) => {
           accountSession = next;
           refreshKeepaliveButton();
-          if (initialRoomKind !== "normal") return;
+          lobbyUi?.refreshHome();
+          if (!room || roomKindForCode(room) !== "normal") return;
           if (!next) {
             connectedAccountId = null;
             if (socket) {
@@ -1428,9 +1432,106 @@ async function start(): Promise<void> {
         },
       })
     : null;
+  /** Ask the Worker to reserve a code and open its lobby. */
+  async function createOnlineGame(): Promise<{ code?: string; error?: string }> {
+    const session = accountSession ?? await accountApi?.session().catch(() => null) ?? null;
+    accountSession = session;
+    if (!session) return { error: "Log in to create a game." };
+    const response = await fetch("/api/lobby/create", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${session.accessToken}` },
+    });
+    const data = await response.json().catch(() => ({})) as {
+      code?: string; error?: string;
+    };
+    if (!response.ok || !data.code) {
+      return { error: data.error || "That game could not be created. Try again." };
+    }
+    return { code: data.code };
+  }
+
+  /** Check a join code before opening its room. */
+  async function lookupOnlineGame(code: string): Promise<{ status?: string; error?: string }> {
+    const session = accountSession ?? await accountApi?.session().catch(() => null) ?? null;
+    accountSession = session;
+    if (!session) return { error: "Log in to join a game." };
+    const response = await fetch(`/api/lobby/code?code=${encodeURIComponent(code)}`, {
+      headers: { Authorization: `Bearer ${session.accessToken}` },
+    });
+    const data = await response.json().catch(() => ({})) as {
+      ok?: boolean; found?: boolean; status?: string; error?: string;
+    };
+    if (!response.ok || !data.ok) {
+      return { error: data.error || "Could not look up that code." };
+    }
+    if (!data.found) return {};
+    return { status: data.status ?? "lobby" };
+  }
+
+  function enterRoom(code: string): void {
+    const clean = code.trim().toUpperCase();
+    if (!roomPattern.test(clean)) {
+      lobbyUi?.showHome("Room code must be letters, numbers, dash or underscore.");
+      return;
+    }
+    if (socket) {
+      try {
+        socket.close(1000, "changing room");
+      } catch {
+        // The old socket may already be closing.
+      }
+      socket = null;
+    }
+    retry = null;
+    takenOver = false;
+    connectionAttempt = false;
+    cachedState = null;
+    pendingStateMessages = [];
+    room = clean;
+    roomOut.textContent = room;
+    roomKind = "normal";
+    lobbyUi?.showLobbyConnecting(room);
+    void connect();
+  }
+
+  function leaveRoom(): void {
+    if (socket) {
+      try {
+        socket.close(1000, "left room");
+      } catch {
+        // The socket may already be closing.
+      }
+      socket = null;
+    }
+    if (retry !== null) {
+      window.clearTimeout(retry);
+      retry = null;
+    }
+    takenOver = false;
+    connectionAttempt = false;
+    connectedAccountId = null;
+    cachedState = null;
+    pendingStateMessages = [];
+    room = "";
+    roomOut.textContent = "—";
+    roomKind = "normal";
+  }
+
+  lobbyUi = createLobbyUi(document, {
+    signedIn: () => accountSession !== null,
+    openAccount: () => accountUi?.open(),
+    createGame: createOnlineGame,
+    lookupGame: lookupOnlineGame,
+    enterRoom,
+    leaveRoom,
+    send: (message) => {
+      if (socket?.readyState === WebSocket.OPEN) socket.send(JSON.stringify(message));
+    },
+  } satisfies LobbyUiOptions);
+
   accountMenuButton.disabled = !accountUi;
   accountMenuButton.title = accountUi ? "" : "Accounts are not configured.";
-  if (accountUi) void accountUi.refresh();
+  if (accountUi) void accountUi.refresh().then(() => lobbyUi?.refreshHome());
   else {
     element<HTMLElement>("account-menu-name").textContent = "Account (unavailable)";
     testKeepalive.disabled = true;
@@ -1438,12 +1539,13 @@ async function start(): Promise<void> {
     testKeepaliveResult.textContent = "Accounts are not configured.";
   }
   const roomPattern = new RegExp(`^[A-Za-z0-9_-]{1,${settings.server.maxRoomCodeLength}}$`);
-  if (!roomPattern.test(room)) {
-    status.textContent = "Room code must be letters, numbers, dash or underscore.";
-    status.dataset.state = "error";
-    return;
+  let homeStartMessage = "";
+  if (room && !roomPattern.test(room)) {
+    homeStartMessage = "Room code must be letters, numbers, dash or underscore.";
+    room = "";
   }
-  roomOut.textContent = room;
+  roomOut.textContent = room || "—";
+  if (!room) lobbyUi.showHome(homeStartMessage);
 
   const baseResolution = Math.min(window.devicePixelRatio || 1, settings.client.maxDevicePixelRatio);
   let appliedResolution = baseResolution;
@@ -7561,6 +7663,12 @@ async function start(): Promise<void> {
     if (!message || typeof message !== "object") return;
     const type = (message as { t?: unknown }).t;
 
+    // 4B: the lobby, the waiting card and takeover questions are not world state.
+    if (lobbyUi?.handleMessage(message)) {
+      if (type === "gameStarted") setStatus("Connected");
+      return;
+    }
+
     if (type === "n") {
       const text = (message as { text?: unknown }).text;
       if (typeof text === "string" && text.length <= 120) {
@@ -8263,6 +8371,7 @@ async function start(): Promise<void> {
   }
 
   async function connect(): Promise<void> {
+    if (!room) return;
     if (!location.host) {
       setStatus("Open this page from the game server to sail.", true);
       return;
@@ -8271,13 +8380,16 @@ async function start(): Promise<void> {
     connectionAttempt = true;
 
     let token: string | null = null;
-    if (initialRoomKind === "normal") {
+    if (roomKindForCode(room) === "normal") {
       const session = accountSession ?? await accountApi?.session().catch(() => null) ?? null;
       accountSession = session;
       if (!session) {
         connectionAttempt = false;
         connectedAccountId = null;
         setStatus("Log in to play online", true);
+        if (lobbyUi && lobbyUi.visibleScreen() !== "none") {
+          lobbyUi.showHome("Log in to play online.");
+        }
         return;
       }
       token = session.accessToken;
@@ -8331,8 +8443,25 @@ async function start(): Promise<void> {
           window.clearTimeout(retry);
           retry = null;
         }
-        setStatus(event.reason || (event.code === 4403 ? "Account deleted" : "Log in to play online"), true);
-        showNotice(event.reason || (event.code === 4403 ? "Account deleted" : "Log in to play online"));
+        const text = event.reason || (event.code === 4403 ? "Account deleted" : "Log in to play online");
+        setStatus(text, true);
+        showNotice(text);
+        if (roomKindForCode(room) === "normal") {
+          leaveRoom();
+          lobbyUi?.showHome(text);
+        }
+        return;
+      }
+
+      if (event.code === 4002) {
+        // The host removed this captain, or the lobby closed.
+        if (retry !== null) {
+          window.clearTimeout(retry);
+          retry = null;
+        }
+        const text = event.reason || "The lobby closed.";
+        leaveRoom();
+        lobbyUi?.showHome(text);
         return;
       }
 
@@ -11560,7 +11689,10 @@ async function start(): Promise<void> {
   window.addEventListener("unhandledrejection", (event) => {
     reportClientError(event.reason, "unhandled promise");
   });
-  void connect();
+  // The menu waits for Create game or Join with code. A room in the address
+  // opens straight away, exactly as every test and dev link did before.
+  if (room) void connect();
+  else lobbyUi.showHome(homeStartMessage);
   void checkForNewVersion();
   window.setInterval(
     () => void checkForNewVersion(),

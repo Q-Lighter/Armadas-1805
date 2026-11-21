@@ -179,6 +179,7 @@ import {
   type SimpleStats,
 } from "./elimination.js";
 import { NAVY_IDS, type NavyId } from "./navies.js";
+import type { LobbyStartPlayer } from "./lobby.js";
 import type { DummyBehaviour } from "./testSetup.js";
 import {
   objectiveForOrder,
@@ -1233,12 +1234,12 @@ function hashPlayerId(playerId: string): number {
 const navyStartCentres = new Map<string, { x: number; y: number }>();
 const portStartCentres = new Map<string, { x: number; y: number }>();
 
-function navyStartCentre(world: World): { x: number; y: number } {
-  const cached = navyStartCentres.get(world.navy);
+function navyStartCentre(navy: NavyId): { x: number; y: number } {
+  const cached = navyStartCentres.get(navy);
   if (cached) return cached;
-  const start = settings.navies[world.navy].start;
+  const start = settings.navies[navy].start;
   const centre = lonLatToMap(start.lonDeg, start.latDeg);
-  navyStartCentres.set(world.navy, centre);
+  navyStartCentres.set(navy, centre);
   return centre;
 }
 
@@ -1270,10 +1271,9 @@ function portStartCentre(port: PlacedPort): { x: number; y: number } {
   return centre;
 }
 
-function startCentreFor(world: World): { x: number; y: number } {
-  return world.startPort && world.kind !== "normal"
-    ? portStartCentre(world.startPort)
-    : navyStartCentre(world);
+function startCentreFor(world: World, navy: NavyId = world.navy): { x: number; y: number } {
+  if (world.startPort && world.kind !== "normal") return portStartCentre(world.startPort);
+  return navyStartCentre(navy);
 }
 
 /** A stable spot in the start area, different for each player id. */
@@ -2130,8 +2130,12 @@ export function setPrivateerMode(
  * Pick a berth for a new player. If the deterministic berth is too close to an
  * existing ship, or on land, walk around the start circle until there is room.
  */
-function newPlayerSpot(world: World, playerId: string): { x: number; y: number; headingRad: number } {
-  const centre = startCentreFor(world);
+function newPlayerSpot(
+  world: World,
+  playerId: string,
+  startNavy: NavyId = world.navy,
+): { x: number; y: number; headingRad: number } {
+  const centre = startCentreFor(world, startNavy);
   const initial = startSpot(playerId, centre);
 
   // A second test-room player starts 2-4 km from the first, facing them, so
@@ -2261,6 +2265,10 @@ export function addPlayer(
   classId: ShipClassId = world.startShipClass,
   startMoney: number = world.startMoney,
   navy: NavyId = world.navy,
+  /** Where the hull is placed. A lobby start uses the player's own navy. */
+  startNavy: NavyId = navy,
+  /** A started lobby supplies the permanent flagship name. */
+  shipName?: string,
 ): Ship {
   const existing = world.players.get(playerId);
   if (existing) {
@@ -2306,7 +2314,7 @@ export function addPlayer(
     return existing;
   }
 
-  const spot = newPlayerSpot(world, playerId);
+  const spot = newPlayerSpot(world, playerId, startNavy);
   const ship = createShip(
     playerId,
     classId,
@@ -2314,7 +2322,7 @@ export function addPlayer(
     spot.y,
     spot.headingRad,
     navy,
-    initialShipName(world, playerId),
+    shipName ?? initialShipName(world, playerId),
   );
   // Starting ships are ready for sea at once. Only bought ships arrive empty.
   ship.crew = ship.fullCrew;
@@ -2351,6 +2359,43 @@ export function addPlayer(
   ));
   seedExploredBlocks(world, playerId, chart);
   return ship;
+}
+
+/**
+ * Build the world a started lobby asked for. Every captain gets the normal
+ * flagship, their navy's start area and the normal starting setup; two
+ * captains in one navy therefore begin as teammates. Unused navies are marked
+ * eliminated at once and never count as started, so the victory check only
+ * waits for the real navies.
+ */
+export function startLobbyGame(
+  roomCode: string,
+  players: readonly LobbyStartPlayer[],
+  options: { npcs?: boolean } = {},
+): World {
+  const world = createWorld(roomCode, { npcs: options.npcs ?? true });
+  if (players[0]) world.navy = players[0].navy;
+  for (const player of players) {
+    const ship = addPlayer(
+      world,
+      player.id,
+      "flagship",
+      world.startMoney,
+      player.navy,
+      player.navy,
+      player.flagshipName,
+    );
+    const record = world.playerRecords.get(player.id);
+    if (record) {
+      record.name = player.name;
+      record.flagshipName = player.flagshipName;
+    }
+  }
+  const used = new Set(players.map((player) => player.navy));
+  for (const navy of NAVY_IDS) {
+    if (!used.has(navy)) world.eliminatedNavies.add(navy);
+  }
+  return world;
 }
 
 /** Test/dev only: sink the caller's flagship so the loss path runs normally. */

@@ -93,6 +93,7 @@ import {
   setPlayerRepair,
   spawnTestEnemyFleet,
   spawnTestFleet,
+  startLobbyGame,
   spawnRouteHelper,
   setTradeRoute,
   cancelTradeRoute,
@@ -126,6 +127,24 @@ import { BlockSendBudget } from "@naval/shared/block-batch";
 import { findPortByName, type PlacedPort } from "@naval/shared/ports";
 import { startTestScenario } from "@naval/shared/scenarios";
 import { parseNavy, type NavyId } from "@naval/shared/navies";
+import {
+  addLobbyPlayer,
+  canStartLobby,
+  findLobbyPlayer,
+  isJoinCode,
+  isLobbyHost,
+  lobbyPlayerForAccount,
+  lobbySnapshot,
+  lobbyStartPlayers,
+  lobbyStartReason,
+  newLobby,
+  removeLobbyPlayer,
+  setLobbyFlagshipName,
+  setLobbyNavy,
+  setLobbyReady,
+  type Lobby,
+  type LobbyResult,
+} from "@naval/shared/lobby";
 import { chooseJoinNavy, chooseTeamNavy, parseDummyBehaviour, type DummyBehaviour } from "@naval/shared/test-setup";
 import { parseShipClass } from "@naval/shared/ship-rules";
 import type { ShipClassId } from "@naval/shared/ships";
@@ -134,6 +153,52 @@ import { CHART_BLOCKS } from "./chartBlocks.js";
 import { authenticate, type SupabaseEnv } from "./accountAuth.js";
 
 const playerIdPattern = /^[A-Za-z0-9_-]{1,40}$/;
+
+/** The same code the client uses for "another tab has this ship". */
+const TAKEN_OVER_CLOSE_CODE = 4001;
+/** A lobby player was removed by the host, or the lobby closed. */
+const LOBBY_CLOSED_CLOSE_CODE = 4002;
+
+interface LobbyStorage {
+  get<T>(key: string): Promise<T | undefined>;
+  put<T>(key: string, value: T): Promise<void>;
+  delete(key: string): Promise<boolean>;
+  setAlarm?(scheduledTime: number): Promise<void>;
+}
+
+interface RoomState {
+  storage?: LobbyStorage;
+  blockConcurrencyWhile?(callback: () => Promise<void>): unknown;
+}
+
+export interface RoomEnv extends SupabaseEnv {
+  LOBBY_DIRECTORY?: DurableObjectNamespace;
+}
+
+interface RoomConnection {
+  accountId: string;
+  name: string;
+  mode: "lobby" | "game" | "spectator";
+  /** The world id this socket controls. Empty in the lobby. */
+  playerId: string;
+  /** The lobby slot id while in the lobby. */
+  slotId: string;
+}
+
+interface TakeoverRequest {
+  id: string;
+  accountId: string;
+  name: string;
+  targetSlot: string;
+  atMs: number;
+}
+
+function randomSlotId(): string {
+  const uuid = (globalThis as unknown as { crypto?: { randomUUID?: () => string } })
+    .crypto?.randomUUID?.();
+  if (uuid) return `p${uuid.replace(/-/g, "").slice(0, 12)}`;
+  return `p${Math.random().toString(36).slice(2, 12)}`;
+}
 
 /** Close any socket opened by a join that failed after the upgrade. */
 function teardownJoin(response: Response, server: WebSocket): void {
@@ -147,10 +212,29 @@ function teardownJoin(response: Response, server: WebSocket): void {
 
 export class GameRoom {
   private world: World = createWorld("main", { npcs: true });
-  private readonly env: SupabaseEnv;
+  private readonly env: RoomEnv;
+  private readonly storage?: LobbyStorage;
+  /** The lobby for this room code, kept across a Durable Object restart. */
+  private lobby: Lobby | null = null;
+  private readonly lobbySockets = new Map<string, WebSocket>();
+  /** Logged-in non-players watching a started game, by account id. */
+  private readonly spectators = new Map<string, { socket: WebSocket; name: string }>();
+  /** World player id to the account that currently controls it. */
+  private readonly slotAccounts = new Map<string, string>();
+  private gameHostId: string | null = null;
+  private readonly pendingTakeovers: TakeoverRequest[] = [];
+  private readonly connections = new Map<WebSocket, RoomConnection>();
+  private emptySinceMs: number | null = null;
 
-  constructor(_state?: DurableObjectState, env: SupabaseEnv = {}) {
+  constructor(state?: RoomState, env: RoomEnv = {}) {
     this.env = env;
+    this.storage = state?.storage;
+    if (state?.storage && state.blockConcurrencyWhile) {
+      state.blockConcurrencyWhile(async () => {
+        this.lobby = (await state.storage!.get<Lobby>("lobby")) ?? null;
+        this.emptySinceMs = (await state.storage!.get<number>("lobbyEmptySince")) ?? null;
+      });
+    }
   }
   private readonly sockets = new PlayerSessions<WebSocket>();
   private ticks = 0;
@@ -199,6 +283,9 @@ export class GameRoom {
     const requestUrl = new URL(request.url);
     if (requestUrl.pathname === "/account-delete" && request.method === "POST") {
       return this.deleteAccountPlayer(request);
+    }
+    if (requestUrl.pathname === "/lobby-create" && request.method === "POST") {
+      return this.createLobby(request);
     }
     if (request.headers.get("Upgrade")?.toLowerCase() !== "websocket") {
       return new Response("WebSocket expected", { status: 426 });
@@ -450,8 +537,8 @@ export class GameRoom {
 
       if (addMessageListener) {
         server.addEventListener("message", (event) => this.onMessage(playerId, event.data));
+        server.addEventListener("close", () => this.dropSocket(playerId, server));
       }
-      server.addEventListener("close", () => this.dropSocket(playerId, server));
 
       // The newest connection owns this id. Adding it first means the old
       // socket's close event cannot remove the new one.
@@ -469,7 +556,6 @@ export class GameRoom {
       // Nothing is joined or named until the Worker has checked it and read
       // the profile with the server-only key.
       let stage: "waiting" | "checking" | "joined" = "waiting";
-      let playerId = "";
       const queued: unknown[] = [];
       const reject = (text: string): void => {
         try {
@@ -485,10 +571,10 @@ export class GameRoom {
         reject("Log in to play online");
       }, 5_000);
       server.addEventListener("message", (event) => {
-        if (stage === "joined") {
-          this.onMessage(playerId, event.data);
-          return;
-        }
+        // Once verified, the connection's own listener (bindConnection) is
+        // the only one that routes messages. Keeping this one idle avoids
+        // handling every order twice.
+        if (stage === "joined") return;
         if (stage === "checking") {
           queued.push(event.data);
           return;
@@ -516,14 +602,47 @@ export class GameRoom {
             reject("Log in to play online");
             return;
           }
-          playerId = account.userId;
-          const response = join(playerId, account.displayName, false);
-          if (response.status !== 101) {
-            teardownJoin(response, server);
-            return;
-          }
           stage = "joined";
-          for (const data of queued.splice(0)) this.onMessage(playerId, data);
+          this.ensureStartedWorld();
+          const lobby = this.lobby;
+          if (lobby && lobby.startedAtMs === null) {
+            this.enterLobby(server, account);
+          } else if (lobby && lobby.startedAtMs !== null) {
+            const slot = this.slotForAccount(account.userId);
+            if (!slot) {
+              this.enterSpectator(server, account);
+            } else {
+              this.bindConnection(server, {
+                accountId: account.userId,
+                name: account.displayName,
+                mode: "game",
+                playerId: slot,
+                slotId: "",
+              });
+              const response = join(slot, account.displayName, false);
+              if (response.status !== 101) {
+                teardownJoin(response, server);
+                return;
+              }
+              this.onGameConnected(server, account.userId);
+            }
+          } else {
+            // A normal room made before lobbies still joins straight in.
+            this.bindConnection(server, {
+              accountId: account.userId,
+              name: account.displayName,
+              mode: "game",
+              playerId: account.userId,
+              slotId: "",
+            });
+            const response = join(account.userId, account.displayName, false);
+            if (response.status !== 101) {
+              teardownJoin(response, server);
+              return;
+            }
+            this.onGameConnected(server, account.userId);
+          }
+          for (const data of queued.splice(0)) this.routeConnectionMessage(server, data);
         }).catch(() => {
           stage = "joined";
           reject("Log in to play online");
@@ -553,8 +672,26 @@ export class GameRoom {
         status: 400,
       });
     }
-    const resigned = resignPlayer(this.world, playerId, null);
-    const socket = this.sockets.get(playerId);
+    if (this.lobby && this.lobby.startedAtMs === null) {
+      const lobbyPlayer = lobbyPlayerForAccount(this.lobby, playerId);
+      if (lobbyPlayer) {
+        const lobbySocket = this.lobbySockets.get(lobbyPlayer.id);
+        this.lobbySockets.delete(lobbyPlayer.id);
+        removeLobbyPlayer(this.lobby, lobbyPlayer.id);
+        this.persistLobby();
+        this.broadcastLobby();
+        if (lobbySocket) {
+          try {
+            lobbySocket.close(LOBBY_CLOSED_CLOSE_CODE, "account deleted");
+          } catch {
+            // The socket may already be closing.
+          }
+        }
+      }
+    }
+    const slot = this.slotForAccount(playerId) ?? playerId;
+    const resigned = resignPlayer(this.world, slot, null);
+    const socket = this.sockets.get(slot);
     if (socket) {
       try {
         socket.close(4403, "account deleted");
@@ -563,6 +700,620 @@ export class GameRoom {
       }
     }
     return Response.json({ ok: true, resigned });
+  }
+
+  // ---- Online lobbies -----------------------------------------------------
+
+  /** The Worker reserves a join code, then asks this room to host the lobby. */
+  private async createLobby(request: Request): Promise<Response> {
+    const secret = this.env.SUPABASE_SECRET_KEY ?? "";
+    if (!secret || request.headers.get("x-admin-key") !== secret) {
+      return new Response("Not allowed.", { status: 403 });
+    }
+    let body: Record<string, unknown> = {};
+    try {
+      body = await request.json() as Record<string, unknown>;
+    } catch {
+      // A missing body is refused below.
+    }
+    const code = typeof body.code === "string" ? body.code.trim().toUpperCase() : "";
+    const hostId = typeof body.hostId === "string" ? body.hostId : "";
+    const hostName = typeof body.hostName === "string" ? body.hostName.trim().slice(0, 24) : "";
+    if (!isJoinCode(code)) {
+      return new Response("Join code must be 5 characters from A to Z and 2 to 9.", { status: 400 });
+    }
+    if (!playerIdPattern.test(hostId) || !hostName) {
+      return new Response("A host account is needed.", { status: 400 });
+    }
+    if (this.lobby && this.lobby.players.length > 0) {
+      return new Response("That code is already in use.", { status: 409 });
+    }
+    this.lobby = newLobby(code, {
+      id: randomSlotId(),
+      accountId: hostId,
+      name: hostName,
+    }, Date.now());
+    this.gameHostId = hostId;
+    this.persistLobby();
+    this.reportDirectory("lobby", 1);
+    // A game created but never opened does not sit in the directory for a day.
+    this.scheduleLobbyDiscard();
+    return Response.json({ ok: true, code });
+  }
+
+  private send(socket: WebSocket, message: Record<string, unknown>): void {
+    try {
+      socket.send(JSON.stringify(message));
+    } catch {
+      // A dead socket is handled by the close path.
+    }
+  }
+
+  private bindConnection(server: WebSocket, connection: RoomConnection): void {
+    this.connections.set(server, connection);
+    server.addEventListener("message", (event) => this.routeConnectionMessage(server, event.data));
+    server.addEventListener("close", () => this.onConnectionClose(server));
+  }
+
+  private routeConnectionMessage(server: WebSocket, data: unknown): void {
+    const connection = this.connections.get(server);
+    if (!connection) return;
+    if (connection.mode === "lobby") {
+      this.onLobbyMessage(server, connection, data);
+      return;
+    }
+    if (connection.mode === "spectator") {
+      this.onSpectatorMessage(server, connection, data);
+      return;
+    }
+    this.onMessage(connection.playerId, data);
+  }
+
+  private onConnectionClose(server: WebSocket): void {
+    const connection = this.connections.get(server);
+    if (!connection) return;
+    this.connections.delete(server);
+    if (connection.mode === "lobby") {
+      if (this.lobbySockets.get(connection.slotId) === server) {
+        this.lobbySockets.delete(connection.slotId);
+      }
+      // Closing the lobby tab is leaving the lobby, so the host badge moves.
+      this.leaveLobbyPlayer(connection.slotId);
+      return;
+    }
+    if (connection.mode === "spectator") {
+      this.spectators.delete(connection.accountId);
+      this.dropPendingForAccount(connection.accountId);
+      return;
+    }
+    this.dropSocket(connection.playerId, server);
+  }
+
+  /** A normal-room game connection is ready; hide any lobby or waiting screen. */
+  private onGameConnected(server: WebSocket, accountId: string): void {
+    this.send(server, { t: "gameStarted" });
+    if (this.lobby?.startedAtMs && this.gameHostId === accountId) {
+      for (const request of this.pendingTakeovers) {
+        this.sendTakeoverPrompt(server, request);
+      }
+    }
+  }
+
+  private persistLobby(): void {
+    if (!this.storage) return;
+    if (this.lobby) void this.storage.put("lobby", this.lobby);
+    else void this.storage.delete("lobby");
+  }
+
+  private reportDirectory(status: "lobby" | "playing" | "closed", players = 0): void {
+    const namespace = this.env.LOBBY_DIRECTORY;
+    const code = this.lobby?.code;
+    if (!namespace || !code) return;
+    try {
+      const stub = namespace.get(namespace.idFromName("lobby-directory"));
+      void stub.fetch(new Request("https://directory.internal/status", {
+        method: "POST",
+        body: JSON.stringify({ code, status, players }),
+      })).catch(() => {
+        // The directory is a convenience; a missed update expires on its own.
+      });
+    } catch {
+      // A missing directory binding must not stop the game.
+    }
+  }
+
+  private scheduleLobbyDiscard(): void {
+    if (!this.lobby || this.lobby.startedAtMs !== null) return;
+    this.emptySinceMs = Date.now();
+    if (!this.storage) return;
+    void this.storage.put("lobbyEmptySince", this.emptySinceMs);
+    const minutes = settings.lobby.emptyDiscardMinutes;
+    void this.storage.setAlarm?.(Date.now() + minutes * 60_000);
+  }
+
+  /** The Durable Object alarm discards a lobby that stayed empty. */
+  async alarm(): Promise<void> {
+    const lobby = this.lobby;
+    if (!lobby || lobby.startedAtMs !== null || this.lobbySockets.size > 0) return;
+    const code = lobby.code;
+    this.lobby = null;
+    this.emptySinceMs = null;
+    if (this.storage) {
+      await this.storage.delete("lobby");
+      await this.storage.delete("lobbyEmptySince");
+    }
+    const namespace = this.env.LOBBY_DIRECTORY;
+    if (namespace && code) {
+      try {
+        const stub = namespace.get(namespace.idFromName("lobby-directory"));
+        await stub.fetch(new Request("https://directory.internal/status", {
+          method: "POST",
+          body: JSON.stringify({ code, status: "closed" }),
+        }));
+      } catch {
+        // The code expires from the directory on its own.
+      }
+    }
+  }
+
+  private sendLobby(socket: WebSocket, viewerSlotId: string, text?: string): void {
+    if (!this.lobby) return;
+    this.send(socket, {
+      t: "lobby",
+      lobby: lobbySnapshot(this.lobby, viewerSlotId),
+      text: text ?? undefined,
+    });
+  }
+
+  private broadcastLobby(): void {
+    if (!this.lobby) return;
+    for (const [slotId, socket] of this.lobbySockets) {
+      this.sendLobby(socket, slotId);
+    }
+  }
+
+  /** A verified account opens the joining screen of this room's lobby. */
+  private enterLobby(server: WebSocket, account: { userId: string; displayName: string }): void {
+    const lobby = this.lobby;
+    if (!lobby) return;
+    let player = lobbyPlayerForAccount(lobby, account.userId);
+    if (!player) {
+      const result = addLobbyPlayer(lobby, {
+        id: randomSlotId(),
+        accountId: account.userId,
+        name: account.displayName,
+      });
+      if (!result.ok) {
+        this.send(server, { t: "lobbyError", text: result.error });
+        try {
+          server.close(LOBBY_CLOSED_CLOSE_CODE, result.error);
+        } catch {
+          // The socket may already be closing.
+        }
+        return;
+      }
+      player = lobbyPlayerForAccount(lobby, account.userId);
+    }
+    if (!player) return;
+    const previous = this.lobbySockets.get(player.id);
+    this.lobbySockets.set(player.id, server);
+    if (previous && previous !== server) {
+      try {
+        previous.close(TAKEN_OVER_CLOSE_CODE, "another tab");
+      } catch {
+        // The old socket may already be closing.
+      }
+    }
+    this.bindConnection(server, {
+      accountId: account.userId,
+      name: account.displayName,
+      mode: "lobby",
+      playerId: "",
+      slotId: player.id,
+    });
+    this.emptySinceMs = null;
+    void this.storage?.delete("lobbyEmptySince");
+    this.persistLobby();
+    this.reportDirectory("lobby", lobby.players.length);
+    this.sendLobby(server, player.id);
+    this.broadcastLobby();
+  }
+
+  private finishLobbyAction(
+    socket: WebSocket,
+    connection: RoomConnection,
+    id: string | null,
+    result: LobbyResult,
+  ): boolean {
+    if (!result.ok) {
+      if (id) this.send(socket, { t: "ack", id, ok: false, text: result.error });
+      this.sendLobby(socket, connection.slotId, result.error);
+      return false;
+    }
+    if (id) this.send(socket, { t: "ack", id, ok: true });
+    this.persistLobby();
+    this.broadcastLobby();
+    return true;
+  }
+
+  private onLobbyMessage(server: WebSocket, connection: RoomConnection, data: unknown): void {
+    if (typeof data !== "string" || data.length > 2_000) return;
+    let order: Record<string, unknown>;
+    try {
+      order = JSON.parse(data) as Record<string, unknown>;
+    } catch {
+      return;
+    }
+    if (!order || typeof order !== "object") return;
+    const id = typeof order.id === "string" && order.id.length <= 80 ? order.id : null;
+    const lobby = this.lobby;
+    if (!lobby) {
+      this.send(server, { t: "lobbyError", text: "This lobby has closed." });
+      return;
+    }
+    const player = findLobbyPlayer(lobby, connection.slotId);
+    if (!player) {
+      this.send(server, { t: "lobbyError", text: "You are not in this lobby." });
+      return;
+    }
+
+    if (order.t === "lobbyNavy") {
+      this.finishLobbyAction(server, connection, id,
+        setLobbyNavy(lobby, connection.slotId, typeof order.navy === "string" ? order.navy : ""));
+      return;
+    }
+    if (order.t === "lobbyFlagship") {
+      this.finishLobbyAction(server, connection, id,
+        setLobbyFlagshipName(lobby, connection.slotId, typeof order.name === "string" ? order.name : ""));
+      return;
+    }
+    if (order.t === "lobbyReady") {
+      this.finishLobbyAction(server, connection, id,
+        setLobbyReady(lobby, connection.slotId, order.ready !== false));
+      return;
+    }
+    if (order.t === "lobbyLeave") {
+      this.lobbySockets.delete(connection.slotId);
+      this.leaveLobbyPlayer(connection.slotId);
+      this.send(server, { t: "lobbyLeft" });
+      if (id) this.send(server, { t: "ack", id, ok: true });
+      return;
+    }
+    if (order.t === "lobbyKick") {
+      if (!isLobbyHost(lobby, connection.slotId)) {
+        this.finishLobbyAction(server, connection, id, {
+          ok: false, error: "Only the host can remove players.",
+        });
+        return;
+      }
+      const target = typeof order.player === "string" ? order.player : "";
+      if (!target || target === connection.slotId) {
+        this.finishLobbyAction(server, connection, id, {
+          ok: false, error: "The host cannot remove themselves. Use Leave.",
+        });
+        return;
+      }
+      const kicked = this.lobbySockets.get(target);
+      this.lobbySockets.delete(target);
+      if (!removeLobbyPlayer(lobby, target)) {
+        this.finishLobbyAction(server, connection, id, {
+          ok: false, error: "That player is not in the lobby.",
+        });
+        return;
+      }
+      if (kicked) {
+        this.send(kicked, { t: "lobbyKicked", text: "The host removed you from the lobby." });
+        try {
+          kicked.close(LOBBY_CLOSED_CLOSE_CODE, "Removed by the host");
+        } catch {
+          // The socket may already be closing.
+        }
+      }
+      this.finishLobbyAction(server, connection, id, { ok: true });
+      this.reportDirectory("lobby", lobby.players.length);
+      return;
+    }
+    if (order.t === "lobbySettings") {
+      const which = order.setting === "items" ? "Items arrive later" : order.setting === "ai"
+        ? "Arrives with AI opponents" : "That setting does not exist.";
+      this.finishLobbyAction(server, connection, id, { ok: false, error: which });
+      return;
+    }
+    if (order.t === "lobbyStart") {
+      if (!isLobbyHost(lobby, connection.slotId)) {
+        this.finishLobbyAction(server, connection, id, {
+          ok: false, error: "Only the host can start the game.",
+        });
+        return;
+      }
+      const reason = lobbyStartReason(lobby);
+      if (reason || !canStartLobby(lobby)) {
+        this.finishLobbyAction(server, connection, id, {
+          ok: false, error: reason || "The game cannot start yet.",
+        });
+        return;
+      }
+      const started = this.startLobbyNow();
+      this.finishLobbyAction(server, connection, id,
+        started.ok ? { ok: true } : { ok: false, error: started.error ?? "The game cannot start yet." });
+      return;
+    }
+  }
+
+  /** Leave a lobby, moving the host badge to the next player. */
+  private leaveLobbyPlayer(slotId: string): void {
+    const lobby = this.lobby;
+    if (!lobby || lobby.startedAtMs !== null) return;
+    if (!removeLobbyPlayer(lobby, slotId)) return;
+    this.persistLobby();
+    if (lobby.players.length === 0) {
+      this.scheduleLobbyDiscard();
+    } else {
+      this.reportDirectory("lobby", lobby.players.length);
+      this.broadcastLobby();
+    }
+  }
+
+  /** Turn the lobby into a real world with the normal normal-room setup. */
+  private startLobbyNow(): { ok: boolean; error?: string } {
+    const lobby = this.lobby;
+    if (!lobby) return { ok: false, error: "This lobby has closed." };
+    const players = lobbyStartPlayers(lobby);
+    if (!players) {
+      return { ok: false, error: lobbyStartReason(lobby) || "The game cannot start yet." };
+    }
+    this.world = startLobbyGame(lobby.code, players, { npcs: true });
+    this.ghosts.clear();
+    lobby.startedAtMs = Date.now();
+    this.persistLobby();
+    this.gameHostId = lobby.players.find((player) => player.id === lobby.hostId)?.accountId ?? null;
+    this.slotAccounts.clear();
+    for (const player of lobby.players) {
+      this.slotAccounts.set(player.accountId, player.accountId);
+    }
+    for (const [slotId, socket] of [...this.lobbySockets]) {
+      const player = findLobbyPlayer(lobby, slotId);
+      if (!player) continue;
+      const connection = this.connections.get(socket);
+      if (connection) {
+        connection.mode = "game";
+        connection.playerId = player.accountId;
+        connection.accountId = player.accountId;
+        connection.name = player.name;
+      }
+      this.sockets.add(player.accountId, socket);
+      this.streams.delete(player.accountId);
+      this.send(socket, { t: "gameStarted" });
+    }
+    this.lobbySockets.clear();
+    this.metrics.reset(Date.now());
+    this.loop.start();
+    for (const player of lobby.players) {
+      // Start each chart with the useful coast around the berth, exactly as a
+      // normal-room join does. Without this the first map would stay pale.
+      requestChartResume(this.world, player.accountId);
+      const socket = this.sockets.get(player.accountId);
+      if (socket) this.sendState(player.accountId, socket, true);
+    }
+    this.reportDirectory("playing", lobby.players.length);
+    return { ok: true };
+  }
+
+  /** Restore the started world after a Durable Object restart. */
+  private ensureStartedWorld(): void {
+    const lobby = this.lobby;
+    if (!lobby || lobby.startedAtMs === null) return;
+    if (this.world.roomCode === lobby.code && this.world.playerRecords.size > 0) return;
+    const players = lobby.players
+      .filter((player) => player.navy && player.flagshipName)
+      .map((player) => ({
+        id: player.accountId,
+        name: player.name,
+        navy: player.navy!,
+        flagshipName: player.flagshipName,
+      }));
+    if (players.length === 0) return;
+    this.world = startLobbyGame(lobby.code, players, { npcs: true });
+    this.gameHostId = lobby.players.find((player) => player.id === lobby.hostId)?.accountId ?? null;
+    this.slotAccounts.clear();
+    for (const player of lobby.players) {
+      this.slotAccounts.set(player.accountId, player.accountId);
+    }
+  }
+
+  private slotForAccount(accountId: string): string | null {
+    for (const [slotId, account] of this.slotAccounts) {
+      if (account === accountId) return slotId;
+    }
+    // After a takeover the old account's slot is mapped to someone else, so
+    // the fallback must only apply to a slot that has no owner mapping at all.
+    if (!this.slotAccounts.has(accountId) && this.world.playerRecords.has(accountId)) {
+      return accountId;
+    }
+    return null;
+  }
+
+  private freeTakeoverSlot(): string | null {
+    if (!this.lobby?.startedAtMs) return null;
+    const reserved = new Set(this.pendingTakeovers.map((request) => request.targetSlot));
+    for (const record of this.world.playerRecords.values()) {
+      if (record.eliminated) continue;
+      if (this.sockets.get(record.id)) continue;
+      if (reserved.has(record.id)) continue;
+      return record.id;
+    }
+    return null;
+  }
+
+  private enterSpectator(server: WebSocket, account: { userId: string; displayName: string }): void {
+    this.spectators.set(account.userId, { socket: server, name: account.displayName });
+    this.bindConnection(server, {
+      accountId: account.userId,
+      name: account.displayName,
+      mode: "spectator",
+      playerId: "",
+      slotId: "",
+    });
+    const free = this.freeTakeoverSlot();
+    this.send(server, {
+      t: "gameInProgress",
+      code: this.lobby?.code ?? "",
+      freeSlots: free ? 1 : 0,
+      reason: free ? "" : "No free slot",
+    });
+    if (this.pendingTakeovers.some((request) => request.accountId === account.userId)) {
+      this.send(server, { t: "takeoverStatus", ok: true, text: "Waiting for the host." });
+    }
+  }
+
+  private onSpectatorMessage(server: WebSocket, connection: RoomConnection, data: unknown): void {
+    if (typeof data !== "string" || data.length > 2_000) return;
+    let order: Record<string, unknown>;
+    try {
+      order = JSON.parse(data) as Record<string, unknown>;
+    } catch {
+      return;
+    }
+    if (!order || typeof order !== "object") return;
+    if (order.t === "takeoverRequest") {
+      this.requestTakeover(server, connection);
+    }
+  }
+
+  private requestTakeover(server: WebSocket, connection: RoomConnection): void {
+    if (!this.lobby?.startedAtMs) {
+      this.send(server, { t: "takeoverStatus", ok: false, text: "There is no game in progress." });
+      return;
+    }
+    if (this.slotForAccount(connection.accountId)) {
+      this.send(server, { t: "takeoverStatus", ok: false, text: "You are already in this game." });
+      return;
+    }
+    const waiting = this.pendingTakeovers.find((request) => request.accountId === connection.accountId);
+    if (waiting) {
+      this.send(server, { t: "takeoverStatus", ok: true, text: "Waiting for the host." });
+      return;
+    }
+    const targetSlot = this.freeTakeoverSlot();
+    if (!targetSlot) {
+      this.send(server, { t: "takeoverStatus", ok: false, text: "No free slot" });
+      return;
+    }
+    const request: TakeoverRequest = {
+      id: randomSlotId(),
+      accountId: connection.accountId,
+      name: connection.name,
+      targetSlot,
+      atMs: Date.now(),
+    };
+    this.pendingTakeovers.push(request);
+    const host = this.gameHostId ? this.sockets.get(this.gameHostId) : undefined;
+    if (host) {
+      this.sendTakeoverPrompt(host, request);
+      this.send(server, { t: "takeoverStatus", ok: true, text: "Waiting for the host." });
+    } else {
+      this.send(server, {
+        t: "takeoverStatus",
+        ok: true,
+        text: "The host is offline. Your request will wait.",
+      });
+    }
+    this.broadcastSpectatorSlots();
+  }
+
+  private sendTakeoverPrompt(socket: WebSocket, request: TakeoverRequest): void {
+    const record = this.world.playerRecords.get(request.targetSlot);
+    this.send(socket, {
+      t: "takeoverRequest",
+      request: {
+        id: request.id,
+        name: request.name,
+        targetName: record?.name ?? "",
+        navy: record?.navy ?? "",
+        flagshipName: record?.flagshipName ?? "",
+      },
+    });
+  }
+
+  private answerTakeover(server: WebSocket, connection: RoomConnection, id: string, accept: boolean): void {
+    if (!this.gameHostId || connection.accountId !== this.gameHostId) {
+      this.send(server, { t: "takeoverStatus", ok: false, text: "Only the host can answer." });
+      return;
+    }
+    const at = this.pendingTakeovers.findIndex((request) => request.id === id);
+    if (at < 0) {
+      this.send(server, { t: "takeoverStatus", ok: false, text: "That request is no longer waiting." });
+      return;
+    }
+    const request = this.pendingTakeovers[at]!;
+    this.pendingTakeovers.splice(at, 1);
+    const watcher = this.spectators.get(request.accountId);
+    if (!accept) {
+      if (watcher) {
+        this.send(watcher.socket, {
+          t: "takeoverStatus",
+          ok: false,
+          text: "The host declined your request.",
+        });
+      }
+      this.broadcastSpectatorSlots();
+      return;
+    }
+    if (this.sockets.get(request.targetSlot)) {
+      if (watcher) {
+        this.send(watcher.socket, {
+          t: "takeoverStatus",
+          ok: false,
+          text: "That player is back online.",
+        });
+      }
+      this.broadcastSpectatorSlots();
+      return;
+    }
+    if (!watcher) {
+      this.broadcastSpectatorSlots();
+      return;
+    }
+    this.spectators.delete(request.accountId);
+    this.slotAccounts.set(request.targetSlot, request.accountId);
+    const watcherConnection = this.connections.get(watcher.socket);
+    if (watcherConnection) {
+      watcherConnection.mode = "game";
+      watcherConnection.playerId = request.targetSlot;
+      watcherConnection.accountId = request.accountId;
+    }
+    this.sockets.add(request.targetSlot, watcher.socket);
+    this.streams.delete(request.targetSlot);
+    const record = this.world.playerRecords.get(request.targetSlot);
+    for (const playerId of this.world.playerRecords.keys()) {
+      const notices = this.world.notices.get(playerId) ?? [];
+      notices.push(`${request.name} took over ${record?.name ?? "a"} slot.`);
+      this.world.notices.set(playerId, notices);
+    }
+    this.send(watcher.socket, { t: "gameStarted", text: "You have taken over the slot." });
+    this.sendState(request.targetSlot, watcher.socket, true);
+    this.broadcastSpectatorSlots();
+  }
+
+  private dropPendingForAccount(accountId: string): void {
+    for (let index = this.pendingTakeovers.length - 1; index >= 0; index -= 1) {
+      if (this.pendingTakeovers[index]!.accountId === accountId) {
+        this.pendingTakeovers.splice(index, 1);
+      }
+    }
+    this.broadcastSpectatorSlots();
+  }
+
+  private broadcastSpectatorSlots(): void {
+    const free = this.freeTakeoverSlot();
+    for (const watcher of this.spectators.values()) {
+      this.send(watcher.socket, {
+        t: "gameInProgress",
+        code: this.lobby?.code ?? "",
+        freeSlots: free ? 1 : 0,
+        reason: free ? "" : "No free slot",
+      });
+    }
   }
 
   /** One 10 Hz world update. The RoomLoop only calls this while occupied. */
@@ -603,7 +1354,8 @@ export class GameRoom {
 
   /** Stop the world timer as soon as the room has no players. */
   private stopWhenEmpty(): void {
-    if (this.sockets.size === 0) this.loop.stop();
+    // A watcher waiting for a slot is still someone online.
+    if (this.sockets.size === 0 && this.spectators.size === 0) this.loop.stop();
   }
 
   private bufferedBytes(socket: WebSocket): number {
@@ -919,6 +1671,8 @@ export class GameRoom {
       where?: unknown;
       rating?: unknown;
       note?: unknown;
+      request?: unknown;
+      accept?: unknown;
     };
 
     if (order.t === "networkMode") {
@@ -954,6 +1708,18 @@ export class GameRoom {
 
     const testOnly = this.world.kind !== "normal";
     const socket = this.sockets.get(playerId);
+    if (order.t === "takeoverAnswer") {
+      const connection = socket ? this.connections.get(socket) : undefined;
+      if (socket && connection) {
+        this.answerTakeover(
+          socket,
+          connection,
+          typeof order.request === "string" ? order.request : "",
+          order.accept === true,
+        );
+      }
+      return;
+    }
     const ack = (ok: boolean, text?: string): void => {
       if (typeof order.id === "string" && order.id.length <= 80) {
         socket?.send(JSON.stringify({ t: "ack", id: order.id, ok, text }));

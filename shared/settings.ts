@@ -1180,6 +1180,28 @@ export const settings = {
   },
 
   /** Draft: test-room helpers. The whole panel is removed before release. */
+  /** Online lobbies, join codes and the lobby screen. Draft values. */
+  lobby: {
+    /** A join code is this many characters. */
+    codeLength: 5,
+    /** At most this many players may share one navy and be teammates. */
+    maxPlayersPerNavy: 2,
+    /** A lobby holds at most this many captains. */
+    maxPlayers: 8,
+    /** A navy must have a player before the host may start. Set to 1 for
+     *  solo testing; the design value is 2. */
+    minNavies: 2,
+    /** Flagship names stay inside these lengths until the game starts. */
+    flagshipNameMin: 2,
+    flagshipNameMax: 24,
+    /** An empty lobby is discarded after this many real minutes. */
+    emptyDiscardMinutes: 30,
+    /** A join code is not reused for this many real hours. */
+    codeActiveHours: 24,
+    /** A directory reservation retries this many codes before giving up. */
+    codeAttempts: 100,
+  },
+
   /** Username/password accounts. Supabase Auth receives a made-up email. */
   accounts: {
     usernameMin: 3,

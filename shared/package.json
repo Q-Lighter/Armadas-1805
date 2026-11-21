@@ -18,6 +18,10 @@
       "types": "./dist/accounts.d.ts",
       "default": "./dist/accounts.js"
     },
+    "./lobby": {
+      "types": "./dist/lobby.d.ts",
+      "default": "./dist/lobby.js"
+    },
     "./map": {
       "types": "./dist/map.d.ts",
       "default": "./dist/map.js"

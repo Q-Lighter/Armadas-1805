@@ -5044,3 +5044,210 @@ body {
 /* 3L-e port income summary in the Trade routes tab. */
 .log-route-income { display: grid; gap: 4px; padding: 7px 8px; border: 1px solid rgba(92, 57, 33, 0.35); background: rgba(255, 251, 236, 0.46); font-size: 0.76rem; }
 .log-route-income ul { margin: 0; padding-left: 18px; display: grid; gap: 2px; }
+
+/* 4B: the way in, the lobby and the game-in-progress card. All of these pages
+   use the one paper style, scroll on short screens and keep 44 px targets. */
+.online-screen {
+  position: fixed;
+  inset: 0;
+  z-index: 55;
+  display: flex;
+  flex-direction: column;
+  gap: calc(0.7rem * var(--ui-scale));
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: calc(0.9rem * var(--ui-scale));
+  background-color: var(--paper);
+  background-image: var(--paper-texture);
+}
+
+.online-screen[hidden] { display: none; }
+.online-screen .panel-head { align-items: flex-start; }
+.online-screen h2 { margin: 0; }
+.online-screen h3 {
+  margin: 0 0 0.35rem;
+  font-size: calc(0.95rem * var(--ui-scale));
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+.online-screen label {
+  display: grid;
+  gap: 0.25rem;
+  font-weight: 600;
+}
+.online-screen input:not([type="checkbox"]) {
+  width: 100%;
+  min-height: var(--tap);
+  padding: 0.45rem 0.6rem;
+  border: 1.5px solid var(--ink);
+  border-radius: 2px;
+  background: rgba(255, 251, 236, 0.65);
+  color: var(--ink);
+  font: inherit;
+}
+.online-screen input:disabled { opacity: 0.55; }
+
+.online-lead {
+  max-width: 46rem;
+  margin: 0;
+  color: var(--ink-faded);
+}
+.online-reason {
+  min-height: 1.1rem;
+  margin: 0;
+  color: var(--seal);
+  font-size: calc(0.78rem * var(--ui-scale));
+}
+.online-reason:empty { display: none; }
+.online-message {
+  min-height: 1.3rem;
+  margin: 0;
+  font-weight: 700;
+  color: var(--ink);
+}
+.online-message[data-state="error"] { color: var(--seal); }
+
+.home-actions {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.3fr);
+  gap: calc(0.8rem * var(--ui-scale));
+  align-items: start;
+}
+.home-action {
+  display: grid;
+  gap: 0.45rem;
+  min-width: 0;
+  padding: calc(0.7rem * var(--ui-scale));
+  border: 1px solid var(--rule);
+  background: rgba(255, 251, 236, 0.45);
+}
+
+.lobby-code-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.6rem;
+  padding: calc(0.5rem * var(--ui-scale)) 0;
+  border-top: 1px solid var(--rule);
+  border-bottom: 1px solid var(--rule);
+}
+.lobby-code-label {
+  font-size: calc(0.78rem * var(--ui-scale));
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+.lobby-code {
+  flex: 1 1 auto;
+  font-size: calc(2.4rem * var(--ui-scale));
+  letter-spacing: 0.28em;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+}
+
+.lobby-columns {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.35fr);
+  gap: calc(0.8rem * var(--ui-scale));
+  align-items: start;
+}
+.lobby-panel {
+  min-width: 0;
+  padding: calc(0.65rem * var(--ui-scale));
+  border: 1px solid var(--rule);
+  background: rgba(255, 251, 236, 0.42);
+}
+.lobby-players {
+  display: grid;
+  gap: 0.4rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.lobby-player {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.4rem 0.55rem;
+  padding: 0.35rem 0.4rem;
+  border-bottom: 1px dashed rgba(42, 28, 16, 0.25);
+}
+.lobby-player-name { font-weight: 700; }
+.lobby-host-badge {
+  padding: 0.05rem 0.35rem;
+  border: 1px solid var(--ink);
+  font-size: calc(0.66rem * var(--ui-scale));
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+.lobby-player-detail { color: var(--ink-faded); font-size: calc(0.78rem * var(--ui-scale)); }
+.lobby-ready-flag { font-weight: 700; }
+.lobby-inline-reason { color: var(--seal); font-size: calc(0.7rem * var(--ui-scale)); }
+.lobby-remove { min-height: var(--tap); padding: 0.3rem 0.7rem; }
+
+.lobby-navy-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(9.5rem, 1fr));
+  gap: 0.55rem;
+}
+.lobby-navy-card {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  min-width: 0;
+  padding: 0.55rem;
+  border: 1.5px solid var(--ink);
+  background: #1f3357;
+  color: #f4ead2;
+}
+.lobby-navy-card h3 { margin: 0; }
+.lobby-navy-players {
+  flex: 1 1 auto;
+  min-height: 2.1rem;
+  margin: 0;
+  padding-left: 1.1rem;
+  font-size: calc(0.8rem * var(--ui-scale));
+}
+.lobby-navy-empty { list-style: none; margin-left: -1.1rem; opacity: 0.8; }
+.lobby-navy-reason {
+  color: #ffe1a6;
+  font-size: calc(0.7rem * var(--ui-scale));
+  font-weight: 700;
+}
+.lobby-navy-card .btn {
+  border-color: #f4ead2;
+  box-shadow: inset 0 0 0 2px #1f3357, 0 0 0 1px #f4ead2;
+  color: #f4ead2;
+}
+.lobby-navy-card .btn[aria-pressed="true"] { background: #f4ead2; color: #1f3357; }
+
+.lobby-ship { display: grid; gap: 0.4rem; }
+.lobby-ready-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+}
+.lobby-ready-row .online-reason { flex: 1 1 12rem; }
+
+.lobby-host { display: grid; gap: 0.3rem; }
+.lobby-toggle {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  min-height: var(--tap);
+  font-weight: 600;
+}
+.lobby-toggle input { width: 1.4rem; height: 1.4rem; }
+.lobby-host .btn { justify-self: start; }
+
+.takeover-prompt { z-index: 58; justify-content: center; }
+.takeover-actions { display: flex; flex-wrap: wrap; gap: 0.6rem; }
+
+.progress-screen { justify-content: flex-start; }
+
+@media (max-width: 760px) {
+  .home-actions,
+  .lobby-columns { grid-template-columns: minmax(0, 1fr); }
+  .lobby-code { font-size: calc(1.9rem * var(--ui-scale)); }
+}

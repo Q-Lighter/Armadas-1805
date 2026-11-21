@@ -15,13 +15,20 @@
     "run_worker_first": true
   },
 
-  // One Durable Object per room code, holding that room's world.
+  // One Durable Object per room code, holding that room's world, plus one
+  // directory that keeps join codes unique among active games.
   "durable_objects": {
-    "bindings": [{ "name": "GAME_ROOM", "class_name": "GameRoom" }]
+    "bindings": [
+      { "name": "GAME_ROOM", "class_name": "GameRoom" },
+      { "name": "LOBBY_DIRECTORY", "class_name": "LobbyDirectory" }
+    ]
   },
 
   // Free plans require SQLite-backed Durable Object classes.
-  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["GameRoom"] }],
+  "migrations": [
+    { "tag": "v1", "new_sqlite_classes": ["GameRoom"] },
+    { "tag": "v2", "new_sqlite_classes": ["LobbyDirectory"] }
+  ],
 
   // Once a day, read one keepalive row so a free Supabase project is not paused.
   "triggers": {

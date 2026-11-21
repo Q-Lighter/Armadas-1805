@@ -373,6 +373,119 @@
       <button class="btn panel-close battle-log-close" id="battle-log-close" type="button">Close</button>
     </section>
 
+    <!-- 4B: the way in. Online games need an account. -->
+    <section class="online-screen home-screen paper" id="home-screen" role="dialog"
+      aria-labelledby="home-title" hidden>
+      <div class="panel-head">
+        <div>
+          <p class="kicker">Armada's 1805</p>
+          <h2 id="home-title">Captain's orders</h2>
+        </div>
+        <button class="btn" id="home-account" type="button">Log in or sign up</button>
+      </div>
+      <p class="online-reason" id="home-account-reason">An account is needed for online games.</p>
+      <p class="online-lead">Create a game and share its five-letter code, or join a captain's game with their code.</p>
+      <div class="home-actions">
+        <div class="home-action">
+          <button class="btn btn-seal" id="home-create" type="button">Create game</button>
+          <p class="online-reason" id="home-create-reason">Log in to create a game.</p>
+        </div>
+        <div class="home-action">
+          <label for="home-code">Join code</label>
+          <input id="home-code" maxlength="5" autocomplete="off" spellcheck="false"
+            autocapitalize="characters" placeholder="ABCDE">
+          <button class="btn" id="home-join" type="button">Join with code</button>
+          <p class="online-reason" id="home-join-reason">Log in to join with code.</p>
+        </div>
+      </div>
+      <p class="online-message" id="home-message" role="status"></p>
+    </section>
+
+    <!-- 4B: the lobby. Only display names, navies, flagship names and ready
+         flags are shown; account details never reach this page. -->
+    <section class="online-screen lobby-screen paper" id="lobby-screen" role="dialog"
+      aria-labelledby="lobby-title" hidden>
+      <div class="panel-head">
+        <div>
+          <p class="kicker">Armada's 1805</p>
+          <h2 id="lobby-title">Waiting to sail</h2>
+        </div>
+        <button class="btn" id="lobby-leave" type="button">Leave</button>
+      </div>
+      <div class="lobby-code-row">
+        <span class="lobby-code-label">Join code</span>
+        <strong class="lobby-code" id="lobby-code">-----</strong>
+        <button class="btn" id="lobby-copy" type="button">Copy</button>
+      </div>
+      <p class="online-message" id="lobby-message" role="status"></p>
+
+      <div class="lobby-columns">
+        <section class="lobby-panel">
+          <h3>Captains</h3>
+          <ul class="lobby-players" id="lobby-players"></ul>
+        </section>
+        <section class="lobby-panel">
+          <h3>Navies</h3>
+          <div class="lobby-navy-grid" id="lobby-navies"></div>
+        </section>
+      </div>
+
+      <section class="lobby-panel lobby-ship">
+        <label for="lobby-flagship">Flagship name</label>
+        <input id="lobby-flagship" maxlength="24" autocomplete="off"
+          placeholder="Name your flagship">
+        <p class="online-reason" id="lobby-flagship-reason">2 to 24 characters, unique in this game.</p>
+        <div class="lobby-ready-row">
+          <button class="btn btn-seal" id="lobby-ready" type="button">Ready</button>
+          <p class="online-reason" id="lobby-ready-reason">Choose a navy first.</p>
+        </div>
+      </section>
+
+      <section class="lobby-panel lobby-host">
+        <h3>Host settings</h3>
+        <label class="lobby-toggle">
+          <input id="lobby-items" type="checkbox" disabled>
+          <span>Items</span>
+        </label>
+        <p class="online-reason" id="lobby-items-reason">Items arrive later</p>
+        <label class="lobby-toggle">
+          <input id="lobby-ai" type="checkbox" disabled>
+          <span>AI opponents</span>
+        </label>
+        <p class="online-reason" id="lobby-ai-reason">Arrives with AI opponents</p>
+        <button class="btn btn-seal" id="lobby-start" type="button">Start game</button>
+        <p class="online-reason" id="lobby-start-reason">Every player must be ready.</p>
+      </section>
+    </section>
+
+    <!-- 4B: a card holder who is not an original player sees this instead. -->
+    <section class="online-screen progress-screen paper" id="progress-screen" role="dialog"
+      aria-labelledby="progress-title" hidden>
+      <div class="panel-head">
+        <div>
+          <p class="kicker">Armada's 1805</p>
+          <h2 id="progress-title">Game in progress</h2>
+        </div>
+        <button class="btn" id="progress-home" type="button">Back to menu</button>
+      </div>
+      <p class="online-lead">Game <strong id="progress-code"></strong> is already under way.</p>
+      <p class="online-message" id="progress-message">Game in progress</p>
+      <p class="online-reason" id="progress-status"></p>
+      <button class="btn btn-seal" id="progress-request" type="button">Request to take over</button>
+      <p class="online-reason" id="progress-request-reason">No free slot</p>
+    </section>
+
+    <!-- 4B: the host's urgent takeover question. -->
+    <section class="online-screen takeover-prompt paper" id="takeover-prompt"
+      role="alertdialog" aria-labelledby="takeover-title" hidden>
+      <h2 id="takeover-title">Takeover request</h2>
+      <p id="takeover-text"></p>
+      <div class="takeover-actions">
+        <button class="btn btn-seal" id="takeover-accept" type="button">Accept</button>
+        <button class="btn" id="takeover-decline" type="button">Decline</button>
+      </div>
+    </section>
+
     <!-- Username and password accounts. Usable on phone and Chromebook. -->
     <section class="account-screen paper" id="account-screen" role="dialog"
       aria-labelledby="account-title" hidden>

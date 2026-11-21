@@ -2222,10 +2222,16 @@ export function playerName(world: World, playerId: string): string {
 }
 
 /** Test/dev `&name=` display name. Empty names are ignored. */
-export function setPlayerName(world: World, playerId: string, rawName: unknown): boolean {
-  if (world.kind === "normal" || typeof rawName !== "string") return false;
-  const name = rawName.trim().slice(0, 20);
-  if (!/^[A-Za-z0-9 _-]{1,20}$/.test(name)) return false;
+export function setPlayerName(
+  world: World,
+  playerId: string,
+  rawName: unknown,
+  trusted = false,
+): boolean {
+  if ((world.kind === "normal" && !trusted) || typeof rawName !== "string") return false;
+  const name = rawName.trim().slice(0, 24);
+  if (!name || /[\u0000-\u001f\u007f<>]/.test(name)) return false;
+  if (!trusted && !/^[A-Za-z0-9 _-]{1,20}$/.test(name)) return false;
   const record = world.playerRecords.get(playerId);
   if (!record) return false;
   record.name = name;

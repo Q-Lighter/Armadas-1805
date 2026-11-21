@@ -171,6 +171,12 @@ async function bootClient(query, width = 1280, height = 800) {
   window.matchMedia = () => ({ matches: width <= 640, addEventListener() {}, removeEventListener() {} });
   window.confirm = () => true;
   window.WebSocket = InMemoryWebSocket;
+  // supabase-js reads fetch when its module is evaluated, even though test
+  // rooms never create a client.
+  window.fetch = globalThis.fetch;
+  window.Headers = Headers;
+  window.Request = Request;
+  window.Response = Response;
   window.TextEncoder = TextEncoder;
   window.TextDecoder = TextDecoder;
   window.ArrayBuffer = ArrayBuffer;

@@ -42,6 +42,8 @@ import {
   type StorageLike,
 } from "@naval/shared/player-identity";
 import { TAKEN_OVER_CLOSE_CODE } from "@naval/shared/player-sessions";
+import { createAccountUi, type AccountApi, type AccountSession } from "./account.js";
+import { createSupabaseAccountApi, loadAccountConfig } from "./supabaseAccount.js";
 import type {
   EscortSnapshot,
   FleetMemberSnapshot,
@@ -1072,6 +1074,9 @@ async function start(): Promise<void> {
   const menuButton = element<HTMLButtonElement>("menu-btn");
   const menuPanel = element<HTMLElement>("menu-panel");
   const menuClose = element<HTMLButtonElement>("menu-close");
+  const accountMenuButton = element<HTMLButtonElement>("account-menu-btn");
+  const accountScreen = element<HTMLElement>("account-screen");
+  const accountClose = element<HTMLButtonElement>("account-close");
   const resignButton = element<HTMLButtonElement>("resign-btn");
   const resignSheet = element<HTMLElement>("resign-sheet");
   const resignRecipientsOut = element<HTMLElement>("resign-recipients");
@@ -1220,6 +1225,8 @@ async function start(): Promise<void> {
   const routePickB = element<HTMLButtonElement>("route-pick-b");
   const testRouteFast = element<HTMLButtonElement>("test-route-fast");
   const testPortIncome = element<HTMLButtonElement>("test-port-income");
+  const testKeepalive = element<HTMLButtonElement>("test-keepalive");
+  const testKeepaliveResult = element<HTMLElement>("test-keepalive-result");
   const logGrid = element<HTMLElement>("log-grid");
   const logPickHint = element<HTMLElement>("log-pick-hint");
   const logRuler = element<HTMLElement>("log-ruler");
@@ -1382,13 +1389,54 @@ async function start(): Promise<void> {
   const requestedShip = query.get("ship");
   const requestedCash = query.get("cash");
   let startPortName = requestedStart ?? "";
+  const initialRoomKind = roomKindForCode(room);
   const identity: PlayerIdentity = resolvePlayerIdentity(
     browserStorage("localStorage"),
     browserStorage("sessionStorage"),
-    roomKindForCode(room),
+    initialRoomKind,
     query.get("as"),
     makePlayerId,
   );
+  const accountConfig = await loadAccountConfig();
+  const accountApi: AccountApi | null = accountConfig
+    ? createSupabaseAccountApi(accountConfig)
+    : null;
+  let accountSession: AccountSession | null = null;
+  let connectedAccountId: string | null = null;
+  let connectionAttempt = false;
+  const accountUi = accountApi
+    ? createAccountUi(document, accountApi, {
+        room,
+        onSession: (next) => {
+          accountSession = next;
+          refreshKeepaliveButton();
+          if (initialRoomKind !== "normal") return;
+          if (!next) {
+            connectedAccountId = null;
+            if (socket) {
+              socket.close(1000, "logged out");
+              socket = null;
+            }
+            setStatus("Log in to play online", true);
+            return;
+          }
+          if (socket && connectedAccountId !== next.user.id) {
+            socket.close(1000, "account changed");
+            socket = null;
+          }
+          if (!socket) void connect();
+        },
+      })
+    : null;
+  accountMenuButton.disabled = !accountUi;
+  accountMenuButton.title = accountUi ? "" : "Accounts are not configured.";
+  if (accountUi) void accountUi.refresh();
+  else {
+    element<HTMLElement>("account-menu-name").textContent = "Account (unavailable)";
+    testKeepalive.disabled = true;
+    testKeepalive.title = "Accounts are not configured.";
+    testKeepaliveResult.textContent = "Accounts are not configured.";
+  }
   const roomPattern = new RegExp(`^[A-Za-z0-9_-]{1,${settings.server.maxRoomCodeLength}}$`);
   if (!roomPattern.test(room)) {
     status.textContent = "Room code must be letters, numbers, dash or underscore.";
@@ -8206,10 +8254,34 @@ async function start(): Promise<void> {
     else updateOrderSendingStatus();
   }
 
-  function connect(): void {
+  function refreshKeepaliveButton(): void {
+    testKeepalive.disabled = !accountSession;
+    testKeepalive.title = !accountSession
+      ? "Log in to run keepalive."
+      : "";
+    if (!accountSession) testKeepaliveResult.textContent = "Log in to run keepalive.";
+  }
+
+  async function connect(): Promise<void> {
     if (!location.host) {
       setStatus("Open this page from the game server to sail.", true);
       return;
+    }
+    if (socket || connectionAttempt) return;
+    connectionAttempt = true;
+
+    let token: string | null = null;
+    if (initialRoomKind === "normal") {
+      const session = accountSession ?? await accountApi?.session().catch(() => null) ?? null;
+      accountSession = session;
+      if (!session) {
+        connectionAttempt = false;
+        connectedAccountId = null;
+        setStatus("Log in to play online", true);
+        return;
+      }
+      token = session.accessToken;
+      connectedAccountId = session.user.id;
     }
 
     setStatus("Connecting…");
@@ -8223,9 +8295,12 @@ async function start(): Promise<void> {
     const url = `${scheme}://${location.host}/ws?room=${encodeURIComponent(room)}&player=${encodeURIComponent(identity.id)}${botsQuery}${testQuery}`;
     const next = new WebSocket(url);
     socket = next;
+    connectionAttempt = false;
 
     next.addEventListener("open", () => {
       setStatus("Connected");
+      // Normal rooms get the token in the first message, never in the URL.
+      if (token) next.send(JSON.stringify({ t: "auth", token }));
       next.send(JSON.stringify({ t: "routeLine", enabled: showRouteLine }));
     });
     next.addEventListener("message", (event) => {
@@ -8251,12 +8326,22 @@ async function start(): Promise<void> {
         return;
       }
 
+      if (event.code === 4401 || event.code === 4403) {
+        if (retry !== null) {
+          window.clearTimeout(retry);
+          retry = null;
+        }
+        setStatus(event.reason || (event.code === 4403 ? "Account deleted" : "Log in to play online"), true);
+        showNotice(event.reason || (event.code === 4403 ? "Account deleted" : "Log in to play online"));
+        return;
+      }
+
       if (takenOver) return;
       setStatus("Connection lost. Retrying…", true);
       if (retry === null && !document.hidden) {
         retry = window.setTimeout(() => {
           retry = null;
-          connect();
+          void connect();
         }, 2000);
       }
     });
@@ -10272,6 +10357,23 @@ async function start(): Promise<void> {
   routePayNow.addEventListener("click", () => sendCommand({ t: "portIncomeNow" }));
   testRouteFast.addEventListener("click", () => sendCommand({ t: "routeFast" }));
   testPortIncome.addEventListener("click", () => sendCommand({ t: "portIncomeNow" }));
+  testKeepalive.addEventListener("click", () => {
+    if (!accountUi) {
+      testKeepaliveResult.textContent = "Accounts are not configured.";
+      return;
+    }
+    testKeepalive.disabled = true;
+    testKeepaliveResult.textContent = "Running keepalive…";
+    void accountUi.afterDeveloperKeepalive()
+      .then((result) => {
+        testKeepaliveResult.textContent = result.text;
+        testKeepalive.disabled = false;
+      })
+      .catch(() => {
+        testKeepaliveResult.textContent = "Keepalive could not run.";
+        testKeepalive.disabled = false;
+      });
+  });
   routePickA.addEventListener("click", () => {
     routePick = routePick === "a" ? null : "a";
     routePickA.setAttribute("aria-pressed", String(routePick === "a"));
@@ -10315,6 +10417,16 @@ async function start(): Promise<void> {
   menuClose.addEventListener("click", () => {
     menuPanel.hidden = true;
     menuButton.setAttribute("aria-expanded", "false");
+    scheduleScreenLayout();
+  });
+  accountMenuButton.addEventListener("click", () => {
+    menuPanel.hidden = true;
+    menuButton.setAttribute("aria-expanded", "false");
+    accountUi?.open();
+    scheduleScreenLayout();
+  });
+  accountClose.addEventListener("click", () => {
+    accountUi?.close();
     scheduleScreenLayout();
   });
   function showMenuPanel(): void {
@@ -11448,7 +11560,7 @@ async function start(): Promise<void> {
   window.addEventListener("unhandledrejection", (event) => {
     reportClientError(event.reason, "unhandled promise");
   });
-  connect();
+  void connect();
   void checkForNewVersion();
   window.setInterval(
     () => void checkForNewVersion(),

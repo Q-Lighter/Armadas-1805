@@ -8,6 +8,7 @@
   },
   "dependencies": {
     "@naval/shared": "*",
+    "@supabase/supabase-js": "2.58.0",
     "pixi.js": "^8.22.0"
   }
 }

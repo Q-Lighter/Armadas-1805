@@ -22,6 +22,7 @@ function run(command, args) {
 }
 
 run(tsc, ["-p", "shared/tsconfig.json"]);
+run(tsc, ["-p", "server/tsconfig.json"]);
 run(tsc, ["-p", "tests/tsconfig.json"]);
 
 const shardArg = process.argv.find((arg) => arg.startsWith("--shard="));

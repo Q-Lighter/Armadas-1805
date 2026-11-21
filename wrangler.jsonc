@@ -21,5 +21,10 @@
   },
 
   // Free plans require SQLite-backed Durable Object classes.
-  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["GameRoom"] }]
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["GameRoom"] }],
+
+  // Once a day, read one keepalive row so a free Supabase project is not paused.
+  "triggers": {
+    "crons": ["0 3 * * *"]
+  }
 }

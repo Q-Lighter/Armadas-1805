@@ -10,6 +10,18 @@ Read this file at the start of every prompt, then follow it for the whole sessio
 
 - The server runs the real game world. The client only displays it and sends orders. The client must never be trusted with hidden information.
 
+## Accounts
+
+- Accounts are username and password only. No email is sent. Usernames are 3–20 letters, digits or underscore, unique without regard to case. Passwords are at least 8 characters. Display names are 2–24 characters and default to the username.
+- Supabase Auth receives a made-up address `username@<accountEmailDomain>`; the default domain is `armadas-1805.carltonjamie714.workers.dev`. The mapping lives in `shared/accounts.ts` so real email can be added later.
+- Test and dev rooms accept guests and logged-in players; a guest may still use `&as=NAME` there. Normal rooms require a valid Supabase access token in the first WebSocket message. The token is verified against the project JWKS (signature, expiry and issuer). The game id is the Supabase user id and the display name comes from `profiles`, never from the client.
+- The Worker environment holds three values in the Cloudflare dashboard only. Never put them in the repository or client:
+  - `SUPABASE_URL`
+  - `SUPABASE_PUBLISHABLE_KEY` (served by `/api/config`; safe in the browser)
+  - `SUPABASE_SECRET_KEY` (server only)
+- Deleting an account deletes the Auth user and profile. If that player is in a running game it is a resign for now.
+- A daily Cron Trigger reads one `keepalive` row so the free Supabase project is not paused.
+
 ## Style
 
 - Every screen uses the single shared style sheet `client/paper.css`, described in `docs/STYLE.md`. Never add a second theme.

@@ -373,6 +373,90 @@
       <button class="btn panel-close battle-log-close" id="battle-log-close" type="button">Close</button>
     </section>
 
+    <!-- Username and password accounts. Usable on phone and Chromebook. -->
+    <section class="account-screen paper" id="account-screen" role="dialog"
+      aria-labelledby="account-title" hidden>
+      <div class="panel-head">
+        <div>
+          <p class="kicker">Armada's 1805</p>
+          <h2 id="account-title">Account</h2>
+        </div>
+        <button class="btn panel-close" id="account-close" type="button">Close</button>
+      </div>
+
+      <p class="account-note">Guests can only use test rooms. There is no email, so a lost password cannot be recovered.</p>
+      <p class="account-message" id="account-message" role="status" data-state="ok"></p>
+
+      <div id="account-guest">
+        <div class="account-tabs" role="group" aria-label="Account action">
+          <button class="btn account-tab" id="account-tab-signup" type="button" aria-pressed="true">Sign up</button>
+          <button class="btn account-tab" id="account-tab-login" type="button" aria-pressed="false">Log in</button>
+        </div>
+
+        <form class="account-form" id="account-signup-form" novalidate>
+          <label>Username
+            <input id="account-signup-username" name="username" autocomplete="username"
+              minlength="3" maxlength="20" required>
+          </label>
+          <label>Password
+            <input id="account-signup-password" name="password" type="password"
+              autocomplete="new-password" minlength="8" required>
+          </label>
+          <label>Display name (optional)
+            <input id="account-signup-display" name="display_name" maxlength="24"
+              placeholder="Defaults to your username">
+          </label>
+          <label class="account-terms">
+            <input id="account-signup-terms" type="checkbox">
+            <span>I agree to the <a href="/terms.html" target="_blank" rel="noopener">Terms</a>
+              and <a href="/privacy.html" target="_blank" rel="noopener">Privacy</a> page.</span>
+          </label>
+          <p class="account-warning">There is no email, so a lost password cannot be recovered.</p>
+          <button class="btn btn-seal" id="account-signup-submit" type="submit">Create account</button>
+        </form>
+
+        <form class="account-form" id="account-login-form" novalidate hidden>
+          <label>Username
+            <input id="account-login-username" name="username" autocomplete="username"
+              minlength="3" maxlength="20" required>
+          </label>
+          <label>Password
+            <input id="account-login-password" name="password" type="password"
+              autocomplete="current-password" required>
+          </label>
+          <button class="btn btn-seal" id="account-login-submit" type="submit">Log in</button>
+        </form>
+      </div>
+
+      <div id="account-member" hidden>
+        <p class="account-signed-in" id="account-signed-in-as"></p>
+        <label>Display name
+          <input id="account-display-name" maxlength="24" autocomplete="nickname">
+        </label>
+        <button class="btn" id="account-save-display" type="button">Save display name</button>
+
+        <h3>Change password</h3>
+        <label>Current password
+          <input id="account-current-password" type="password" autocomplete="current-password">
+        </label>
+        <label>New password
+          <input id="account-new-password" type="password" autocomplete="new-password" minlength="8">
+        </label>
+        <button class="btn" id="account-change-password" type="button">Change password</button>
+
+        <button class="btn" id="account-logout" type="button">Log out</button>
+
+        <div class="account-delete">
+          <h3>Delete account</h3>
+          <p>This removes your account. If you are in a running game it counts as a resign.</p>
+          <label>Type your username to confirm
+            <input id="account-delete-confirm" autocomplete="off">
+          </label>
+          <button class="btn btn-seal" id="account-delete" type="button">Delete account</button>
+        </div>
+      </div>
+    </section>
+
     <section class="menu-panel paper" id="menu-panel" role="dialog" aria-labelledby="menu-title" hidden>
       <div class="panel-head">
         <div>
@@ -382,6 +466,9 @@
         <button class="btn panel-close" id="menu-close" type="button">Close</button>
       </div>
       <p class="menu-room">Room <strong id="room-code">test</strong></p>
+      <button class="btn menu-account" id="account-menu-btn" type="button">
+        <span id="account-menu-name">Account (guest)</span>
+      </button>
       <p class="status" id="status" data-state="loading">Connecting…</p>
       <div class="menu-actions">
         <button class="btn" id="research-btn" type="button">Research</button>
@@ -511,6 +598,8 @@
         <button class="btn btn-seal" id="test-spawn" type="button">Spawn enemies</button>
         <button class="btn" id="test-route-fast" type="button">Run route trips fast</button>
         <button class="btn" id="test-port-income" type="button">Pay port income now</button>
+        <button class="btn" id="test-keepalive" type="button">Run keepalive now</button>
+        <p class="test-inline" id="test-keepalive-result" role="status"></p>
         <label class="test-inline">Anchored fleet stance
           <select id="test-anchored-stance">
             <option value="fightIfAttacked" selected>Fight only if attacked</option>

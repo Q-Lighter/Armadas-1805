@@ -89,14 +89,20 @@ async function build() {
   await writeFile(path.join(dist, jsName), js);
   await writeFile(path.join(dist, cssName), css);
   await writeFile(path.join(dist, "index.html"), html);
-  await writeFile(
-    path.join(dist, "version.json"),
+    await writeFile(path.join(dist, "version.json"),
     `${JSON.stringify({ id: versionId, commit })}\n`,
   );
+  for (const page of ["privacy.html", "terms.html"]) {
+    await cp(path.join(root, "client", page), path.join(dist, page));
+  }
+  await cp(path.join(root, "client/paper.css"), path.join(dist, "paper.css"));
 
   // A restored workspace can bring back files deleted at the start of the
   // build. Sweep the final folder too, so only this build's files are served.
-  const keep = new Set(["index.html", "version.json", "fonts", jsName, cssName]);
+  const keep = new Set([
+    "index.html", "version.json", "privacy.html", "terms.html", "paper.css",
+    "fonts", jsName, cssName,
+  ]);
   for (const entry of await readdir(dist)) {
     if (!keep.has(entry)) await rm(path.join(dist, entry), { recursive: true, force: true });
   }

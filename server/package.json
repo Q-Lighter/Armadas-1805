@@ -8,7 +8,8 @@
     "build": "tsc -p tsconfig.json"
   },
   "dependencies": {
-    "@naval/shared": "*"
+    "@naval/shared": "*",
+    "jose": "6.1.0"
   },
   "devDependencies": {
     "@types/node": "^22.0.0"

@@ -131,11 +131,27 @@ import { parseShipClass } from "@naval/shared/ship-rules";
 import type { ShipClassId } from "@naval/shared/ships";
 import { roomKindForCode } from "@naval/shared/fog";
 import { CHART_BLOCKS } from "./chartBlocks.js";
+import { authenticate, type SupabaseEnv } from "./accountAuth.js";
 
 const playerIdPattern = /^[A-Za-z0-9_-]{1,40}$/;
 
+/** Close any socket opened by a join that failed after the upgrade. */
+function teardownJoin(response: Response, server: WebSocket): void {
+  try {
+    server.send(JSON.stringify({ t: "authError", text: "Could not join this room." }));
+    server.close(4401, response.statusText || "Could not join this room.");
+  } catch {
+    // The socket may already be closing.
+  }
+}
+
 export class GameRoom {
   private world: World = createWorld("main", { npcs: true });
+  private readonly env: SupabaseEnv;
+
+  constructor(_state?: DurableObjectState, env: SupabaseEnv = {}) {
+    this.env = env;
+  }
   private readonly sockets = new PlayerSessions<WebSocket>();
   private ticks = 0;
   private lastPerfSampleMs = Date.now();
@@ -180,6 +196,10 @@ export class GameRoom {
   );
 
   async fetch(request: Request): Promise<Response> {
+    const requestUrl = new URL(request.url);
+    if (requestUrl.pathname === "/account-delete" && request.method === "POST") {
+      return this.deleteAccountPlayer(request);
+    }
     if (request.headers.get("Upgrade")?.toLowerCase() !== "websocket") {
       return new Response("WebSocket expected", { status: 426 });
     }
@@ -323,16 +343,193 @@ export class GameRoom {
       }
     }
 
-    if (room !== this.world.roomCode) {
-      this.ghosts.clear();
-      this.world = createWorld(room, {
-        navy,
-        startPort,
-        shipClass: shipClass ?? undefined,
-        startMoney,
-        hungerMultiplier,
-        npcs,
+    const pair = new WebSocketPair();
+    const client = pair[0];
+    const server = pair[1];
+    server.accept();
+
+    const join = (playerId: string, trustedName: string | null, addMessageListener = true): Response => {
+      if (room !== this.world.roomCode) {
+        this.ghosts.clear();
+        this.world = createWorld(room, {
+          navy,
+          startPort,
+          shipClass: shipClass ?? undefined,
+          startMoney,
+          hungerMultiplier,
+          npcs,
+        });
+      }
+      if (kind !== "normal") {
+        const rawHold = url.searchParams.get("capturehold");
+        const hold = rawHold === null ? NaN : Number(rawHold);
+        if (Number.isFinite(hold) && hold > 0) {
+          this.world.captureHoldRealSeconds = Math.min(3_600, hold);
+        }
+      }
+
+      // TEMP-DEBUG: a dev room accepts bots=0..300 on every join. An absent
+      // value leaves the room's current bot count alone.
+      const rawBots = url.searchParams.get("bots");
+      const botCount = rawBots === null ? null : botCountForRoom(room, rawBots);
+      if (rawBots !== null && botCount === null) {
+        return new Response("Bot count must be a whole number from 0 to 300.", {
+          status: 400,
+        });
+      }
+
+      // A new player gets the room's first ship; a returning id keeps its fleet.
+      // In a test room, two devices may not both take the same navy: the second
+      // gets the next navy in the fixed order and is told why.
+      this.ghosts.reconnected(playerId);
+      const returning = this.world.players.has(playerId);
+      const takenNavies = [...this.world.players.values()].map((ship) => ship.navy);
+      const chosen = returning
+        ? { navy: this.world.players.get(playerId)!.navy, changed: false }
+        : teamJoin && kind !== "normal"
+          ? chooseTeamNavy(navy, [...this.world.playerRecords.values()])
+          : chooseJoinNavy(navy, takenNavies);
+      addPlayer(
+        this.world,
+        playerId,
+        shipClass ?? shipClassForRoom(room),
+        startMoney ?? this.world.startMoney,
+        chosen.navy,
+      );
+      if (chosen.changed) {
+        this.world.notices.set(playerId, [
+          ...(this.world.notices.get(playerId) ?? []),
+          `Same navy requested: you are ${chosen.navy}.`,
+        ]);
+      }
+      // Only a profile read by the Worker may name a player in a normal room.
+      if (trustedName) setPlayerName(this.world, playerId, trustedName, true);
+      else if (displayName) setPlayerName(this.world, playerId, displayName);
+      if (kind !== "normal" && url.searchParams.get("routes") === "1") {
+        spawnRouteHelper(this.world, playerId);
+      }
+      const rawFleet = url.searchParams.get("fleet");
+      if (kind !== "normal" && rawFleet !== null) {
+        if (spawnTestFleet(this.world, playerId, rawFleet) < 0) {
+          return new Response("Fleet must look like frigate:4,trade:3,line:1.", {
+            status: 400,
+          });
+        }
+      }
+      const rawEnemy = url.searchParams.get("enemy");
+      if (kind !== "normal" && rawEnemy !== null) {
+        if (spawnTestEnemyFleet(this.world, playerId, rawEnemy, {
+          navy: enemyNavy ?? undefined,
+          dummy,
+        }) < 0) {
+          return new Response("Enemy must look like frigate:2,line:1 with at most 6 ships.", {
+            status: 400,
+          });
+        }
+      }
+      if (abandonedSpec !== null && kind !== "normal") {
+        if (spawnTestAbandoned(this.world, playerId, abandonedSpec) < 0) {
+          return new Response("Abandoned must look like frigate:1,line:1.", { status: 400 });
+        }
+      }
+      if (enemyCrewPercent !== null && kind !== "normal") {
+        setTestEnemyCrew(this.world, enemyCrewPercent);
+      }
+      if (fireShipCount > 0 && kind !== "normal") {
+        spawnTestFireShips(this.world, playerId, fireShipCount);
+      }
+      // A refresh, a new tab or a reconnect starts with an empty client chart.
+      // Replay the stored record and all block geometry before normal changes.
+      requestChartResume(this.world, playerId);
+
+      // TEMP-DEBUG: every join with bots=N sets the target count. This is what
+      // lets a second tab change 25 bots to 50, or 100 bots down to 10.
+      if (botCount !== null) {
+        setBotCount(this.world, botCount, playerId);
+      }
+
+      if (addMessageListener) {
+        server.addEventListener("message", (event) => this.onMessage(playerId, event.data));
+      }
+      server.addEventListener("close", () => this.dropSocket(playerId, server));
+
+      // The newest connection owns this id. Adding it first means the old
+      // socket's close event cannot remove the new one.
+      this.sockets.add(playerId, server);
+      this.streams.delete(playerId);
+
+      if (!this.loop.running) this.metrics.reset(Date.now());
+      this.loop.start();
+      this.sendState(playerId, server, true);
+      return new Response(null, { status: 101, webSocket: client });
+    };
+
+    if (kind === "normal") {
+      // The token travels in the first WebSocket message, never in the URL.
+      // Nothing is joined or named until the Worker has checked it and read
+      // the profile with the server-only key.
+      let stage: "waiting" | "checking" | "joined" = "waiting";
+      let playerId = "";
+      const queued: unknown[] = [];
+      const reject = (text: string): void => {
+        try {
+          server.send(JSON.stringify({ t: "authError", text }));
+          server.close(4401, text);
+        } catch {
+          // The socket may already be closing.
+        }
+      };
+      const timer = setTimeout(() => {
+        if (stage !== "waiting") return;
+        stage = "joined";
+        reject("Log in to play online");
+      }, 5_000);
+      server.addEventListener("message", (event) => {
+        if (stage === "joined") {
+          this.onMessage(playerId, event.data);
+          return;
+        }
+        if (stage === "checking") {
+          queued.push(event.data);
+          return;
+        }
+        stage = "checking";
+        clearTimeout(timer);
+        let message: unknown = null;
+        try {
+          message = JSON.parse(String(event.data));
+        } catch {
+          // A malformed first message is not a token.
+        }
+        const token = message && typeof message === "object" &&
+          typeof (message as { token?: unknown }).token === "string"
+          ? (message as { token: string }).token
+          : "";
+        if (!token) {
+          stage = "joined";
+          reject("Log in to play online");
+          return;
+        }
+        void authenticate(token, this.env).then((account) => {
+          if (!account) {
+            stage = "joined";
+            reject("Log in to play online");
+            return;
+          }
+          playerId = account.userId;
+          const response = join(playerId, account.displayName, false);
+          if (response.status !== 101) {
+            teardownJoin(response, server);
+            return;
+          }
+          stage = "joined";
+          for (const data of queued.splice(0)) this.onMessage(playerId, data);
+        }).catch(() => {
+          stage = "joined";
+          reject("Log in to play online");
+        });
       });
+      return new Response(null, { status: 101, webSocket: client });
     }
 
     const playerId = url.searchParams.get("player") ?? "";
@@ -341,111 +538,31 @@ export class GameRoom {
         status: 400,
       });
     }
-    if (kind !== "normal") {
-      const rawHold = url.searchParams.get("capturehold");
-      const hold = rawHold === null ? NaN : Number(rawHold);
-      if (Number.isFinite(hold) && hold > 0) {
-        this.world.captureHoldRealSeconds = Math.min(3_600, hold);
-      }
-    }
+    return join(playerId, null);
+  }
 
-    // TEMP-DEBUG: a dev room accepts bots=0..300 on every join. An absent
-    // value leaves the room's current bot count alone.
-    const rawBots = url.searchParams.get("bots");
-    const botCount = rawBots === null ? null : botCountForRoom(room, rawBots);
-    if (rawBots !== null && botCount === null) {
-      return new Response("Bot count must be a whole number from 0 to 300.", {
+  /** A Worker-authenticated account deletion is a resignation for now. */
+  private deleteAccountPlayer(request: Request): Response {
+    const secret = this.env.SUPABASE_SECRET_KEY ?? "";
+    if (!secret || request.headers.get("x-admin-key") !== secret) {
+      return new Response("Not allowed.", { status: 403 });
+    }
+    const playerId = request.headers.get("x-account-id") ?? "";
+    if (!playerIdPattern.test(playerId)) {
+      return new Response("Account id must be letters, numbers, dash or underscore.", {
         status: 400,
       });
     }
-
-    const pair = new WebSocketPair();
-    const client = pair[0];
-    const server = pair[1];
-    server.accept();
-
-    // A new player gets the room's first ship; a returning id keeps its fleet.
-    // In a test room, two devices may not both take the same navy: the second
-    // gets the next navy in the fixed order and is told why.
-    this.ghosts.reconnected(playerId);
-    const returning = this.world.players.has(playerId);
-    const takenNavies = [...this.world.players.values()].map((ship) => ship.navy);
-    const chosen = returning
-      ? { navy: this.world.players.get(playerId)!.navy, changed: false }
-      : teamJoin && kind !== "normal"
-        ? chooseTeamNavy(navy, [...this.world.playerRecords.values()])
-        : chooseJoinNavy(navy, takenNavies);
-    addPlayer(
-      this.world,
-      playerId,
-      shipClass ?? shipClassForRoom(room),
-      startMoney ?? this.world.startMoney,
-      chosen.navy,
-    );
-    if (chosen.changed) {
-      // The gameRoom imports the shared notice helper separately below.
-      this.world.notices.set(playerId, [
-        ...(this.world.notices.get(playerId) ?? []),
-        `Same navy requested: you are ${chosen.navy}.`,
-      ]);
-    }
-    if (displayName) setPlayerName(this.world, playerId, displayName);
-    if (kind !== "normal" && url.searchParams.get("routes") === "1") {
-      spawnRouteHelper(this.world, playerId);
-    }
-    const rawFleet = url.searchParams.get("fleet");
-    if (kind !== "normal" && rawFleet !== null) {
-      if (spawnTestFleet(this.world, playerId, rawFleet) < 0) {
-        return new Response("Fleet must look like frigate:4,trade:3,line:1.", {
-          status: 400,
-        });
+    const resigned = resignPlayer(this.world, playerId, null);
+    const socket = this.sockets.get(playerId);
+    if (socket) {
+      try {
+        socket.close(4403, "account deleted");
+      } catch {
+        // The socket may already be closing.
       }
     }
-    const rawEnemy = url.searchParams.get("enemy");
-    if (kind !== "normal" && rawEnemy !== null) {
-      if (spawnTestEnemyFleet(this.world, playerId, rawEnemy, {
-        navy: enemyNavy ?? undefined,
-        dummy,
-      }) < 0) {
-        return new Response("Enemy must look like frigate:2,line:1 with at most 6 ships.", {
-          status: 400,
-        });
-      }
-    }
-    if (abandonedSpec !== null && kind !== "normal") {
-      if (spawnTestAbandoned(this.world, playerId, abandonedSpec) < 0) {
-        return new Response("Abandoned must look like frigate:1,line:1.", { status: 400 });
-      }
-    }
-    if (enemyCrewPercent !== null && kind !== "normal") {
-      setTestEnemyCrew(this.world, enemyCrewPercent);
-    }
-    if (fireShipCount > 0 && kind !== "normal") {
-      spawnTestFireShips(this.world, playerId, fireShipCount);
-    }
-    // A refresh, a new tab or a reconnect starts with an empty client chart.
-    // Replay the stored record and all block geometry before normal changes.
-    requestChartResume(this.world, playerId);
-
-    // TEMP-DEBUG: every join with bots=N sets the target count. This is what
-    // lets a second tab change 25 bots to 50, or 100 bots down to 10.
-    if (botCount !== null) {
-      setBotCount(this.world, botCount, playerId);
-    }
-
-    server.addEventListener("message", (event) => this.onMessage(playerId, event.data));
-    server.addEventListener("close", () => this.dropSocket(playerId, server));
-
-    // The newest connection owns this id. Adding it first means the old
-    // socket's close event cannot remove the new one.
-    this.sockets.add(playerId, server);
-    this.streams.delete(playerId);
-
-    if (!this.loop.running) this.metrics.reset(Date.now());
-    this.loop.start();
-    this.sendState(playerId, server, true);
-
-    return new Response(null, { status: 101, webSocket: client });
+    return Response.json({ ok: true, resigned });
   }
 
   /** One 10 Hz world update. The RoomLoop only calls this while occupied. */

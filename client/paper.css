@@ -2016,6 +2016,119 @@ body.game {
   font-size: 0.86rem;
 }
 
+.menu-account {
+  width: 100%;
+  min-height: var(--tap);
+  text-align: left;
+}
+
+.account-screen {
+  position: fixed;
+  z-index: 60;
+  inset: max(0.5rem, env(safe-area-inset-top)) max(0.5rem, env(safe-area-inset-right))
+    max(0.5rem, env(safe-area-inset-bottom)) max(0.5rem, env(safe-area-inset-left));
+  width: min(34rem, calc(100% - 1rem));
+  height: fit-content;
+  max-height: calc(100dvh - 1rem);
+  margin: auto;
+  overflow-y: auto;
+  overflow-x: hidden;
+  overscroll-behavior: contain;
+  padding: calc(0.9rem * var(--ui-scale));
+}
+
+.account-screen[hidden] { display: none; }
+
+.account-note,
+.account-warning {
+  margin: 0.55rem 0;
+  padding: 0.55rem 0.65rem;
+  border-left: 3px solid var(--rule);
+  color: var(--ink-faded);
+}
+
+.account-message {
+  min-height: 1.4rem;
+  margin: 0.35rem 0;
+  font-weight: 600;
+}
+
+.account-message[data-state="error"] { color: var(--seal); }
+
+.account-tabs {
+  display: flex;
+  gap: 0.45rem;
+  margin: 0.5rem 0;
+}
+
+.account-tab { flex: 1 1 0; }
+.account-tab[aria-pressed="true"] { background: var(--ink); color: var(--paper); }
+
+.account-form,
+#account-member {
+  display: grid;
+  gap: 0.55rem;
+}
+
+.account-form[hidden],
+#account-member[hidden],
+#account-guest[hidden] { display: none; }
+
+.account-form label,
+#account-member label {
+  display: grid;
+  gap: 0.25rem;
+  font-weight: 600;
+}
+
+.account-form input,
+#account-member input {
+  min-height: var(--tap);
+  width: 100%;
+  font: inherit;
+  padding: 0.4rem 0.55rem;
+  border: 1px solid var(--rule);
+  background: var(--paper-light, var(--paper));
+  color: var(--ink);
+}
+
+.account-terms {
+  display: flex !important;
+  align-items: flex-start;
+  gap: 0.55rem;
+  min-height: var(--tap);
+  font-weight: 400;
+}
+
+.account-terms input {
+  width: 24px;
+  height: 24px;
+  min-height: 24px;
+  flex: 0 0 auto;
+  margin-top: 0.2rem;
+}
+
+.account-signed-in { font-weight: 600; }
+.account-delete { margin-top: 0.8rem; padding-top: 0.6rem; border-top: 1px solid var(--rule); }
+.account-delete h3 { margin-bottom: 0.3rem; }
+
+.legal-page {
+  min-height: 100dvh;
+  margin: 0;
+  padding: 1rem;
+  background: var(--sea, #b9c6bd);
+}
+
+.legal-sheet {
+  max-width: 42rem;
+  margin: 0 auto;
+  padding: 1.2rem;
+  line-height: 1.5;
+}
+
+.legal-sheet h1 { margin-top: 0.2rem; }
+.legal-sheet a { color: var(--ink); }
+
 .menu-actions {
   display: flex;
   flex-wrap: wrap;
@@ -2741,6 +2854,18 @@ body.game {
   font-weight: 600;
 }
 .test-tools-grid select,
+.test-tools-grid input,
+.test-invite input,
+#test-keepalive-result {
+  min-height: var(--tap);
+}
+
+#test-keepalive-result {
+  margin: 0;
+  padding: 0.5rem;
+  border: 1px solid var(--rule);
+}
+
 .test-tools-grid input,
 .test-invite input {
   min-height: 44px;

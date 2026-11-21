@@ -1180,6 +1180,18 @@ export const settings = {
   },
 
   /** Draft: test-room helpers. The whole panel is removed before release. */
+  /** Username/password accounts. Supabase Auth receives a made-up email. */
+  accounts: {
+    usernameMin: 3,
+    usernameMax: 20,
+    passwordMin: 8,
+    displayNameMin: 2,
+    displayNameMax: 24,
+    emailDomain: "armadas-1805.carltonjamie714.workers.dev",
+    /** Cache the project's public signing keys for one hour. */
+    jwksCacheSeconds: 3_600,
+  },
+
   testing: {
     /** Enemy dummies appear this far from the spawning player. Draft: 3 km. */
     enemySpawnDistanceKm: 3,

@@ -14,7 +14,7 @@ const LOBBY_NAVIES: readonly NavyId[] = ["British", "French", "Dutch", "Spanish"
 
 export interface LobbyUiOptions {
   signedIn: () => boolean;
-  openAccount: () => void;
+  openAccount: (message?: string) => void;
   createGame: () => Promise<{ code?: string; error?: string }>;
   lookupGame: (code: string) => Promise<{ status?: string; error?: string }>;
   enterRoom: (code: string) => void;

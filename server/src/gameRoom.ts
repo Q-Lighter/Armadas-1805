@@ -150,7 +150,7 @@ import { parseShipClass } from "@naval/shared/ship-rules";
 import type { ShipClassId } from "@naval/shared/ships";
 import { roomKindForCode } from "@naval/shared/fog";
 import { CHART_BLOCKS } from "./chartBlocks.js";
-import { authenticate, type SupabaseEnv } from "./accountAuth.js";
+import { authenticateDetailed, type SupabaseEnv } from "./accountAuth.js";
 
 const playerIdPattern = /^[A-Za-z0-9_-]{1,40}$/;
 
@@ -568,7 +568,7 @@ export class GameRoom {
       const timer = setTimeout(() => {
         if (stage !== "waiting") return;
         stage = "joined";
-        reject("Log in to play online");
+        reject("No login token was sent.");
       }, 5_000);
       server.addEventListener("message", (event) => {
         // Once verified, the connection's own listener (bindConnection) is
@@ -593,15 +593,16 @@ export class GameRoom {
           : "";
         if (!token) {
           stage = "joined";
-          reject("Log in to play online");
+          reject("No login token was sent.");
           return;
         }
-        void authenticate(token, this.env).then((account) => {
-          if (!account) {
+        void authenticateDetailed(token, this.env).then((result) => {
+          if (!result.ok) {
             stage = "joined";
-            reject("Log in to play online");
+            reject(result.reason);
             return;
           }
+          const account = result.account;
           stage = "joined";
           this.ensureStartedWorld();
           const lobby = this.lobby;
@@ -645,7 +646,7 @@ export class GameRoom {
           for (const data of queued.splice(0)) this.routeConnectionMessage(server, data);
         }).catch(() => {
           stage = "joined";
-          reject("Log in to play online");
+          reject("The login token could not be checked.");
         });
       });
       return new Response(null, { status: 101, webSocket: client });

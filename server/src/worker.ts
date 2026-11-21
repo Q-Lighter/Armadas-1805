@@ -7,13 +7,13 @@ import { settings } from "@naval/shared/settings";
 import { roomKindForCode } from "@naval/shared/fog";
 import { isJoinCode } from "@naval/shared/lobby";
 import {
-  authenticate,
+  authenticateDetailed,
+  checkAccessToken,
   deleteSupabaseAccount,
   publicConfig,
   readBearerToken,
   resignInRoom,
   runKeepalive,
-  verifyAccessToken,
   type SupabaseEnv,
 } from "./accountAuth.js";
 
@@ -57,12 +57,17 @@ function json(body: unknown, status = 200): Response {
   });
 }
 
+function unauthorized(reason: string): Response {
+  return json({ ok: false, error: reason }, 401);
+}
+
 async function accountDelete(request: Request, env: Env): Promise<Response> {
   if (!settings.server) return json({ ok: false, error: "Not available." }, 503);
   const token = await readBearerToken(request);
-  if (!token) return json({ ok: false, error: "Log in to delete an account." }, 401);
-  const account = await verifyAccessToken(token, env).catch(() => null);
-  if (!account) return json({ ok: false, error: "Log in to delete an account." }, 401);
+  if (!token) return unauthorized("No login token was sent.");
+  const check = await checkAccessToken(token, env).catch(() => null);
+  if (!check?.ok) return unauthorized(check?.reason ?? "The login token could not be checked.");
+  const account = check;
 
   let body: { room?: unknown } = {};
   try {
@@ -89,9 +94,10 @@ async function accountDelete(request: Request, env: Env): Promise<Response> {
 /** Create a game: reserve a unique code, then open its lobby. */
 async function lobbyCreate(request: Request, env: Env): Promise<Response> {
   const token = await readBearerToken(request);
-  if (!token) return json({ ok: false, error: "Log in to create a game." }, 401);
-  const account = await authenticate(token, env).catch(() => null);
-  if (!account) return json({ ok: false, error: "Log in to create a game." }, 401);
+  if (!token) return unauthorized("No login token was sent.");
+  const auth = await authenticateDetailed(token, env).catch(() => null);
+  if (!auth?.ok) return unauthorized(auth?.reason ?? "The login token could not be checked.");
+  const account = auth.account;
   if (!env.LOBBY_DIRECTORY) {
     return json({ ok: false, error: "Lobbies are not configured." }, 503);
   }
@@ -127,7 +133,7 @@ async function lobbyCreate(request: Request, env: Env): Promise<Response> {
       })).catch(() => null);
       return json({ ok: false, error: "That game could not be created. Try again." }, 502);
     }
-    return json({ ok: true, code });
+    return json({ ok: true, code, auth: auth.via });
   } catch {
     return json({ ok: false, error: "That game could not be created. Try again." }, 502);
   }
@@ -136,9 +142,9 @@ async function lobbyCreate(request: Request, env: Env): Promise<Response> {
 /** Join with a code: say whether an active game uses it. */
 async function lobbyLookup(request: Request, env: Env): Promise<Response> {
   const token = await readBearerToken(request);
-  if (!token) return json({ ok: false, error: "Log in to join a game." }, 401);
-  const account = await verifyAccessToken(token, env).catch(() => null);
-  if (!account) return json({ ok: false, error: "Log in to join a game." }, 401);
+  if (!token) return unauthorized("No login token was sent.");
+  const check = await checkAccessToken(token, env).catch(() => null);
+  if (!check?.ok) return unauthorized(check?.reason ?? "The login token could not be checked.");
   const code = (new URL(request.url).searchParams.get("code") ?? "").trim().toUpperCase();
   if (!isJoinCode(code)) {
     return json({
@@ -161,7 +167,9 @@ async function lobbyLookup(request: Request, env: Env): Promise<Response> {
       ok?: boolean; found?: boolean; status?: string; error?: string;
     };
     if (!row.ok) return json({ ok: false, error: row.error ?? "Could not look up that code." }, 502);
-    return json({ ok: true, found: row.found === true, status: row.status ?? "lobby", code });
+    return json({
+      ok: true, found: row.found === true, status: row.status ?? "lobby", code, auth: check.via,
+    });
   } catch {
     return json({ ok: false, error: "Could not look up that code." }, 502);
   }
@@ -169,9 +177,14 @@ async function lobbyLookup(request: Request, env: Env): Promise<Response> {
 
 async function keepalive(request: Request, env: Env): Promise<Response> {
   const token = await readBearerToken(request);
-  if (!token) return json({ ok: false, text: "Log in to run keepalive." }, 401);
-  const account = await authenticate(token, env).catch(() => null);
-  if (!account) return json({ ok: false, text: "Log in to run keepalive." }, 401);
+  if (!token) {
+    return json({ ok: false, error: "No login token was sent.", text: "Log in to run keepalive." }, 401);
+  }
+  const auth = await authenticateDetailed(token, env).catch(() => null);
+  if (!auth?.ok) {
+    const reason = auth?.reason ?? "The login token could not be checked.";
+    return json({ ok: false, error: reason, text: reason }, 401);
+  }
   const result = await runKeepalive(env);
   return json(result, result.ok ? 200 : 500);
 }

@@ -17,6 +17,8 @@ export interface AccountUser {
 export interface AccountSession {
   accessToken: string;
   user: AccountUser;
+  /** Unix milliseconds, when the access token stops being valid. */
+  expiresAt?: number | null;
 }
 
 export interface AccountApi {
@@ -24,6 +26,8 @@ export interface AccountApi {
   signIn(username: string, password: string): Promise<string | null>;
   signOut(): Promise<void>;
   session(): Promise<AccountSession | null>;
+  /** Current token, refreshing inside 60 seconds of expiry. */
+  freshAccessToken(): Promise<string | null>;
   updateDisplayName(displayName: string): Promise<string | null>;
   changePassword(currentPassword: string, newPassword: string): Promise<string | null>;
   deleteAccount(username: string, room: string): Promise<string | null>;
@@ -55,7 +59,7 @@ export function createAccountUi(
   api: AccountApi,
   options: AccountUiOptions,
 ): {
-  open: () => void;
+  open: (message?: string) => void;
   close: () => void;
   refresh: () => Promise<void>;
   afterDeveloperKeepalive: () => Promise<{ ok: boolean; text: string }>;
@@ -236,9 +240,9 @@ export function createAccountUi(
   setTab("signup");
 
   return {
-    open: () => {
+    open: (message = "") => {
       screen.hidden = false;
-      say("");
+      say(message);
       void refresh();
     },
     close: () => {

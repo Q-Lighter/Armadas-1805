@@ -44,6 +44,7 @@ import {
 import { TAKEN_OVER_CLOSE_CODE } from "@naval/shared/player-sessions";
 import { createAccountUi, type AccountApi, type AccountSession } from "./account.js";
 import { createLobbyUi, type LobbyUiOptions } from "./lobby.js";
+import { createLobbyLogin } from "./lobbyLogin.js";
 import { createSupabaseAccountApi, loadAccountConfig } from "./supabaseAccount.js";
 import type {
   EscortSnapshot,
@@ -307,6 +308,7 @@ function errorText(error: unknown): string {
 }
 
 const clientErrorLog: Array<{ at: number; text: string }> = [];
+const lobbyDebugLog: Array<{ at: number; text: string }> = [];
 const pendingClientErrors: Array<{ text: string; where: string }> = [];
 
 /** Report a client failure to the readable banner, console and debug log. */
@@ -1228,6 +1230,7 @@ async function start(): Promise<void> {
   const testPortIncome = element<HTMLButtonElement>("test-port-income");
   const testKeepalive = element<HTMLButtonElement>("test-keepalive");
   const testKeepaliveResult = element<HTMLElement>("test-keepalive-result");
+  const loginState = element<HTMLElement>("login-state");
   const logGrid = element<HTMLElement>("log-grid");
   const logPickHint = element<HTMLElement>("log-pick-hint");
   const logRuler = element<HTMLElement>("log-ruler");
@@ -1404,6 +1407,7 @@ async function start(): Promise<void> {
     ? createSupabaseAccountApi(accountConfig)
     : null;
   let accountSession: AccountSession | null = null;
+  let lastTokenCheck = "not checked yet";
   let connectedAccountId: string | null = null;
   let connectionAttempt = false;
   let lobbyUi: ReturnType<typeof createLobbyUi> | null = null;
@@ -1413,6 +1417,7 @@ async function start(): Promise<void> {
         onSession: (next) => {
           accountSession = next;
           refreshKeepaliveButton();
+          refreshLoginState();
           lobbyUi?.refreshHome();
           if (!room || roomKindForCode(room) !== "normal") return;
           if (!next) {
@@ -1434,38 +1439,12 @@ async function start(): Promise<void> {
     : null;
   /** Ask the Worker to reserve a code and open its lobby. */
   async function createOnlineGame(): Promise<{ code?: string; error?: string }> {
-    const session = accountSession ?? await accountApi?.session().catch(() => null) ?? null;
-    accountSession = session;
-    if (!session) return { error: "Log in to create a game." };
-    const response = await fetch("/api/lobby/create", {
-      method: "POST",
-      headers: { Authorization: `Bearer ${session.accessToken}` },
-    });
-    const data = await response.json().catch(() => ({})) as {
-      code?: string; error?: string;
-    };
-    if (!response.ok || !data.code) {
-      return { error: data.error || "That game could not be created. Try again." };
-    }
-    return { code: data.code };
+    return lobbyLogin.createGame();
   }
 
   /** Check a join code before opening its room. */
   async function lookupOnlineGame(code: string): Promise<{ status?: string; error?: string }> {
-    const session = accountSession ?? await accountApi?.session().catch(() => null) ?? null;
-    accountSession = session;
-    if (!session) return { error: "Log in to join a game." };
-    const response = await fetch(`/api/lobby/code?code=${encodeURIComponent(code)}`, {
-      headers: { Authorization: `Bearer ${session.accessToken}` },
-    });
-    const data = await response.json().catch(() => ({})) as {
-      ok?: boolean; found?: boolean; status?: string; error?: string;
-    };
-    if (!response.ok || !data.ok) {
-      return { error: data.error || "Could not look up that code." };
-    }
-    if (!data.found) return {};
-    return { status: data.status ?? "lobby" };
+    return lobbyLogin.lookupGame(code);
   }
 
   function enterRoom(code: string): void {
@@ -1517,9 +1496,29 @@ async function start(): Promise<void> {
     roomKind = "normal";
   }
 
+  const lobbyLogin = createLobbyLogin({
+    api: () => accountApi,
+    session: () => accountSession,
+    setSession: (next) => {
+      accountSession = next;
+      refreshKeepaliveButton();
+      refreshLoginState();
+    },
+    openAccount: (message) => accountUi?.open(message),
+    onExpired: (message) => {
+      lobbyUi?.showHome(message);
+      showNotice(message);
+    },
+    onDebug: (step) => logLobbyStep(step),
+    onTokenCheck: (result) => {
+      lastTokenCheck = result;
+      refreshLoginState();
+    },
+  });
+
   lobbyUi = createLobbyUi(document, {
     signedIn: () => accountSession !== null,
-    openAccount: () => accountUi?.open(),
+    openAccount: (message) => accountUi?.open(message),
     createGame: createOnlineGame,
     lookupGame: lookupOnlineGame,
     enterRoom,
@@ -1531,6 +1530,7 @@ async function start(): Promise<void> {
 
   accountMenuButton.disabled = !accountUi;
   accountMenuButton.title = accountUi ? "" : "Accounts are not configured.";
+  refreshLoginState();
   if (accountUi) void accountUi.refresh().then(() => lobbyUi?.refreshHome());
   else {
     element<HTMLElement>("account-menu-name").textContent = "Account (unavailable)";
@@ -3667,6 +3667,13 @@ async function start(): Promise<void> {
     updateOrderSendingStatus();
   }
 
+  /** Add one lobby/login step to the Debug log. Never pass a token here. */
+  function logLobbyStep(text: string): void {
+    lobbyDebugLog.push({ at: Date.now(), text });
+    if (lobbyDebugLog.length > 20) lobbyDebugLog.shift();
+    renderDebugLog();
+  }
+
   function renderDebugLog(): void {
     if (!debugLogOpen) return;
     const lines = orderDebugLog.map((entry) => {
@@ -3674,12 +3681,18 @@ async function start(): Promise<void> {
       const where = [entry.ship, entry.target].filter(Boolean).join(" -> ");
       return `${time}  ${entry.command}${where ? ` [${where}]` : ""}  ${entry.result}${entry.reason ? `: ${entry.reason}` : ""}`;
     });
+    const lobbyLines = lobbyDebugLog.map((entry) =>
+      `${new Date(entry.at).toLocaleTimeString()}  ${entry.text}`,
+    );
     const errors = clientErrorLog.map((entry) =>
       `${new Date(entry.at).toLocaleTimeString()}  CLIENT ERROR  ${entry.text}`,
     );
     debugLogLines.textContent = [
       `Orders (last ${lines.length}, 40 max)`,
       ...lines,
+      "",
+      `Login / lobby (last ${lobbyLines.length}, 20 max)`,
+      ...(lobbyLines.length > 0 ? lobbyLines : ["none"]),
       "",
       `Client errors (last ${errors.length}, 10 max)`,
       ...(errors.length > 0 ? errors : ["none"]),
@@ -8368,6 +8381,20 @@ async function start(): Promise<void> {
       ? "Log in to run keepalive."
       : "";
     if (!accountSession) testKeepaliveResult.textContent = "Log in to run keepalive.";
+  }
+
+  /** The Developer sheet's login line. It never contains a token. */
+  function refreshLoginState(): void {
+    const session = accountSession;
+    const expires = session?.expiresAt
+      ? new Date(session.expiresAt).toLocaleString()
+      : "unknown";
+    loginState.textContent =
+      `Login state: logged in ${session ? "yes" : "no"}` +
+      ` · username ${session?.user.username ?? "—"}` +
+      ` · user id ${session?.user.id ?? "—"}` +
+      ` · token expires ${expires}` +
+      ` · last token check ${lastTokenCheck}`;
   }
 
   async function connect(): Promise<void> {

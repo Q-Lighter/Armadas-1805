@@ -328,7 +328,7 @@ test("normal rooms reject no token and accept a verified account, while test and
     assert.ok(pair);
     pair[1].message(JSON.stringify({ t: "auth", token: null }));
     assert.equal(pair[1].closed?.code, 4401);
-    assert.match(pair[1].closed?.reason ?? "", /Log in to play online/);
+    assert.match(pair[1].closed?.reason ?? "", /No login token/);
     assert.equal(room.world.players.size, 0);
     void refusedSocket;
 

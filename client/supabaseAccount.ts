@@ -4,6 +4,7 @@
 import { createClient, type SupabaseClient, type User } from "@supabase/supabase-js";
 import { accountEmailFor, normalizeUsername } from "@naval/shared/accounts";
 import type { AccountApi, AccountSession } from "./account.js";
+import { freshAccessTokenFrom } from "./lobbyLogin.js";
 
 export interface AccountConfig {
   supabaseUrl: string;
@@ -73,6 +74,7 @@ export function createSupabaseAccountApi(
     if (error || !data.session) return null;
     return {
       accessToken: data.session.access_token,
+      expiresAt: (data.session.expires_at ?? 0) * 1_000,
       user: await profileFor(data.session.user),
     };
   }
@@ -80,6 +82,23 @@ export function createSupabaseAccountApi(
   async function accessToken(): Promise<string | null> {
     const session = await currentSession();
     return session?.accessToken ?? null;
+  }
+
+  /** Refresh shortly before expiry so a lobby call never carries a stale token. */
+  async function freshAccessToken(): Promise<string | null> {
+    const { data, error } = await client.auth.getSession();
+    if (error || !data.session) return null;
+    return freshAccessTokenFrom(
+      async () => ({
+        accessToken: data.session!.access_token,
+        expiresAt: (data.session!.expires_at ?? 0) * 1_000,
+      }),
+      async () => {
+        const refreshed = await client.auth.refreshSession();
+        if (refreshed.error || !refreshed.data.session) return null;
+        return { accessToken: refreshed.data.session.access_token };
+      },
+    );
   }
 
   return {
@@ -111,6 +130,7 @@ export function createSupabaseAccountApi(
     },
 
     session: currentSession,
+    freshAccessToken,
 
     async updateDisplayName(displayName) {
       const session = await currentSession();

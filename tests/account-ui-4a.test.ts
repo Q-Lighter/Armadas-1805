@@ -14,6 +14,7 @@ interface AccountApi {
   signIn(username: string, password: string): Promise<string | null>;
   signOut(): Promise<void>;
   session(): Promise<AccountSession | null>;
+  freshAccessToken(): Promise<string | null>;
   updateDisplayName(displayName: string): Promise<string | null>;
   changePassword(currentPassword: string, newPassword: string): Promise<string | null>;
   deleteAccount(username: string, room: string): Promise<string | null>;
@@ -79,6 +80,7 @@ test("account buttons sign up, reject a wrong password, log in, log out, change 
     },
     async signOut() { calls.push("logout"); current = null; },
     async session() { return current; },
+    async freshAccessToken() { return current?.accessToken ?? null; },
     async updateDisplayName(name) { calls.push(`display:${name}`); return null; },
     async changePassword(currentPassword, nextPassword) {
       calls.push(`password:${currentPassword}:${nextPassword}`);
